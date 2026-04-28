@@ -2955,8 +2955,13 @@ const BOSS_DEFS = [
   {name:'双鱼·皮西斯',  color:'#ff66aa', acc:'#aaffff', hp:3500},
 ];
 
+// Endless 难度上限 (hell plateau) — 到此分以上难度不再升, 但内容随机化
+const ENDLESS_DIFF_CAP = 100;
 function bossIndex() {
-  // Stage: pick by level; Endless: cycle bosses
+  if (endlessMode && level > BOSS_DEFS.length) {
+    // 超过 12 关后随机抽一个 boss, 增加随机性
+    return rndInt(0, BOSS_DEFS.length-1);
+  }
   return clamp(level-1, 0, BOSS_DEFS.length-1);
 }
 
@@ -2966,8 +2971,10 @@ function spawnBoss() {
   const idx = bossIndex();
   const def = BOSS_DEFS[idx];
   const C = save.console || defaultConsole();
-  const barCount = clamp(Math.round((1 + Math.floor((level-1)/2)) * (C.bossBarMul||1)), 1, 9);
-  const hp = (def.hp + level*150) * barCount * C.bossHpMul;
+  // 难度封顶: 关卡分量取 min(level, ENDLESS_DIFF_CAP), 之后保持地狱难度
+  const cappedLv = Math.min(level, ENDLESS_DIFF_CAP);
+  const barCount = clamp(Math.round((1 + Math.floor((cappedLv-1)/2)) * (C.bossBarMul||1)), 1, 9);
+  const hp = (def.hp + cappedLv*150) * barCount * C.bossHpMul;
   boss = {
     bossType: idx,
     x: W/2, y: -80, px:W/2|0, py:-80,
@@ -2976,7 +2983,7 @@ function spawnBoss() {
     w:80, h:60, alive:true,
     phase:0, moveTimer:0, shootTimer:0,
     vx: 1.5, entryDone:false,
-    pts: 5000 + level*500,
+    pts: 5000 + cappedLv*500,
     extra:0, extra2:0,
     color: def.color, acc: def.acc, name: def.name,
   };
@@ -4190,18 +4197,7 @@ function killBoss() {
     }, 1400);
     return;
   }
-  // Endless mode: cap at 100 → final victory
-  if (endlessMode && wasLvl >= 100) {
-    setTimeout(()=>{
-      finalScore = score;
-      save.coins += sessionCoins;
-      save.diamonds += sessionDiamonds;
-      submitEndlessScore(score, wasLvl, 'lv100-victory');
-      clearEndlessSnapshot();
-      writeSave(); stopBGM(); screen='victory';
-    }, 1400);
-    return;
-  }
+  // Endless mode: never ends — just keep advancing levels indefinitely
   // Clear sticky boomerangs at level transition
   for (const bb of bullets) if (bb.boomerang) bb.alive = false;
   level++; killCount=0; waveTimer=0;
@@ -4278,12 +4274,14 @@ function getDiff() {
   const C = save.console || defaultConsole();
   let d;
   if (endlessMode) {
+    // 难度在到达 ENDLESS_DIFF_CAP (=100) 关之后封顶, 之后只随机化内容
+    const cap = Math.min(level, ENDLESS_DIFF_CAP);
     d = {
-      spawnRate: Math.max(170 - endlessLv*1.4, 60),
-      formRate:  Math.max(460 - endlessLv*3, 180),
-      enemyCount: 1 + Math.floor(endlessLv/6),
-      bulletSpd:  Math.min(0.55 + endlessLv*0.018, 1.6),
-      hpMult:     Math.min(1 + endlessLv*0.045, 5),
+      spawnRate: Math.max(170 - cap*1.4, 60),
+      formRate:  Math.max(460 - cap*3, 180),
+      enemyCount: 1 + Math.floor(cap/6),
+      bulletSpd:  Math.min(0.55 + cap*0.018, 1.6),
+      hpMult:     Math.min(1 + cap*0.045, 5),
     };
   } else {
     const m = TIER_MUL[currentTier()];
@@ -4310,7 +4308,14 @@ function updateWaves() {
 
   // Boss trigger: kill quota met → enter boss IMMEDIATELY (clear any stragglers)
   const C = save.console || defaultConsole();
-  const baseThr = BOSS_KILL_THRESHOLD[Math.min(level-1, BOSS_KILL_THRESHOLD.length-1)];
+  let baseThr = BOSS_KILL_THRESHOLD[Math.min(level-1, BOSS_KILL_THRESHOLD.length-1)];
+  // Endless 超过 12 关: 阈值在 ±20% 随机浮动, 让节奏不再固定
+  if (endlessMode && level > BOSS_KILL_THRESHOLD.length) {
+    if (boss === null && !boss && killCount === 0 && waveTimer < 30) {
+      // Stable per-level — seed by level so every visit to lv N is the same threshold
+      baseThr = Math.round(baseThr * (0.85 + ((level * 9301 + 49297) % 233) / 233 * 0.4));
+    }
+  }
   const threshold = Math.max(3, Math.round(baseThr * (C.bossKillMul || 1)));
   if(killCount>=threshold) {
     for (const e of enemies) {
@@ -4324,8 +4329,16 @@ function updateWaves() {
   // Endless: random pool blend; Stage: strict pool per level
   let pool;
   if (endlessMode) {
-    if (level >= 5) {
-      // High-level endless: random mix of all enemy pools (large + small mobs together)
+    if (level > WAVE_POOLS.length) {
+      // 超过 12 关: 完全随机抽取若干池组合, 增加每关的随机感
+      pool = [];
+      const slots = 3 + rndInt(0, 3);  // 3~6 个池
+      for (let s = 0; s < slots; s++) {
+        const pi = rndInt(0, WAVE_POOLS.length-1);
+        pool = pool.concat(WAVE_POOLS[pi]);
+      }
+    } else if (level >= 5) {
+      // 5~12 关: 全部池混合
       pool = [];
       for (const p of WAVE_POOLS) pool = pool.concat(p);
     } else {
