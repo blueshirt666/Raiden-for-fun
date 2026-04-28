@@ -105,29 +105,29 @@ const A4=440,B4=493.88,C5=523.25,D5=587.33,E5=659.25,F5=698.46,G5=784,A5=880,B5=
 // ─── SMOOTH PLANE DRAWING ────────────────────────────────────────────────────
 // shapeIdx 0-3 correspond to different plane silhouettes
 
-// PLANE_SKINS: [name, price, currency, shapeIdx, colors[4]]
+// PLANE_SKINS: [name, price, currency, shapeIdx (0..7 distinct silhouettes), colors[4]]
 // colors: [body, cockpit, wing, engine_glow]
 const PLANE_SKINS = [
-  ['蓝色战机',0,'free',0,['#44aaff','#00ffff','#2266cc','#0088ff']],
-  ['红色凤凰',800,'g',0,['#ff4422','#ffaa44','#cc2200','#ff6600']],
-  ['绿色飞龙',800,'g',0,['#44cc44','#aaffaa','#228822','#00ff44']],
-  ['金色雄鹰',1200,'g',0,['#ffcc00','#ffffff','#cc8800','#ffaa00']],
-  ['紫色幻影',1200,'g',0,['#aa44ff','#ffaaff','#6600cc','#8800ff']],
-  ['白色天使',1500,'g',1,['#eeeeff','#ffffff','#aaaacc','#ccccff']],
-  ['黑色隐形',1500,'g',1,['#222233','#4444ff','#111122','#2233aa']],
-  ['橙色闪光',1500,'g',1,['#ff8800','#ffff00','#cc5500','#ff4400']],
-  ['青色冰晶',2000,'g',1,['#00ccff','#aaffff','#0088cc','#0044ff']],
-  ['粉色樱花',2000,'g',1,['#ff88cc','#ffffff','#dd4488','#ff44aa']],
-  ['炎焰冲锋',2500,'g',2,['#ff4444','#ff8800','#cc0000','#ff0000']],
-  ['暗物质',5,'d',2,['#110022','#ff00ff','#220044','#8800ff']],
-  ['雷狼战机',6,'d',2,['#334444','#00ffcc','#223333','#00ddff']],
-  ['风暴猎鹰',6,'d',2,['#442200','#ff8800','#664400','#ffcc00']],
-  ['古龙守护',8,'d',2,['#553300','#ff4400','#442200','#aa2200']],
-  ['水晶之翼',8,'d',3,['#aaeeff','#ffffff','#88ddff','#44bbff']],
-  ['影之幽灵',10,'d',3,['#111111','#ff0000','#000000','#220000']],
-  ['霓虹赛车',10,'d',3,['#ff0088','#00ffff','#cc0066','#ff00ff']],
-  ['太阳神焰',15,'d',3,['#ff6600','#ffff00','#ff3300','#ff8800']],
-  ['虚空收割',20,'d',3,['#220033','#ff00ff','#330044','#9900ff']],
+  ['蓝色战机',0,   'free', 0, ['#44aaff','#00ffff','#2266cc','#0088ff']],
+  ['红色凤凰',800, 'g',    1, ['#ff4422','#ffaa44','#cc2200','#ff6600']],
+  ['绿色飞龙',800, 'g',    2, ['#44cc44','#aaffaa','#228822','#00ff44']],
+  ['金色雄鹰',1200,'g',    3, ['#ffcc00','#ffffff','#cc8800','#ffaa00']],
+  ['紫色幻影',1200,'g',    4, ['#aa44ff','#ffaaff','#6600cc','#8800ff']],
+  ['白色天使',1500,'g',    5, ['#eeeeff','#ffffff','#aaaacc','#ccccff']],
+  ['黑色隐形',1500,'g',    6, ['#222233','#4444ff','#111122','#2233aa']],
+  ['橙色闪光',1500,'g',    7, ['#ff8800','#ffff00','#cc5500','#ff4400']],
+  ['青色冰晶',2000,'g',    0, ['#00ccff','#aaffff','#0088cc','#0044ff']],
+  ['粉色樱花',2000,'g',    2, ['#ff88cc','#ffffff','#dd4488','#ff44aa']],
+  ['炎焰冲锋',2500,'g',    4, ['#ff4444','#ff8800','#cc0000','#ff0000']],
+  ['暗物质',  5,   'd',    6, ['#110022','#ff00ff','#220044','#8800ff']],
+  ['雷狼战机',6,   'd',    1, ['#334444','#00ffcc','#223333','#00ddff']],
+  ['风暴猎鹰',6,   'd',    3, ['#442200','#ff8800','#664400','#ffcc00']],
+  ['古龙守护',8,   'd',    7, ['#553300','#ff4400','#442200','#aa2200']],
+  ['水晶之翼',8,   'd',    5, ['#aaeeff','#ffffff','#88ddff','#44bbff']],
+  ['影之幽灵',10,  'd',    6, ['#111111','#ff0000','#000000','#220000']],
+  ['霓虹赛车',10,  'd',    4, ['#ff0088','#00ffff','#cc0066','#ff00ff']],
+  ['太阳神焰',15,  'd',    7, ['#ff6600','#ffff00','#ff3300','#ff8800']],
+  ['虚空收割',20,  'd',    6, ['#220033','#ff00ff','#330044','#9900ff']],
 ];
 
 // BG_SKINS: [name, price, currency, bgType]
@@ -950,6 +950,170 @@ function drawVectorPlane(shapeIdx, colors, cx2, px, py, sc, flip) {
     cx2.strokeStyle = bcD; cx2.lineWidth = 0.7;
     cx2.beginPath();
     cx2.moveTo(0,-22); cx2.lineTo(-4,-10); cx2.lineTo(-6,-1); cx2.lineTo(-5,16); cx2.lineTo(-1,18); cx2.lineTo(1,18); cx2.lineTo(5,16); cx2.lineTo(6,-1); cx2.lineTo(4,-10); cx2.closePath();
+    cx2.stroke();
+
+  } else if (shapeIdx === 4) {
+    // ─ Stealth diamond (F-22 style angular) ─
+    cx2.fillStyle = wcD;
+    cx2.beginPath(); cx2.moveTo(0,-4); cx2.lineTo(-26,8); cx2.lineTo(-22,16); cx2.lineTo(-2,8); cx2.closePath(); cx2.fill();
+    cx2.beginPath(); cx2.moveTo(0,-4); cx2.lineTo( 26,8); cx2.lineTo( 22,16); cx2.lineTo( 2,8); cx2.closePath(); cx2.fill();
+    cx2.fillStyle = wc;
+    cx2.beginPath(); cx2.moveTo(0,-3); cx2.lineTo(-23,7); cx2.lineTo(-19,12); cx2.lineTo(-2,7); cx2.closePath(); cx2.fill();
+    cx2.beginPath(); cx2.moveTo(0,-3); cx2.lineTo( 23,7); cx2.lineTo( 19,12); cx2.lineTo( 2,7); cx2.closePath(); cx2.fill();
+    // Wingtip lights
+    cx2.fillStyle='#ff4444'; cx2.fillRect(-26,12,2,2);
+    cx2.fillStyle='#44ff44'; cx2.fillRect( 24,12,2,2);
+    // Angular fuselage (faceted)
+    const bg = cx2.createLinearGradient(-7,-22, 7,18);
+    bg.addColorStop(0, bcL); bg.addColorStop(0.5, bc); bg.addColorStop(1, bcD);
+    cx2.fillStyle = bg;
+    cx2.beginPath();
+    cx2.moveTo(0,-22); cx2.lineTo(-2,-12); cx2.lineTo(-7,-2); cx2.lineTo(-6,12); cx2.lineTo(-3,18); cx2.lineTo(3,18); cx2.lineTo(6,12); cx2.lineTo(7,-2); cx2.lineTo(2,-12); cx2.closePath();
+    cx2.fill();
+    // Faceted panels
+    cx2.strokeStyle='rgba(0,0,0,0.5)'; cx2.lineWidth=0.6;
+    cx2.beginPath();
+    cx2.moveTo(0,-22); cx2.lineTo(-7,-2); cx2.moveTo(0,-22); cx2.lineTo(7,-2);
+    cx2.moveTo(-7,-2); cx2.lineTo(-6,12); cx2.moveTo(7,-2); cx2.lineTo(6,12);
+    cx2.moveTo(0,-12); cx2.lineTo(0,18);
+    cx2.stroke();
+    // Twin angled tail fins
+    cx2.fillStyle = bcD;
+    cx2.beginPath(); cx2.moveTo(-4,5); cx2.lineTo(-7,15); cx2.lineTo(-3,15); cx2.lineTo(-2,5); cx2.closePath(); cx2.fill();
+    cx2.beginPath(); cx2.moveTo( 4,5); cx2.lineTo( 7,15); cx2.lineTo( 3,15); cx2.lineTo( 2,5); cx2.closePath(); cx2.fill();
+    // Cannon
+    cx2.fillStyle='#1a1a1a'; cx2.fillRect(-1,-15,2,7);
+    // Outline
+    cx2.strokeStyle = bcD; cx2.lineWidth = 0.8;
+    cx2.beginPath();
+    cx2.moveTo(0,-22); cx2.lineTo(-2,-12); cx2.lineTo(-7,-2); cx2.lineTo(-6,12); cx2.lineTo(-3,18); cx2.lineTo(3,18); cx2.lineTo(6,12); cx2.lineTo(7,-2); cx2.lineTo(2,-12); cx2.closePath();
+    cx2.stroke();
+
+  } else if (shapeIdx === 5) {
+    // ─ Biplane / dual-wing layered ─
+    // Lower wing (wider)
+    cx2.fillStyle = wcD;
+    cx2.beginPath(); cx2.moveTo(-4,8); cx2.lineTo(-24,12); cx2.lineTo(-22,16); cx2.lineTo(-4,14); cx2.closePath(); cx2.fill();
+    cx2.beginPath(); cx2.moveTo( 4,8); cx2.lineTo( 24,12); cx2.lineTo( 22,16); cx2.lineTo( 4,14); cx2.closePath(); cx2.fill();
+    // Upper wing (narrower, raised)
+    cx2.fillStyle = wc;
+    cx2.beginPath(); cx2.moveTo(-3,-2); cx2.lineTo(-19,2); cx2.lineTo(-17,5); cx2.lineTo(-3,3); cx2.closePath(); cx2.fill();
+    cx2.beginPath(); cx2.moveTo( 3,-2); cx2.lineTo( 19,2); cx2.lineTo( 17,5); cx2.lineTo( 3,3); cx2.closePath(); cx2.fill();
+    // Wing struts
+    cx2.strokeStyle = bcD; cx2.lineWidth = 0.7;
+    cx2.beginPath();
+    cx2.moveTo(-12,2); cx2.lineTo(-13,12); cx2.moveTo(12,2); cx2.lineTo(13,12);
+    cx2.moveTo(-6,2); cx2.lineTo(-6,12); cx2.moveTo(6,2); cx2.lineTo(6,12);
+    cx2.stroke();
+    // Long fuselage with rounded nose
+    const bg = cx2.createLinearGradient(-6,-22, 6,18);
+    bg.addColorStop(0, bcL); bg.addColorStop(0.5, bc); bg.addColorStop(1, bcD);
+    cx2.fillStyle = bg;
+    cx2.beginPath();
+    cx2.moveTo(0,-22); cx2.bezierCurveTo(-5,-18, -6,-2, -5,16);
+    cx2.lineTo(-1,18); cx2.lineTo(1,18);
+    cx2.bezierCurveTo(6,-2, 5,-18, 0,-22);
+    cx2.closePath();
+    cx2.fill();
+    // Propeller hub + spinner blur
+    cx2.strokeStyle = 'rgba(255,255,255,0.4)';
+    cx2.lineWidth = 1.2;
+    cx2.beginPath(); cx2.ellipse(0,-22, 9, 2, frame*0.6, 0, Math.PI*2); cx2.stroke();
+    cx2.fillStyle = '#444';
+    cx2.beginPath(); cx2.arc(0,-22, 1.6, 0, Math.PI*2); cx2.fill();
+    // Tail fin (rear)
+    cx2.fillStyle = bcD;
+    cx2.beginPath(); cx2.moveTo(-1,12); cx2.lineTo(-2,18); cx2.lineTo(2,18); cx2.lineTo(1,12); cx2.closePath(); cx2.fill();
+    // Outline
+    cx2.strokeStyle = bcD; cx2.lineWidth = 0.7;
+    cx2.beginPath();
+    cx2.moveTo(0,-22); cx2.bezierCurveTo(-5,-18, -6,-2, -5,16);
+    cx2.lineTo(-1,18); cx2.lineTo(1,18);
+    cx2.bezierCurveTo(6,-2, 5,-18, 0,-22);
+    cx2.stroke();
+
+  } else if (shapeIdx === 6) {
+    // ─ Twin-fuselage / catamaran ─
+    // Two body pods
+    const bg = cx2.createLinearGradient(-9,-20, 9,18);
+    bg.addColorStop(0, bcL); bg.addColorStop(0.5, bc); bg.addColorStop(1, bcD);
+    cx2.fillStyle = bg;
+    for (const sx of [-7, 7]) {
+      cx2.beginPath();
+      cx2.moveTo(sx, -18);
+      cx2.lineTo(sx-3, -8);
+      cx2.lineTo(sx-4, 14);
+      cx2.lineTo(sx, 17);
+      cx2.lineTo(sx+4, 14);
+      cx2.lineTo(sx+3, -8);
+      cx2.closePath();
+      cx2.fill();
+    }
+    // Connecting wing between fuselages
+    cx2.fillStyle = wc;
+    cx2.beginPath(); cx2.moveTo(-11,2); cx2.lineTo(11,2); cx2.lineTo(13,8); cx2.lineTo(-13,8); cx2.closePath(); cx2.fill();
+    // Outer wings
+    cx2.fillStyle = wcD;
+    cx2.beginPath(); cx2.moveTo(-12,4); cx2.lineTo(-22,12); cx2.lineTo(-18,15); cx2.lineTo(-11,8); cx2.closePath(); cx2.fill();
+    cx2.beginPath(); cx2.moveTo( 12,4); cx2.lineTo( 22,12); cx2.lineTo( 18,15); cx2.lineTo( 11,8); cx2.closePath(); cx2.fill();
+    // Wingtip lights
+    cx2.fillStyle='#ff4444'; cx2.fillRect(-22,11,2,2);
+    cx2.fillStyle='#44ff44'; cx2.fillRect( 20,11,2,2);
+    // Center cockpit pod (suspended between fuselages)
+    cx2.fillStyle = bcD;
+    cx2.beginPath(); cx2.ellipse(0, -2, 4, 6, 0, 0, Math.PI*2); cx2.fill();
+    cx2.fillStyle = cc;
+    cx2.beginPath(); cx2.ellipse(0, -2, 2.6, 4.2, 0, 0, Math.PI*2); cx2.fill();
+    // Tail fins on each pod
+    cx2.fillStyle = bcD;
+    cx2.beginPath(); cx2.moveTo(-7, 10); cx2.lineTo(-7, 17); cx2.lineTo(-6, 17); cx2.lineTo(-6, 10); cx2.closePath(); cx2.fill();
+    cx2.beginPath(); cx2.moveTo( 7, 10); cx2.lineTo( 7, 17); cx2.lineTo( 6, 17); cx2.lineTo( 6, 10); cx2.closePath(); cx2.fill();
+    // Cannons (one on each fuselage nose)
+    cx2.fillStyle = '#1a1a1a';
+    cx2.fillRect(-7.7, -14, 1.4, 6); cx2.fillRect( 6.3, -14, 1.4, 6);
+    // Panel lines
+    cx2.strokeStyle = 'rgba(0,0,0,0.4)'; cx2.lineWidth = 0.5;
+    cx2.beginPath();
+    cx2.moveTo(-7,-18); cx2.lineTo(-7,17); cx2.moveTo(7,-18); cx2.lineTo(7,17);
+    cx2.stroke();
+
+  } else if (shapeIdx === 7) {
+    // ─ Forward-swept aggressor ─
+    cx2.fillStyle = wcD;
+    cx2.beginPath(); cx2.moveTo(-4,4); cx2.lineTo(-22,-2); cx2.lineTo(-22,8); cx2.lineTo(-6,12); cx2.closePath(); cx2.fill();
+    cx2.beginPath(); cx2.moveTo( 4,4); cx2.lineTo( 22,-2); cx2.lineTo( 22,8); cx2.lineTo( 6,12); cx2.closePath(); cx2.fill();
+    cx2.fillStyle = wc;
+    cx2.beginPath(); cx2.moveTo(-4,5); cx2.lineTo(-19,0); cx2.lineTo(-19,7); cx2.lineTo(-6,11); cx2.closePath(); cx2.fill();
+    cx2.beginPath(); cx2.moveTo( 4,5); cx2.lineTo( 19,0); cx2.lineTo( 19,7); cx2.lineTo( 6,11); cx2.closePath(); cx2.fill();
+    // Wingtip missiles
+    cx2.fillStyle = '#888'; cx2.fillRect(-22,-2,2,5); cx2.fillRect(20,-2,2,5);
+    cx2.fillStyle = '#ff4422'; cx2.fillRect(-22,2,2,1); cx2.fillRect(20,2,2,1);
+    // Slim aerodynamic body
+    const bg = cx2.createLinearGradient(-6,-22, 6,18);
+    bg.addColorStop(0, bcL); bg.addColorStop(0.5, bc); bg.addColorStop(1, bcD);
+    cx2.fillStyle = bg;
+    cx2.beginPath();
+    cx2.moveTo(0,-22); cx2.lineTo(-3,-14); cx2.lineTo(-5,0); cx2.lineTo(-6,16); cx2.lineTo(-2,18); cx2.lineTo(2,18); cx2.lineTo(6,16); cx2.lineTo(5,0); cx2.lineTo(3,-14); cx2.closePath();
+    cx2.fill();
+    // Canard (small forward wing)
+    cx2.fillStyle = wc;
+    cx2.beginPath(); cx2.moveTo(-3,-10); cx2.lineTo(-12,-7); cx2.lineTo(-12,-5); cx2.lineTo(-3,-7); cx2.closePath(); cx2.fill();
+    cx2.beginPath(); cx2.moveTo( 3,-10); cx2.lineTo( 12,-7); cx2.lineTo( 12,-5); cx2.lineTo( 3,-7); cx2.closePath(); cx2.fill();
+    // Panel + center stripe
+    cx2.strokeStyle='rgba(0,0,0,0.5)'; cx2.lineWidth=0.6;
+    cx2.beginPath();
+    cx2.moveTo(0,-22); cx2.lineTo(0,18);
+    cx2.moveTo(-5,2); cx2.lineTo(5,2);
+    cx2.stroke();
+    // Central single tail fin (tall)
+    cx2.fillStyle = bcD;
+    cx2.beginPath(); cx2.moveTo(-1,4); cx2.lineTo(-1,18); cx2.lineTo(0,20); cx2.lineTo(1,18); cx2.lineTo(1,4); cx2.closePath(); cx2.fill();
+    // Cannon
+    cx2.fillStyle='#1a1a1a'; cx2.fillRect(-1,-18,2,8);
+    // Outline
+    cx2.strokeStyle = bcD; cx2.lineWidth = 0.7;
+    cx2.beginPath();
+    cx2.moveTo(0,-22); cx2.lineTo(-3,-14); cx2.lineTo(-5,0); cx2.lineTo(-6,16); cx2.lineTo(-2,18); cx2.lineTo(2,18); cx2.lineTo(6,16); cx2.lineTo(5,0); cx2.lineTo(3,-14); cx2.closePath();
     cx2.stroke();
 
   } else {
@@ -3640,26 +3804,17 @@ const titleBtns=[
   {x:140,y:492,w:200,h:44,text:'排 行 榜',act:'leaderboard'},
 ];
 
+// Only renders if the medal is earned — unearned slots stay empty.
 function drawMedalIcon(x, y, earned, key) {
+  if (!earned) return;
   const colors = { novice:'#cd7f32', veteran:'#c0c0c0', hell:'#ffd700' };
-  if (earned) {
-    const g = cx.createRadialGradient(x-3, y-3, 1, x, y, 13);
-    g.addColorStop(0,'#fff'); g.addColorStop(0.4, colors[key]); g.addColorStop(1,'#000');
-    cx.fillStyle = g;
-    cx.beginPath(); cx.arc(x, y, 11, 0, Math.PI*2); cx.fill();
-    cx.strokeStyle='#ffeeaa'; cx.lineWidth=1; cx.stroke();
-    cx.fillStyle='#000'; cx.font="bold 10px 'Courier New', monospace"; cx.textAlign='center';
-    cx.fillText('★', x, y+4);
-  } else {
-    // Iron / unearned medal
-    const g = cx.createRadialGradient(x-3, y-3, 1, x, y, 13);
-    g.addColorStop(0,'#666'); g.addColorStop(0.5,'#3a3a3a'); g.addColorStop(1,'#1a1a1a');
-    cx.fillStyle = g;
-    cx.beginPath(); cx.arc(x, y, 11, 0, Math.PI*2); cx.fill();
-    cx.strokeStyle='#555'; cx.lineWidth=1; cx.stroke();
-    cx.fillStyle='#222'; cx.font="bold 10px 'Courier New', monospace"; cx.textAlign='center';
-    cx.fillText('☆', x, y+4);
-  }
+  const g = cx.createRadialGradient(x-3, y-3, 1, x, y, 13);
+  g.addColorStop(0,'#fff'); g.addColorStop(0.4, colors[key]); g.addColorStop(1,'#000');
+  cx.fillStyle = g;
+  cx.beginPath(); cx.arc(x, y, 11, 0, Math.PI*2); cx.fill();
+  cx.strokeStyle='#ffeeaa'; cx.lineWidth=1; cx.stroke();
+  cx.fillStyle='#000'; cx.font="bold 10px 'Courier New', monospace"; cx.textAlign='center';
+  cx.fillText('★', x, y+4);
 }
 function endlessButtonText() {
   if (save.endlessState) return '继续无尽 · LV '+save.endlessState.level;
@@ -3690,8 +3845,10 @@ function drawTitle() {
     cx.fillStyle='#220000';
     cx.fillRect(346, 388, 28, 36);
     cx.strokeStyle='#883333'; cx.strokeRect(346, 388, 28, 36);
-    cx.fillStyle='#ff6666'; cx.font="14px 'Courier New'";
-    cx.fillText('🗑', 360, 412);
+    cx.fillStyle='#ff6666'; cx.font="16px sans-serif";
+    cx.textAlign='center'; cx.textBaseline='middle';
+    cx.fillText('🗑', 360, 406);
+    cx.textBaseline='alphabetic';
   }
 
   // 关卡模式 → 旁边显示 3 枚勋章 (铜/银/金)，未获得显示铁牌
@@ -3837,17 +3994,20 @@ function drawShopPlanes() {
     cx.strokeStyle=isP1?'#00ffff':isP2?'#ff8844':isHL?'#4488cc':'#224466';
     cx.lineWidth=isP1||isP2?2:1;
     cx.strokeRect((bx+1)|0,(by+1)|0,(cw-2)|0,(ch-2)|0);
-    drawVectorPlane(skin[3],skin[4],cx,(bx+cw/2)|0,(by+38)|0,1.9,false);
-    cx.fillStyle=owned?'#aaddff':'#556677';cx.font="10px 'Courier New', monospace";cx.textAlign='center';
-    cx.fillText(skin[0],(bx+cw/2)|0,(by+55)|0);
+    // Plane image — kept inside the border, name placed below
+    drawVectorPlane(skin[3],skin[4],cx,(bx+cw/2)|0,(by+34)|0,1.45,false);
+    // Name (inside border, below image)
+    cx.fillStyle=owned?'#aaddff':'#7799bb';cx.font="bold 10px 'Courier New', monospace";cx.textAlign='center';
+    cx.fillText(skin[0],(bx+cw/2)|0,(by+76)|0);
+    // Owned mark or price
     if(owned){
       cx.fillStyle='#00ff88';cx.font="10px 'Courier New'";
-      cx.fillText(isP1?'[P1]':isP2?'[P2]':'✓',(bx+cw/2)|0,(by+70)|0);
+      cx.fillText(isP1?'[P1]':isP2?'[P2]':'✓',(bx+cw/2)|0,(by+90)|0);
     } else {
       cx.fillStyle=skin[2]==='d'?'#44aaff':'#ffcc00';cx.font="10px 'Courier New'";
-      cx.fillText((skin[2]==='d'?'💎':'🪙')+skin[1],(bx+cw/2)|0,(by+70)|0);
+      cx.fillText((skin[2]==='d'?'💎':'🪙')+skin[1],(bx+cw/2)|0,(by+90)|0);
     }
-    if(isHL){cx.fillStyle='#88ccff';cx.font="9px 'Courier New'";cx.fillText('▶选中◀',(bx+cw/2)|0,(by+83)|0);}
+    if(isHL){cx.fillStyle='#88ccff';cx.font="9px 'Courier New'";cx.fillText('▶选中◀',(bx+cw/2)|0,(by+102)|0);}
     cx.textAlign='left';
   }
 }
