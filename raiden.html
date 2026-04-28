@@ -2,23 +2,50 @@
 <html lang="zh">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>RAIDEN 雷电</title>
 <style>
-* { margin:0; padding:0; box-sizing:border-box; }
-body { background:#000; display:flex; justify-content:center; align-items:center; min-height:100vh; overflow:hidden; }
-#wrap { position:relative; width:480px; height:700px; }
-canvas { display:block; }
+* { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+html, body { background:#000; width:100%; height:100%; overflow:hidden; touch-action:none; overscroll-behavior:none; -webkit-user-select:none; user-select:none; }
+body { display:flex; justify-content:center; align-items:center; min-height:100vh; min-height:100dvh; }
+#wrap { position:relative; width:480px; height:700px; max-width:100vw; max-height:100dvh; }
+canvas { display:block; width:100%; height:100%; image-rendering:auto; }
 .side-btn {
   position:absolute; right:-52px; width:44px; height:44px;
   background:#111; border:2px solid #444; color:#fff;
   font-size:18px; cursor:pointer; display:flex; align-items:center; justify-content:center;
   border-radius:4px; user-select:none;
+  z-index:5;
 }
 #btn-pause { top:10px; }
 #btn-invincible { top:64px; }
 #btn-bgm { top:118px; }
 .side-btn:hover { background:#333; border-color:#888; }
 .side-btn.active { border-color:#0ff; background:#002233; }
+/* Mobile-only on-screen bomb / pause; hidden on desktop */
+.touch-only { display:none; }
+@media (hover: none) and (pointer: coarse), (max-width: 640px) {
+  body.is-mobile #wrap { width:100vw; height:auto; aspect-ratio:480/700; max-height:100dvh; }
+  body.is-mobile .side-btn { right:auto; width:36px; height:36px; font-size:14px; }
+  body.is-mobile #btn-pause { top:6px; left:6px; }
+  body.is-mobile #btn-invincible { top:6px; left:48px; opacity:.55; }
+  body.is-mobile #btn-bgm { top:6px; left:90px; }
+  body.is-mobile #btn-track { top:6px; left:132px; }
+  body.is-mobile .touch-only { display:flex; }
+}
+#btn-bomb {
+  position:absolute; right:14px; bottom:18px;
+  width:78px; height:78px; border-radius:50%;
+  background:radial-gradient(circle at 30% 30%, #6688ff, #1133aa 60%, #001144);
+  border:3px solid #88aaff; color:#fff; font-weight:bold; font-size:13px;
+  display:flex; align-items:center; justify-content:center;
+  box-shadow:0 0 14px rgba(80,120,255,0.6); user-select:none;
+  z-index:6;
+}
+#btn-bomb:active { transform:scale(0.92); background:radial-gradient(circle at 30% 30%, #aabbff, #4477ff 60%, #002288); }
+#btn-bomb .count { position:absolute; top:-4px; right:-4px; background:#ff4422; border-radius:50%; min-width:20px; height:20px; font-size:11px; display:flex; align-items:center; justify-content:center; padding:0 4px; }
 </style>
 </head>
 <body>
@@ -28,6 +55,7 @@ canvas { display:block; }
   <button class="side-btn" id="btn-invincible" title="Invincible (G)">💀</button>
   <button class="side-btn" id="btn-bgm" title="BGM (M)">🎵</button>
   <button class="side-btn" id="btn-track" title="Switch Track (T)" style="top:172px;font-size:11px;">♬</button>
+  <button class="touch-only" id="btn-bomb" aria-label="导弹">导弹<span class="count" id="bomb-count">3</span></button>
 </div>
 <script>
 'use strict';
@@ -1220,6 +1248,11 @@ function updatePlayer(p, keys) {
     if (keys['ArrowRight']) dx=1;
     if (keys['ArrowUp']) dy=-1;
     if (keys['ArrowDown']) dy=1;
+    // Mobile virtual joystick (P1 only)
+    if (IS_MOBILE && joy.active) {
+      dx = joy.dx;
+      dy = joy.dy;
+    }
   } else {
     if (keys['a']||keys['A']) dx=-1;
     if (keys['d']||keys['D']) dx=1;
@@ -1230,14 +1263,23 @@ function updatePlayer(p, keys) {
   p.x=clamp(p.x,12,W-12); p.y=clamp(p.y,12,H-12);
   p.px=p.x|0; p.py=p.y|0;
 
-  const fireKey=p.pNum===1?(keys['z']||keys['Z']):(keys['j']||keys['J']);
+  // Fire: mobile auto-fires (P1 only); desktop uses keyboard
+  let fireKey;
+  if (p.pNum===1 && IS_MOBILE) {
+    fireKey = true;
+  } else {
+    fireKey = p.pNum===1 ? (keys['z']||keys['Z']) : (keys['j']||keys['J']);
+  }
   if (fireKey&&p.shootTimer<=0) { fireBullet(p); SFX.shoot(p.weapon); }
 
-  const bombKey=p.pNum===1?(keys['x']||keys['X']):(keys['k']||keys['K']);
-  if (bombKey&&!p._bombHeld&&p.bombs>0) {
-    p._bombHeld=true; p.bombs--; doBomb(p); SFX.bomb();
+  // Bomb: keyboard only on desktop; mobile uses on-screen button
+  if (!IS_MOBILE) {
+    const bombKey=p.pNum===1?(keys['x']||keys['X']):(keys['k']||keys['K']);
+    if (bombKey&&!p._bombHeld&&p.bombs>0) {
+      p._bombHeld=true; p.bombs--; doBomb(p); SFX.bomb();
+    }
+    if (!bombKey) p._bombHeld=false;
   }
-  if (!bombKey) p._bombHeld=false;
 }
 
 // ─── BULLETS ─────────────────────────────────────────────────────────────────
@@ -3348,6 +3390,126 @@ function startGame(two, endless, startLv) {
 
 // ─── INPUT ───────────────────────────────────────────────────────────────────
 const keys={};
+// Mobile detection — true when device has touch + coarse pointer (real phones/tablets)
+const IS_MOBILE = (('ontouchstart' in window) || (navigator.maxTouchPoints||0) > 0)
+                  && window.matchMedia('(pointer: coarse)').matches;
+if (IS_MOBILE) document.body.classList.add('is-mobile');
+
+// Virtual joystick state for mobile movement
+const joy = { active:false, id:-1, sx:0, sy:0, x:0, y:0, dx:0, dy:0, rad:60 };
+
+function canvasCoord(touch) {
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: (touch.clientX - rect.left) * (W / rect.width),
+    y: (touch.clientY - rect.top)  * (H / rect.height),
+  };
+}
+
+function startJoystick(t) {
+  const p = canvasCoord(t);
+  joy.active = true; joy.id = t.identifier;
+  joy.sx = p.x; joy.sy = p.y;
+  joy.x = p.x; joy.y = p.y;
+  joy.dx = 0; joy.dy = 0;
+}
+function moveJoystick(t) {
+  const p = canvasCoord(t);
+  let ddx = p.x - joy.sx, ddy = p.y - joy.sy;
+  const dist = Math.hypot(ddx, ddy);
+  if (dist > joy.rad) { ddx = ddx/dist*joy.rad; ddy = ddy/dist*joy.rad; }
+  joy.x = joy.sx + ddx; joy.y = joy.sy + ddy;
+  // Normalized -1..1 with small dead-zone
+  const dz = 8;
+  if (dist < dz) { joy.dx = 0; joy.dy = 0; }
+  else { joy.dx = ddx/joy.rad; joy.dy = ddy/joy.rad; }
+}
+function endJoystick() {
+  joy.active = false; joy.id = -1; joy.dx = 0; joy.dy = 0;
+}
+
+function drawJoystick() {
+  if (!IS_MOBILE || !joy.active || screen !== 'game') return;
+  // Outer ring (joystick base)
+  cx.save();
+  cx.globalAlpha = 0.55;
+  cx.strokeStyle = '#88ccff';
+  cx.lineWidth = 3;
+  cx.beginPath(); cx.arc(joy.sx, joy.sy, joy.rad, 0, Math.PI*2); cx.stroke();
+  cx.fillStyle = 'rgba(0,40,80,0.35)';
+  cx.beginPath(); cx.arc(joy.sx, joy.sy, joy.rad, 0, Math.PI*2); cx.fill();
+  // Inner thumb
+  cx.globalAlpha = 0.85;
+  const tg = cx.createRadialGradient(joy.x-6, joy.y-6, 2, joy.x, joy.y, 26);
+  tg.addColorStop(0, '#aaccff'); tg.addColorStop(1, '#1144aa');
+  cx.fillStyle = tg;
+  cx.beginPath(); cx.arc(joy.x, joy.y, 26, 0, Math.PI*2); cx.fill();
+  cx.strokeStyle = '#ffffff'; cx.lineWidth = 2;
+  cx.beginPath(); cx.arc(joy.x, joy.y, 26, 0, Math.PI*2); cx.stroke();
+  cx.restore();
+}
+
+function handleTouchStart(e) {
+  if (screen !== 'game') {
+    // Touch acts like a click for menu screens
+    for (const t of e.changedTouches) {
+      const p = canvasCoord(t);
+      try{getAudio();if(audioCtx&&audioCtx.state==='suspended')audioCtx.resume();}catch(_){}
+      if (screen==='title') clickTitle(p.x, p.y);
+      else if (screen==='shop') clickShop(p.x, p.y);
+      else if (screen==='stageSelect') clickStageSelect(p.x, p.y);
+      else if (screen==='gameover') clickGameOver(p.x, p.y);
+      else if (screen==='victory') clickVictory(p.x, p.y);
+      else if (screen==='death') clickDeath(p.x, p.y);
+      else if (screen==='pause') clickPause(p.x, p.y);
+    }
+    e.preventDefault();
+    return;
+  }
+  // Game running: any new touch becomes joystick (last finger wins)
+  for (const t of e.changedTouches) {
+    startJoystick(t);
+    break;
+  }
+  e.preventDefault();
+}
+function handleTouchMove(e) {
+  if (!joy.active) return;
+  for (const t of e.changedTouches) {
+    if (t.identifier === joy.id) { moveJoystick(t); break; }
+  }
+  e.preventDefault();
+}
+function handleTouchEnd(e) {
+  for (const t of e.changedTouches) {
+    if (t.identifier === joy.id) { endJoystick(); break; }
+  }
+  e.preventDefault();
+}
+canvas.addEventListener('touchstart', handleTouchStart, {passive:false});
+canvas.addEventListener('touchmove',  handleTouchMove,  {passive:false});
+canvas.addEventListener('touchend',   handleTouchEnd,   {passive:false});
+canvas.addEventListener('touchcancel',handleTouchEnd,   {passive:false});
+
+// On-screen mobile bomb button
+const bombBtn = document.getElementById('btn-bomb');
+const bombCountEl = document.getElementById('bomb-count');
+function triggerBomb() {
+  if (screen !== 'game') return;
+  const p = players[0];
+  if (!p || p.dead || p.bombs <= 0) return;
+  p.bombs--; doBomb(p); SFX.bomb();
+}
+bombBtn.addEventListener('touchstart', e=>{ e.preventDefault(); triggerBomb(); }, {passive:false});
+bombBtn.addEventListener('click',     e=>{ e.preventDefault(); triggerBomb(); });
+function refreshBombCount() {
+  if (!IS_MOBILE) return;
+  const p = players[0];
+  bombCountEl.textContent = p ? p.bombs : 0;
+  bombBtn.style.display = (screen==='game') ? '' : 'none';
+}
+
+
 document.addEventListener('keydown',e=>{
   keys[e.key]=true;
   if(e.key==='p'||e.key==='P'){
@@ -3456,6 +3618,7 @@ function drawGameField() {
   for(const p of players) drawPlayer(p);
   drawFTs();
   drawHUD();
+  drawJoystick();
 }
 
 function draw() {
@@ -3490,6 +3653,7 @@ function draw() {
 function loop() {
   update();
   draw();
+  refreshBombCount();
   requestAnimationFrame(loop);
 }
 
