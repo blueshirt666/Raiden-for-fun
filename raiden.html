@@ -24,19 +24,24 @@ canvas { display:block; width:100%; height:100%; image-rendering:auto; }
 #btn-bgm { top:118px; }
 .side-btn:hover { background:#333; border-color:#888; }
 .side-btn.active { border-color:#0ff; background:#002233; }
-.spd-btn {
-  position:absolute; right:-52px; width:44px; height:36px;
-  background:#111; border:2px solid #444; color:#aac;
-  font-size:13px; font-weight:bold; cursor:pointer;
+#btn-speed {
+  position:absolute; right:-52px; top:226px; width:44px; height:44px;
+  background:#221a00; border:2px solid #ffaa00; color:#ffcc44;
+  font-size:14px; font-weight:bold; cursor:pointer;
   display:flex; align-items:center; justify-content:center;
   border-radius:4px; user-select:none; z-index:5;
 }
-.spd-btn:hover { background:#222; border-color:#888; }
-.spd-btn.active { border-color:#ffaa00; background:#332200; color:#ffcc44; }
-#btn-spd-half { top:226px; }
-#btn-spd-1x   { top:266px; }
-#btn-spd-2x   { top:306px; }
-#btn-spd-3x   { top:346px; }
+#btn-speed:hover { background:#332200; border-color:#ffcc44; }
+#btn-infbomb {
+  position:absolute; right:-52px; top:280px; width:44px; height:44px;
+  background:#221122; border:2px solid #ff44ff; color:#ffaaff;
+  font-size:18px; cursor:pointer;
+  display:flex; align-items:center; justify-content:center;
+  border-radius:4px; user-select:none; z-index:5;
+  display:none;
+}
+#btn-infbomb.show { display:flex; }
+#btn-infbomb:active { transform:scale(0.92); }
 /* Mobile-only on-screen bomb / pause; hidden on desktop */
 .touch-only { display:none; }
 @media (hover: none) and (pointer: coarse), (max-width: 640px) {
@@ -47,11 +52,8 @@ canvas { display:block; width:100%; height:100%; image-rendering:auto; }
   body.is-mobile #btn-bgm { top:6px; left:90px; }
   body.is-mobile #btn-track { top:6px; left:132px; }
   body.is-mobile .touch-only { display:flex; }
-  body.is-mobile .spd-btn { right:auto; width:36px; height:28px; font-size:10px; top:46px; }
-  body.is-mobile #btn-spd-half { left:6px; }
-  body.is-mobile #btn-spd-1x   { left:48px; }
-  body.is-mobile #btn-spd-2x   { left:90px; }
-  body.is-mobile #btn-spd-3x   { left:132px; }
+  body.is-mobile #btn-speed   { right:auto; left:174px; top:6px; width:36px; height:36px; font-size:11px; }
+  body.is-mobile #btn-infbomb { right:auto; left:216px; top:6px; width:36px; height:36px; font-size:14px; }
 }
 #btn-bomb {
   position:absolute; right:14px; bottom:18px;
@@ -73,10 +75,8 @@ canvas { display:block; width:100%; height:100%; image-rendering:auto; }
   <button class="side-btn" id="btn-invincible" title="Invincible (G)">💀</button>
   <button class="side-btn" id="btn-bgm" title="BGM (M)">🎵</button>
   <button class="side-btn" id="btn-track" title="Switch Track (T)" style="top:172px;font-size:11px;">♬</button>
-  <button class="spd-btn" id="btn-spd-half" data-spd="0.5">0.5x</button>
-  <button class="spd-btn active" id="btn-spd-1x"   data-spd="1">1x</button>
-  <button class="spd-btn" id="btn-spd-2x"   data-spd="2">2x</button>
-  <button class="spd-btn" id="btn-spd-3x"   data-spd="3">3x</button>
+  <button id="btn-speed" title="切换倍速">1.0x</button>
+  <button id="btn-infbomb" title="无限核弹">💥∞</button>
   <!-- Bomb hidden: 移动端双击屏幕触发，桌面端 X 键 -->
 </div>
 <script>
@@ -165,6 +165,7 @@ function defaultSave() {
     selP1: 0, selP2: 1, selBG: 0,
     stageProgress: 1,
     moveSensX: 1.0, moveSensY: 1.0,
+    endlessState: null,   // {level,score,killCount,sessionCoins,sessionDiamonds,p,wingmen}
   };
 }
 let save = defaultSave();
@@ -186,6 +187,7 @@ function loadSave() {
       if (typeof d.stageProgress === 'number') save.stageProgress = d.stageProgress;
       if (typeof d.moveSensX === 'number') save.moveSensX = d.moveSensX;
       if (typeof d.moveSensY === 'number') save.moveSensY = d.moveSensY;
+      if (d.endlessState && typeof d.endlessState === 'object') save.endlessState = d.endlessState;
     }
   } catch(e) {}
 }
@@ -2132,11 +2134,13 @@ function spawnBoss() {
   SFX.bossAppear();
   const idx = bossIndex();
   const def = BOSS_DEFS[idx];
-  const hp = def.hp + level*150;
+  const barCount = clamp(1 + Math.floor((level-1)/2), 1, 5);
+  const hp = (def.hp + level*150) * barCount;
   boss = {
     bossType: idx,
     x: W/2, y: -80, px:W/2|0, py:-80,
     hp, maxHp: hp,
+    barCount,
     w:80, h:60, alive:true,
     phase:0, moveTimer:0, shootTimer:0,
     vx: 1.5, entryDone:false,
@@ -2323,16 +2327,27 @@ function drawBoss() {
   cx.save(); cx.translate(x, y);
   drawBossShape(b);
   cx.restore();
-  // HP bar with name
-  const bpw=300,bpx=(W-bpw)/2,bpy=H-28;
-  cx.fillStyle='rgba(0,0,0,0.7)'; cx.fillRect(bpx-2,bpy-2,bpw+4,14);
+
+  // HP bar at TOP (under HUD); shows current segment + xN remaining
+  const bpw=300, bpx=(W-bpw)/2, bpy=42;
+  const segs = b.barCount || 1;
+  const segHp = b.maxHp / segs;
+  const barsLeft = Math.max(1, Math.ceil(b.hp / segHp));
+  const fillRatio = clamp((b.hp - (barsLeft-1)*segHp) / segHp, 0, 1);
+
+  cx.fillStyle='rgba(0,0,0,0.75)'; cx.fillRect(bpx-2,bpy-14,bpw+4,28);
+  // Title row
+  cx.fillStyle='#fff'; cx.font="bold 11px sans-serif"; cx.textAlign='center';
+  cx.fillText('★ '+b.name+' ★', (W/2)|0, bpy-2);
+  // HP fill
   cx.fillStyle='#220011'; cx.fillRect(bpx|0,bpy|0,bpw,10);
-  const hpRatio=b.hp/b.maxHp;
   const bHpGrad=cx.createLinearGradient(bpx,0,bpx+bpw,0);
   bHpGrad.addColorStop(0,b.color); bHpGrad.addColorStop(1,b.acc);
-  cx.fillStyle=bHpGrad; cx.fillRect(bpx|0,bpy|0,(bpw*hpRatio)|0,10);
-  cx.fillStyle='#fff'; cx.font="bold 11px sans-serif"; cx.textAlign='center';
-  cx.fillText('★ '+b.name+' ★', (W/2)|0,(bpy-4)|0); cx.textAlign='left';
+  cx.fillStyle=bHpGrad; cx.fillRect(bpx|0,bpy|0,(bpw*fillRatio)|0,10);
+  // x N indicator
+  cx.fillStyle='#ffcc44'; cx.font="bold 11px 'Courier New', monospace"; cx.textAlign='left';
+  cx.fillText('x'+barsLeft, bpx+bpw+6, bpy+9);
+  cx.textAlign='left';
 }
 
 function drawBossShape(b) {
@@ -2642,7 +2657,8 @@ function collectPickups() {
           case 'bomb':
             p.bombs++; addFT('+BOMB',pk.x,pk.y,'#4444ff'); break;
           case 'shield':
-            p.shield=300; addFT('SHIELD',pk.x,pk.y,'#00ffcc'); SFX.pickupShield(); break;
+            p.shield=420; p.shieldHits=3;
+            addFT('SHIELD x3',pk.x,pk.y,'#00ffcc'); SFX.pickupShield(); break;
           case 'wingman':
             spawnWingman(p, pk.value);
             addFT(WINGMAN_NAMES[pk.value],pk.x,pk.y,WINGMAN_COLORS[pk.value]); SFX.pickupWeapon(); break;
@@ -2660,21 +2676,43 @@ const WINGMAN_OFFSETS=[
 
 const WINGMAN_MAX = 2;
 function spawnWingman(player, wType) {
-  // Cap at 2 per player; replace oldest if over
   const owned = wingmen.filter(w=>w.owner===player&&w.alive);
+  // Same color picked again → level up existing one (max 5)
+  const same = owned.find(w=>w.wType===wType);
+  if (same) {
+    if ((same.level||1) < 5) {
+      same.level = (same.level||1) + 1;
+      addFT(WINGMAN_NAMES[wType]+' Lv'+same.level, player.x, player.y-30, WINGMAN_COLORS[wType]);
+      SFX.levelUp();
+    } else {
+      addFT('Lv MAX', player.x, player.y-30, WINGMAN_COLORS[wType]);
+      SFX.pickupStar();
+    }
+    return;
+  }
+  // Different color: cap at 2; replace OLDEST (preserve incoming level=1)
   while (owned.length >= WINGMAN_MAX) {
     const oldest = owned.shift();
     oldest.alive = false;
   }
   const slot = wingmen.filter(w=>w.owner===player&&w.alive).length;
   wingmen.push({
-    owner:player, wType, alive:true,
+    owner:player, wType, alive:true, level:1,
     x:player.x, y:player.y,
     slot, fireTimer:0,
     dx:WINGMAN_OFFSETS[slot%2].dx,
     dy:WINGMAN_OFFSETS[slot%2].dy,
     shieldTimer: wType===2 ? 400 : 0,
   });
+}
+// Drop all wingman levels by 1 on player damage; remove if at level 1
+function damageWingmen(player) {
+  for (const w of wingmen) {
+    if (!w.alive || w.owner !== player) continue;
+    const lv = w.level||1;
+    if (lv <= 1) { w.alive = false; spawnExplosion(w.x, w.y, 'small'); }
+    else { w.level = lv - 1; }
+  }
 }
 
 function updateWingmen() {
@@ -2685,13 +2723,15 @@ function updateWingmen() {
     const tx=w.owner.x+w.dx, ty=w.owner.y+w.dy;
     w.x+=(tx-w.x)*0.12; w.y+=(ty-w.y)*0.12;
     w.fireTimer++;
+    const lv = w.level||1;
     const rates=[20,35,0,18,50]; // shield doesn't fire bullets
+    const fireRate = Math.max(4, rates[w.wType] - (lv-1)*3);
     if(w.wType===2) {
-      // Shield wingman: gives player a shield that blocks 3 hits
+      // Shield wingman: gives player a shield that blocks (2+lv) hits
       if(w.fireTimer>=60&&w.owner.shield<=0) {
-        w.owner.shield=300; w.owner.shieldHits=3; w.fireTimer=0;
+        w.owner.shield=300; w.owner.shieldHits = 2 + lv; w.fireTimer=0;
       }
-    } else if(w.fireTimer>=rates[w.wType]) {
+    } else if(w.fireTimer>=fireRate) {
       w.fireTimer=0;
       fireWingmanBullet(w);
     }
@@ -2700,19 +2740,27 @@ function updateWingmen() {
 }
 
 function fireWingmanBullet(w) {
-  const x=w.x, y=w.y;
+  const x=w.x, y=w.y, lv=w.level||1;
+  const dmgMul = 1 + (lv-1) * 0.45;
   switch(w.wType) {
     case 0: // laser
-      bullets.push(mkB(x,y,-0,- 14,'#00ffff',2,16,w.owner,12,true));
+      bullets.push(mkB(x,y,0,-14,'#00ffff',2 + Math.floor(lv/2),16,w.owner, Math.round(12*dmgMul),true));
       break;
     case 1: // missile
-      bullets.push(mkB(x,y,0,-8,'#ffcc00',4,8,w.owner,22));
+      bullets.push(mkB(x,y,0,-8,'#ffcc00',4,8,w.owner, Math.round(22*dmgMul)));
+      if (lv>=3) bullets.push(mkB(x-6,y+4,-1,-8,'#ffaa00',3,7,w.owner, Math.round(14*dmgMul)));
+      if (lv>=5) bullets.push(mkB(x+6,y+4, 1,-8,'#ffaa00',3,7,w.owner, Math.round(14*dmgMul)));
       break;
-    case 3: // spread
-      [-2,0,2].forEach(vx=>bullets.push(mkB(x,y,vx,-10,'#ff8800',3,5,w.owner,9)));
+    case 3: { // spread — extra pellets per level
+      const num = 3 + (lv-1);
+      for (let i=0;i<num;i++) {
+        const t = num>1 ? (i/(num-1)-0.5)*4 : 0;
+        bullets.push(mkB(x,y,t,-10,'#ff8800',3,5,w.owner, Math.round(9*dmgMul)));
+      }
       break;
-    case 4: // bomber - fires a slow heavy shot
-      bullets.push(mkB(x,y,0,-5,'#ff44aa',8,8,w.owner,40));
+    }
+    case 4: // bomber — heavy, scaling damage
+      bullets.push(mkB(x,y,0,-5,'#ff44aa',8 + lv,8 + lv,w.owner, Math.round(40*dmgMul)));
       break;
   }
 }
@@ -2721,6 +2769,7 @@ function drawWingmen() {
   for(const w of wingmen) {
     if(!w.alive||w.owner.dead) continue;
     const wc=WINGMAN_COLORS[w.wType];
+    const lv = w.level||1;
     // Draw mini escort plane
     cx.save(); cx.translate(w.x|0, w.y|0);
     cx.fillStyle=wc+'cc';
@@ -2730,10 +2779,16 @@ function drawWingmen() {
     const eg=cx.createRadialGradient(0,7,1,0,7,7);
     eg.addColorStop(0,wc); eg.addColorStop(1,wc+'00');
     cx.fillStyle=eg; cx.beginPath(); cx.arc(0,7,7,0,Math.PI*2); cx.fill();
-    // Type indicator glow halo
-    cx.strokeStyle=wc; cx.lineWidth=1; cx.globalAlpha=0.5+Math.sin(frame*0.15)*0.3;
-    cx.beginPath(); cx.ellipse(0,0,14,14,0,0,Math.PI*2); cx.stroke();
+    // Type indicator glow halo (intensity scales with level)
+    cx.strokeStyle=wc; cx.lineWidth=1+Math.floor((lv-1)/2);
+    cx.globalAlpha=0.4+0.12*lv+Math.sin(frame*0.15)*0.2;
+    cx.beginPath(); cx.ellipse(0,0,14+lv,14+lv,0,0,Math.PI*2); cx.stroke();
     cx.globalAlpha=1;
+    // Level dots above
+    for (let i=0;i<lv;i++) {
+      cx.fillStyle = '#ffffff';
+      cx.fillRect(-6+i*3, -16, 2, 2);
+    }
     cx.restore();
   }
 }
@@ -2807,6 +2862,8 @@ function hitPlayer(p) {
     p.weaponLevel--;
     addFT('武器降级!',p.x,p.y-20,'#ff8888');
   }
+  // Damage also degrades wingmen
+  damageWingmen(p);
   spawnExplosion(p.x,p.y,'medium');
   if(p.lives<=0){p.dead=true;p.lives=0;spawnExplosion(p.x,p.y,'large');checkGameOver();}
   else{p.dead=true;p.respawnTimer=120;}
@@ -2831,12 +2888,12 @@ function doRevive() {
   if (sessionDiamonds + save.diamonds < deathReviveCost) return false;
   if (sessionDiamonds >= deathReviveCost) sessionDiamonds -= deathReviveCost;
   else { const need = deathReviveCost - sessionDiamonds; sessionDiamonds = 0; save.diamonds -= need; writeSave(); }
-  // Restore player(s)
+  // Restore player(s) — revive grants a fresh load of 5 bombs
   for (const p of players) {
     p.lives = 3; p.dead = false; p.respawnTimer = 0;
     p.invTimer = 180; p.shield = 240; p.shieldHits = 3;
     p.x = p.pNum===1 ? W*0.65 : W*0.35; p.y = H-120;
-    p.bombs = Math.max(p.bombs, 2);
+    p.bombs = 5;
   }
   // Wipe field hazards
   enemyBullets.length = 0;
@@ -3026,10 +3083,15 @@ function updateWaves() {
   // Endless: random pool blend; Stage: strict pool per level
   let pool;
   if (endlessMode) {
-    // Combine 2 stage pools surrounding current level for endless variety
-    const idx = Math.min(level-1, WAVE_POOLS.length-1);
-    const idx2 = Math.max(0, idx-1);
-    pool = WAVE_POOLS[idx].concat(WAVE_POOLS[idx2]);
+    if (level >= 5) {
+      // High-level endless: random mix of all enemy pools (large + small mobs together)
+      pool = [];
+      for (const p of WAVE_POOLS) pool = pool.concat(p);
+    } else {
+      const idx = Math.min(level-1, WAVE_POOLS.length-1);
+      const idx2 = Math.max(0, idx-1);
+      pool = WAVE_POOLS[idx].concat(WAVE_POOLS[idx2]);
+    }
   } else {
     pool = poolForLevel(level);
   }
@@ -3087,6 +3149,10 @@ const titleBtns=[
   {x:140,y:384,w:200,h:44,text:'无 尽 模 式',act:'endless'},
   {x:140,y:438,w:200,h:44,text:'商    城',act:'shop'},
 ];
+function endlessButtonText() {
+  if (save.endlessState) return '继续无尽 · LV '+save.endlessState.level;
+  return '无 尽 模 式';
+}
 
 function drawTitle() {
   fillPx('#000010',0,0,W,H);
@@ -3105,7 +3171,20 @@ function drawTitle() {
   cx.fillStyle='#66aaff';cx.font="14px 'Courier New', monospace";cx.fillText('INSERT COIN - PRESS START',W/2,285);
   if(Math.floor(frame/40)%2===0){cx.fillStyle='#ffff44';cx.font="16px 'Courier New', monospace";cx.fillText('▼ SELECT ▼',W/2,312);}
 
-  for(const btn of titleBtns) drawButton(btn.x,btn.y,btn.w,btn.h,btn.text,false);
+  for(const btn of titleBtns) {
+    const text = (btn.act==='endless') ? endlessButtonText() : btn.text;
+    drawButton(btn.x,btn.y,btn.w,btn.h,text, btn.act==='endless' && !!save.endlessState);
+  }
+  if (save.endlessState) {
+    cx.fillStyle='#aa4444'; cx.font="10px 'Courier New', monospace"; cx.textAlign='center';
+    cx.fillText('点击继续 · 长按右侧🗑放弃进度', W/2+106, 432);
+    // small reset btn
+    cx.fillStyle='#220000';
+    cx.fillRect(346, 388, 28, 36);
+    cx.strokeStyle='#883333'; cx.strokeRect(346, 388, 28, 36);
+    cx.fillStyle='#ff6666'; cx.font="14px 'Courier New'";
+    cx.fillText('🗑', 360, 412);
+  }
 
   cx.fillStyle='#ffcc00';cx.font="16px 'Courier New', monospace";cx.fillText('🪙 '+save.coins,W/2-90,585);
   cx.fillStyle='#44aaff';cx.fillText('💎 '+save.diamonds,W/2+20,585);
@@ -3115,6 +3194,12 @@ function drawTitle() {
 }
 
 function clickTitle(mx,my) {
+  // Reset endless progress button
+  if (save.endlessState && mx>=346 && mx<=374 && my>=388 && my<=424) {
+    clearEndlessSnapshot();
+    SFX.buyFail();
+    return;
+  }
   for(const btn of titleBtns)
     if(mx>=btn.x&&mx<=btn.x+btn.w&&my>=btn.y&&my<=btn.y+btn.h){
       if(btn.act==='solo') screen='stageSelect';
@@ -3334,6 +3419,7 @@ function clickDeath(mx,my) {
       } else {
         // Save & home
         save.coins += sessionCoins; save.diamonds += sessionDiamonds;
+        if (endlessMode) clearEndlessSnapshot();
         writeSave(); screen='title';
       }
       return;
@@ -3375,32 +3461,55 @@ function drawPause() {
   cx.textAlign='center';
   cx.fillText('音 乐 设 置', W/2, 460);
 
-  // BGM toggle
+  // BGM toggle (left half)
   drawButton(60, 478, 170, 36, bgmEnabled?'🎵 音乐: 开':'🎵 音乐: 关', bgmEnabled);
-  drawButton(250,478, 170, 36, '♬ 切换曲目', false);
-  cx.fillStyle='#88aaee';
-  cx.font="11px 'Courier New', monospace";
-  cx.textAlign='center';
-  cx.fillText('当前: '+BGM_TRACK_NAMES[bgmTrack], W/2, 530);
 
-  // Track grid
-  for (let i=0;i<BGM_TRACKS.length;i++) {
-    const bx = 60 + (i%5)*72, by = 540;
-    const sel = bgmTrack===i;
-    cx.fillStyle = sel ? '#005577' : '#001833';
-    cx.fillRect(bx, by, 64, 36);
-    cx.strokeStyle = sel ? '#00ffff' : '#335577';
-    cx.strokeRect(bx, by, 64, 36);
-    cx.fillStyle = sel ? '#ffffff' : '#88ccee';
-    cx.font="11px 'Courier New'";
-    cx.fillText(BGM_TRACKS[i].name.slice(0,3), bx+32, by+15);
-    cx.fillText('#'+(i+1), bx+32, by+28);
-  }
+  // Track dropdown (right half)
+  drawDropdown(250, 478, 170, 36, BGM_TRACK_NAMES, bgmTrack, bgmDropdownOpen);
 
   cx.fillStyle='#666';
   cx.font="11px 'Courier New', monospace";
-  cx.fillText('按 P 继续  /  按 ESC 返回主页', W/2, 600);
+  cx.textAlign='center';
+  cx.fillText('按 P 继续  /  按 ESC 暂停/继续', W/2, 600);
   cx.textAlign='left';
+}
+
+let bgmDropdownOpen = false;
+function drawDropdown(x, y, w, h, items, selectedIdx, open) {
+  // Header showing current value
+  cx.fillStyle = open ? '#003344' : '#001828';
+  cx.fillRect(x, y, w, h);
+  cx.strokeStyle = open ? '#00ffff' : '#446688';
+  cx.lineWidth = 2;
+  cx.strokeRect(x+1, y+1, w-2, h-2);
+  cx.fillStyle = '#88ccee';
+  cx.font="bold 12px 'Courier New', monospace";
+  cx.textAlign='left';
+  cx.fillText('♬ '+items[selectedIdx], x+10, y+h/2+4);
+  cx.fillStyle = '#88ccee';
+  cx.font="bold 14px 'Courier New', monospace";
+  cx.fillText(open ? '▲' : '▼', x+w-22, y+h/2+5);
+  cx.textAlign='left';
+  // Open list overlay
+  if (open) {
+    const itemH = 30;
+    const listH = items.length * itemH;
+    const lx = x, ly = y + h + 2;
+    cx.fillStyle='#001828';
+    cx.fillRect(lx, ly, w, listH);
+    cx.strokeStyle='#00ffff';
+    cx.lineWidth = 2;
+    cx.strokeRect(lx+1, ly+1, w-2, listH-2);
+    for (let i=0;i<items.length;i++) {
+      const iy = ly + i*itemH;
+      const sel = i===selectedIdx;
+      cx.fillStyle = sel ? '#005577' : 'transparent';
+      if (sel) cx.fillRect(lx+2, iy+1, w-4, itemH-2);
+      cx.fillStyle = sel ? '#ffffff' : '#88ccee';
+      cx.font="bold 11px 'Courier New', monospace";
+      cx.fillText('#'+(i+1)+'  '+items[i], lx+10, iy+itemH/2+4);
+    }
+  }
 }
 
 const SENS_MIN = 0.3, SENS_MAX = 2.0;
@@ -3439,13 +3548,37 @@ function clickPause(mx,my) {
   for (const btn of pauseBtns) {
     if (mx>=btn.x && mx<=btn.x+btn.w && my>=btn.y && my<=btn.y+btn.h) {
       if (btn.act==='resume') { screen='game'; if(bgmEnabled) startBGM(); }
-      else if (btn.act==='restart') { startGame(twoPlayer, endlessMode, endlessMode?1:level); }
+      else if (btn.act==='restart') {
+        if (endlessMode) clearEndlessSnapshot();
+        startGame(twoPlayer, endlessMode, endlessMode?1:level);
+      }
       else if (btn.act==='home') {
-        // Save partial winnings? Convention: discard session unless dead. We'll save them on home from pause.
+        // Save partial winnings + endless snapshot (so player can continue later)
+        if (endlessMode) saveEndlessSnapshot();
         save.coins += sessionCoins; save.diamonds += sessionDiamonds;
+        sessionCoins = 0; sessionDiamonds = 0;
         writeSave(); stopBGM(); screen='title';
       }
       return;
+    }
+  }
+  // Dropdown open: handle item picks first (covers area below header)
+  if (bgmDropdownOpen) {
+    const lx=250, ly=478+36+2, lw=170, itemH=30;
+    if (mx>=lx && mx<=lx+lw && my>=ly && my<=ly+BGM_TRACKS.length*itemH) {
+      const idx = Math.floor((my - ly) / itemH);
+      if (idx>=0 && idx<BGM_TRACKS.length) {
+        bgmTrack = idx;
+        stopBGM();
+        if (bgmEnabled) startBGM();
+        SFX.buySuccess();
+      }
+      bgmDropdownOpen = false;
+      return;
+    }
+    // Click outside list (and outside header) closes
+    if (!(mx>=250 && mx<=420 && my>=478 && my<=514)) {
+      bgmDropdownOpen = false;
     }
   }
   // Sensitivity sliders
@@ -3456,21 +3589,10 @@ function clickPause(mx,my) {
     toggleBGM();
     return;
   }
-  // Track cycle btn
+  // Track dropdown header → toggle open/close
   if (mx>=250 && mx<=420 && my>=478 && my<=514) {
-    bgmTrack=(bgmTrack+1)%BGM_TRACKS.length;
-    stopBGM();
+    bgmDropdownOpen = !bgmDropdownOpen;
     return;
-  }
-  // Track grid pick
-  for (let i=0;i<BGM_TRACKS.length;i++) {
-    const bx = 60 + (i%5)*72, by = 540;
-    if (mx>=bx && mx<=bx+64 && my>=by && my<=by+36) {
-      bgmTrack = i;
-      stopBGM();
-      SFX.buySuccess();
-      return;
-    }
   }
 }
 
@@ -3606,6 +3728,30 @@ function clickGameOver(mx,my) {
     }
 }
 
+// ─── ENDLESS SAVE/RESUME ─────────────────────────────────────────────────────
+function snapshotEndless() {
+  if (!endlessMode) return null;
+  const p = players[0];
+  if (!p || p.dead) return null;
+  return {
+    level, score, killCount, sessionCoins, sessionDiamonds,
+    bossActive, bossHp: boss && boss.alive ? boss.hp : 0,
+    bossType: boss && boss.alive ? boss.bossType : -1,
+    p: {x:p.x, y:p.y, lives:p.lives, bombs:p.bombs, weapon:p.weapon, weaponLevel:p.weaponLevel,
+        shield:p.shield, shieldHits:p.shieldHits||0, skinIdx:p.skinIdx},
+    wingmen: wingmen.filter(w=>w.alive).map(w=>({wType:w.wType, level:w.level||1})),
+  };
+}
+function saveEndlessSnapshot() {
+  if (!endlessMode) return;
+  save.endlessState = snapshotEndless();
+  writeSave();
+}
+function clearEndlessSnapshot() {
+  save.endlessState = null;
+  writeSave();
+}
+
 // ─── GAME INIT ───────────────────────────────────────────────────────────────
 function startGame(two, endless, startLv) {
   twoPlayer=two; endlessMode=!!endless;
@@ -3615,6 +3761,34 @@ function startGame(two, endless, startLv) {
   players.push(createPlayer(1,save.selP1));
   if(two) players.push(createPlayer(2,save.selP2));
   initBGStars(BG_SKINS[save.selBG][3]);
+  // Restore endless snapshot if present
+  if (endlessMode && save.endlessState) {
+    const s = save.endlessState;
+    level = s.level || 1;
+    score = s.score || 0;
+    killCount = s.killCount || 0;
+    sessionCoins = s.sessionCoins || 0;
+    sessionDiamonds = s.sessionDiamonds || 0;
+    const p = players[0];
+    if (s.p) {
+      p.x = s.p.x; p.y = s.p.y;
+      p.lives = s.p.lives || 3;
+      p.bombs = s.p.bombs || 3;
+      p.weapon = s.p.weapon || 0;
+      p.weaponLevel = s.p.weaponLevel || 1;
+      p.shield = s.p.shield || 0;
+      p.shieldHits = s.p.shieldHits || 0;
+      p.invTimer = 90;
+    }
+    if (Array.isArray(s.wingmen)) {
+      for (const w of s.wingmen) {
+        spawnWingman(p, w.wType);
+        const last = wingmen[wingmen.length-1];
+        if (last) last.level = w.level || 1;
+      }
+    }
+    addFT('继续无尽 · LV '+level, W/2, H/2-40, '#ffff44');
+  }
   screen='game';
   if(bgmEnabled) startBGM();
   if (IS_MOBILE) addFT('滑动控制 · 双击发射导弹', W/2, H/2-30, '#88ccff');
@@ -3733,17 +3907,19 @@ document.addEventListener('keydown',e=>{
     else if (screen==='pause') { screen='game'; if(bgmEnabled) startBGM(); }
     document.getElementById('btn-pause').classList.toggle('active', screen==='pause');
   }
-  if(e.key==='g'||e.key==='G'){invincible=!invincible;document.getElementById('btn-invincible').classList.toggle('active',invincible);}
+  if(e.key==='g'||e.key==='G'){invincible=!invincible;document.getElementById('btn-invincible').classList.toggle('active',invincible);refreshInfBomb();}
   if(e.key==='m'||e.key==='M') toggleBGM();
   if(e.key==='t'||e.key==='T'){bgmTrack=(bgmTrack+1)%BGM_TRACKS.length;stopBGM();if(bgmEnabled&&screen==='game')startBGM();}
   if((e.key==='Escape'||e.key==='Esc')){
-    if (screen==='pause' || screen==='game') {
-      // From game/pause: save accumulated currency and return home.
-      save.coins += sessionCoins; save.diamonds += sessionDiamonds;
-      sessionCoins = 0; sessionDiamonds = 0;
-      writeSave(); stopBGM(); screen='title';
+    if (screen==='game') {
+      screen='pause'; stopBGM();
+      document.getElementById('btn-pause').classList.add('active');
+    } else if (screen==='pause') {
+      screen='game'; if(bgmEnabled) startBGM();
+      document.getElementById('btn-pause').classList.remove('active');
     } else if (screen==='death') {
       save.coins += sessionCoins; save.diamonds += sessionDiamonds;
+      if (endlessMode) clearEndlessSnapshot();
       writeSave(); screen='title';
     } else if (screen==='shop' || screen==='stageSelect') {
       screen='title';
@@ -3781,7 +3957,7 @@ document.getElementById('btn-pause').addEventListener('click',()=>{
   else if (screen==='pause') { screen='game'; if(bgmEnabled) startBGM(); }
   document.getElementById('btn-pause').classList.toggle('active', screen==='pause');
 });
-document.getElementById('btn-invincible').addEventListener('click',()=>{invincible=!invincible;document.getElementById('btn-invincible').classList.toggle('active',invincible);});
+document.getElementById('btn-invincible').addEventListener('click',()=>{invincible=!invincible;document.getElementById('btn-invincible').classList.toggle('active',invincible);refreshInfBomb();});
 document.getElementById('btn-bgm').addEventListener('click',toggleBGM);
 document.getElementById('btn-track').addEventListener('click',()=>{
   bgmTrack=(bgmTrack+1)%BGM_TRACKS.length;
@@ -3789,19 +3965,33 @@ document.getElementById('btn-track').addEventListener('click',()=>{
   if(bgmEnabled&&screen==='game')startBGM();
   document.getElementById('btn-track').title='♬ '+BGM_TRACK_NAMES[bgmTrack];
 });
-// Speed multiplier buttons
-const spdBtns = document.querySelectorAll('.spd-btn');
+// Single cycling speed button (0.5 → 1 → 2 → 3 → 0.5 ...)
+const SPEED_CYCLE = [0.5, 1, 2, 3];
+const speedBtn = document.getElementById('btn-speed');
 function setGameSpeed(s) {
   gameSpeed = s;
-  spdBtns.forEach(b => {
-    b.classList.toggle('active', parseFloat(b.dataset.spd) === s);
-  });
+  speedBtn.textContent = s + 'x';
 }
-spdBtns.forEach(b => {
-  const handler = e => { e.preventDefault(); setGameSpeed(parseFloat(b.dataset.spd)); };
-  b.addEventListener('click', handler);
-  b.addEventListener('touchstart', handler, {passive:false});
-});
+function cycleSpeed() {
+  const i = SPEED_CYCLE.indexOf(gameSpeed);
+  setGameSpeed(SPEED_CYCLE[(i+1) % SPEED_CYCLE.length]);
+}
+speedBtn.addEventListener('click', e=>{ e.preventDefault(); cycleSpeed(); });
+speedBtn.addEventListener('touchstart', e=>{ e.preventDefault(); cycleSpeed(); }, {passive:false});
+
+// Infinite-bomb button — visible only in invincible mode
+const infBombBtn = document.getElementById('btn-infbomb');
+function refreshInfBomb() {
+  infBombBtn.classList.toggle('show', !!invincible);
+}
+function fireInfiniteBomb() {
+  if (screen !== 'game') return;
+  const p = players[0];
+  if (!p || p.dead) return;
+  doBomb(p); SFX.bomb();   // does NOT consume p.bombs
+}
+infBombBtn.addEventListener('click', e=>{ e.preventDefault(); fireInfiniteBomb(); });
+infBombBtn.addEventListener('touchstart', e=>{ e.preventDefault(); fireInfiniteBomb(); }, {passive:false});
 
 // ─── MAIN LOOP ────────────────────────────────────────────────────────────────
 function update() {
