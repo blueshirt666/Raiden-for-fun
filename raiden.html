@@ -161,46 +161,6 @@ const BG_SKINS = [
 ];
 const ANIME_BG_TYPES = ['animeSakura','animeStar','animeMoon','animeSnow','animeFlame','animeOcean','animeNeon','animeDusk','animeRainbow','animeGoddess'];
 
-// ─── HD 鬼刀壁纸资源 ────────────────────────────────────────────────────────
-//
-// 把高清图（720x1080 或更高，jpg/png/webp 都行）放到 assets/ghostblade/
-// 文件名固定（见 GHOSTBLADE_FILES）。如果文件不存在游戏会自动 fallback 回矢量绘制。
-//
-// 也可以在 GHOSTBLADE_URLS 里填远程地址（自己的 CDN / OSS / 图床）。
-// URL 优先级 > 本地文件。CORS 不允许的远程图会被自动忽略。
-//
-// !! 法律提示 !!  「鬼刀」由 WLOP 创作并保留版权，请使用你自己合法获取的图片
-//                （Patreon 订阅原图、自购图集扫描、或公开许可的素材）。
-const GHOSTBLADE_FILES = {
-  animeSakura:  'sakura.jpg',
-  animeStar:    'star.jpg',
-  animeMoon:    'moon.jpg',
-  animeSnow:    'snow.jpg',
-  animeFlame:   'flame.jpg',
-  animeOcean:   'ocean.jpg',
-  animeNeon:    'neon.jpg',
-  animeDusk:    'dusk.jpg',
-  animeRainbow: 'rainbow.jpg',
-  animeGoddess: 'goddess.jpg',
-};
-const GHOSTBLADE_URLS = {
-  // 例：animeSakura: 'https://your-cdn.example.com/ghost-sakura.jpg',
-  animeSakura: '', animeStar: '', animeMoon: '', animeSnow: '', animeFlame: '',
-  animeOcean: '', animeNeon: '', animeDusk: '', animeRainbow: '', animeGoddess: '',
-};
-
-const ghostbladeImages = {};   // {type: HTMLImageElement | null}
-function loadGhostbladeAssets() {
-  for (const type of ANIME_BG_TYPES) {
-    const url = GHOSTBLADE_URLS[type] || ('assets/ghostblade/' + GHOSTBLADE_FILES[type]);
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload  = () => { ghostbladeImages[type] = img; };
-    img.onerror = () => { ghostbladeImages[type] = null; };  // fallback to vector
-    img.src = url;
-  }
-}
-
 // ─── SAVE DATA ───────────────────────────────────────────────────────────────
 function defaultSave() {
   return {
@@ -1369,26 +1329,7 @@ function drawBackground() {
   fillPx(colors.sky, 0, 0, W, H);
 
   if (bgType.startsWith('anime')) {
-    const hdImg = ghostbladeImages[bgType];
-    if (hdImg && hdImg.naturalWidth > 0) {
-      // Cover-fit the HD wallpaper to the canvas
-      const scale = Math.max(W / hdImg.naturalWidth, H / hdImg.naturalHeight);
-      const dw = hdImg.naturalWidth * scale;
-      const dh = hdImg.naturalHeight * scale;
-      const dx = (W - dw) / 2;
-      // Slow parallax drift to feel "动态"
-      const dy = (H - dh) / 2 + Math.sin(frame * 0.005) * 6;
-      cx.drawImage(hdImg, dx, dy, dw, dh);
-      // Soft top/bottom darkening for HUD/HP-bar legibility
-      const tg = cx.createLinearGradient(0, 0, 0, 36);
-      tg.addColorStop(0, 'rgba(0,0,0,0.55)'); tg.addColorStop(1, 'rgba(0,0,0,0)');
-      cx.fillStyle = tg; cx.fillRect(0, 0, W, 36);
-      const bg = cx.createLinearGradient(0, H - 60, 0, H);
-      bg.addColorStop(0, 'rgba(0,0,0,0)'); bg.addColorStop(1, 'rgba(0,0,0,0.55)');
-      cx.fillStyle = bg; cx.fillRect(0, H - 60, W, 60);
-      return;
-    }
-    // Fallback: cached sky + halo + vignette + vector waifu
+    // Cached sky + halo + vignette in one blit
     cx.drawImage(getBgStatic(bgType), 0, 0);
     for (const star of bgStars) fillPx(star.color, star.x | 0, star.y | 0, star.size, star.size);
     drawAnimeWaifu(bgType);
@@ -3305,14 +3246,13 @@ function drawShopBGs() {
         cx.fillRect(bx+cw/2-3, by+24, 1.5, 1.5);
         cx.fillRect(bx+cw/2+1.5, by+24, 1.5, 1.5);
       }
-      // 鬼刀 tag (HD if image loaded, VEC if fallback)
-      const hasHD = !!(ghostbladeImages[bg[3]] && ghostbladeImages[bg[3]].naturalWidth > 0);
-      cx.fillStyle = hasHD ? '#aa1144' : '#553355';
-      cx.fillRect(bx+4, by+4, 44, 12);
+      // 鬼刀 tag
+      cx.fillStyle='#aa1144';
+      cx.fillRect(bx+4, by+4, 32, 12);
       cx.fillStyle='#fff';
       cx.font="bold 9px sans-serif";
       cx.textAlign='left';
-      cx.fillText(hasHD ? '鬼刀·HD' : '鬼刀·矢量', bx+6, by+13);
+      cx.fillText('鬼刀', bx+8, by+13);
     }
     cx.strokeStyle=isSel?'#00ffff':isHL?'#4488cc':'#334455';
     cx.lineWidth=isSel?2:1;
@@ -3940,7 +3880,6 @@ function loop() {
 }
 
 initBGStars('space');
-loadGhostbladeAssets();
 
 // First-tap audio unlock overlay (resumes AudioContext + warms BGM)
 const audioUnlockEl = document.getElementById('audio-unlock');
