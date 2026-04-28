@@ -55,7 +55,7 @@ canvas { display:block; width:100%; height:100%; image-rendering:auto; }
   <button class="side-btn" id="btn-invincible" title="Invincible (G)">💀</button>
   <button class="side-btn" id="btn-bgm" title="BGM (M)">🎵</button>
   <button class="side-btn" id="btn-track" title="Switch Track (T)" style="top:172px;font-size:11px;">♬</button>
-  <button class="touch-only" id="btn-bomb" aria-label="导弹">🚀<span class="count" id="bomb-count">3</span></button>
+  <!-- Bomb hidden: 移动端双击屏幕触发，桌面端 X 键 -->
 </div>
 <script>
 'use strict';
@@ -3530,6 +3530,7 @@ function startGame(two, endless, startLv) {
   initBGStars(BG_SKINS[save.selBG][3]);
   screen='game';
   if(bgmEnabled) startBGM();
+  if (IS_MOBILE) addFT('滑动控制 · 双击发射导弹', W/2, H/2-30, '#88ccff');
 }
 
 // ─── INPUT ───────────────────────────────────────────────────────────────────
@@ -3572,27 +3573,11 @@ function endJoystick() {
   joy.active = false; joy.id = -1; joy.dx = 0; joy.dy = 0;
 }
 
-function drawJoystick() {
-  if (!IS_MOBILE || !joy.active || screen !== 'game') return;
-  // Outer ring (joystick base)
-  cx.save();
-  cx.globalAlpha = 0.55;
-  cx.strokeStyle = '#88ccff';
-  cx.lineWidth = 3;
-  cx.beginPath(); cx.arc(joy.sx, joy.sy, joy.rad, 0, Math.PI*2); cx.stroke();
-  cx.fillStyle = 'rgba(0,40,80,0.35)';
-  cx.beginPath(); cx.arc(joy.sx, joy.sy, joy.rad, 0, Math.PI*2); cx.fill();
-  // Inner thumb
-  cx.globalAlpha = 0.85;
-  const tg = cx.createRadialGradient(joy.x-6, joy.y-6, 2, joy.x, joy.y, 26);
-  tg.addColorStop(0, '#aaccff'); tg.addColorStop(1, '#1144aa');
-  cx.fillStyle = tg;
-  cx.beginPath(); cx.arc(joy.x, joy.y, 26, 0, Math.PI*2); cx.fill();
-  cx.strokeStyle = '#ffffff'; cx.lineWidth = 2;
-  cx.beginPath(); cx.arc(joy.x, joy.y, 26, 0, Math.PI*2); cx.stroke();
-  cx.restore();
-}
+// Joystick visual hidden on mobile (touch-drag still controls direction)
+function drawJoystick() { /* no-op: joystick is invisible by design */ }
 
+let lastTapTime = 0;
+const DOUBLE_TAP_MS = 280;
 function handleTouchStart(e) {
   if (screen !== 'game') {
     // Touch acts like a click for menu screens
@@ -3610,7 +3595,16 @@ function handleTouchStart(e) {
     e.preventDefault();
     return;
   }
-  // Game running: any new touch becomes joystick (last finger wins)
+  // Double-tap fires bomb (mobile manual trigger)
+  const now = performance.now();
+  if (now - lastTapTime < DOUBLE_TAP_MS) {
+    triggerBomb();
+    lastTapTime = 0;
+    e.preventDefault();
+    return;
+  }
+  lastTapTime = now;
+  // Single tap → start invisible joystick (last finger wins)
   for (const t of e.changedTouches) {
     startJoystick(t);
     break;
@@ -3635,23 +3629,14 @@ canvas.addEventListener('touchmove',  handleTouchMove,  {passive:false});
 canvas.addEventListener('touchend',   handleTouchEnd,   {passive:false});
 canvas.addEventListener('touchcancel',handleTouchEnd,   {passive:false});
 
-// On-screen mobile bomb button
-const bombBtn = document.getElementById('btn-bomb');
-const bombCountEl = document.getElementById('bomb-count');
+// Bomb trigger — desktop: X key; mobile: double-tap anywhere on canvas
 function triggerBomb() {
   if (screen !== 'game') return;
   const p = players[0];
   if (!p || p.dead || p.bombs <= 0) return;
   p.bombs--; doBomb(p); SFX.bomb();
 }
-bombBtn.addEventListener('touchstart', e=>{ e.preventDefault(); triggerBomb(); }, {passive:false});
-bombBtn.addEventListener('click',     e=>{ e.preventDefault(); triggerBomb(); });
-function refreshBombCount() {
-  if (!IS_MOBILE) return;
-  const p = players[0];
-  bombCountEl.textContent = p ? p.bombs : 0;
-  bombBtn.style.display = (screen==='game') ? '' : 'none';
-}
+function refreshBombCount() { /* on-screen button removed — kept as no-op */ }
 
 
 document.addEventListener('keydown',e=>{
