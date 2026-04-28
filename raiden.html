@@ -24,6 +24,19 @@ canvas { display:block; width:100%; height:100%; image-rendering:auto; }
 #btn-bgm { top:118px; }
 .side-btn:hover { background:#333; border-color:#888; }
 .side-btn.active { border-color:#0ff; background:#002233; }
+.spd-btn {
+  position:absolute; right:-52px; width:44px; height:36px;
+  background:#111; border:2px solid #444; color:#aac;
+  font-size:13px; font-weight:bold; cursor:pointer;
+  display:flex; align-items:center; justify-content:center;
+  border-radius:4px; user-select:none; z-index:5;
+}
+.spd-btn:hover { background:#222; border-color:#888; }
+.spd-btn.active { border-color:#ffaa00; background:#332200; color:#ffcc44; }
+#btn-spd-half { top:226px; }
+#btn-spd-1x   { top:266px; }
+#btn-spd-2x   { top:306px; }
+#btn-spd-3x   { top:346px; }
 /* Mobile-only on-screen bomb / pause; hidden on desktop */
 .touch-only { display:none; }
 @media (hover: none) and (pointer: coarse), (max-width: 640px) {
@@ -34,6 +47,11 @@ canvas { display:block; width:100%; height:100%; image-rendering:auto; }
   body.is-mobile #btn-bgm { top:6px; left:90px; }
   body.is-mobile #btn-track { top:6px; left:132px; }
   body.is-mobile .touch-only { display:flex; }
+  body.is-mobile .spd-btn { right:auto; width:36px; height:28px; font-size:10px; top:46px; }
+  body.is-mobile #btn-spd-half { left:6px; }
+  body.is-mobile #btn-spd-1x   { left:48px; }
+  body.is-mobile #btn-spd-2x   { left:90px; }
+  body.is-mobile #btn-spd-3x   { left:132px; }
 }
 #btn-bomb {
   position:absolute; right:14px; bottom:18px;
@@ -55,6 +73,10 @@ canvas { display:block; width:100%; height:100%; image-rendering:auto; }
   <button class="side-btn" id="btn-invincible" title="Invincible (G)">💀</button>
   <button class="side-btn" id="btn-bgm" title="BGM (M)">🎵</button>
   <button class="side-btn" id="btn-track" title="Switch Track (T)" style="top:172px;font-size:11px;">♬</button>
+  <button class="spd-btn" id="btn-spd-half" data-spd="0.5">0.5x</button>
+  <button class="spd-btn active" id="btn-spd-1x"   data-spd="1">1x</button>
+  <button class="spd-btn" id="btn-spd-2x"   data-spd="2">2x</button>
+  <button class="spd-btn" id="btn-spd-3x"   data-spd="3">3x</button>
   <!-- Bomb hidden: 移动端双击屏幕触发，桌面端 X 键 -->
 </div>
 <script>
@@ -142,6 +164,7 @@ function defaultSave() {
     bgs: Array(BG_SKINS.length).fill(false).map((_,i)=>i===0),
     selP1: 0, selP2: 1, selBG: 0,
     stageProgress: 1,
+    moveSensX: 1.0, moveSensY: 1.0,
   };
 }
 let save = defaultSave();
@@ -161,6 +184,8 @@ function loadSave() {
       if (typeof d.selP2 === 'number') save.selP2 = d.selP2;
       if (typeof d.selBG === 'number' && d.selBG < BG_SKINS.length) save.selBG = d.selBG;
       if (typeof d.stageProgress === 'number') save.stageProgress = d.stageProgress;
+      if (typeof d.moveSensX === 'number') save.moveSensX = d.moveSensX;
+      if (typeof d.moveSensY === 'number') save.moveSensY = d.moveSensY;
     }
   } catch(e) {}
 }
@@ -709,6 +734,13 @@ let killCount = 0;
 let bossActive = false;
 let boss = null;
 let bombFlash = 0;
+let shakeT = 0, shakeM = 0;
+function triggerShake(mag, frames) {
+  shakeM = Math.max(shakeM, mag);
+  shakeT = Math.max(shakeT, frames);
+}
+let gameSpeed = 1; // 0.5 / 1 / 2 / 3
+let speedAccum = 0;
 // Stage mode beatable thresholds (10 levels). Endless reuses last value.
 const BOSS_KILL_THRESHOLD = [12, 16, 22, 28, 34, 40, 46, 52, 58, 65];
 
@@ -1396,7 +1428,9 @@ function updatePlayer(p, keys) {
     if (keys['w']||keys['W']) dy=-1;
     if (keys['s']||keys['S']) dy=1;
   }
-  p.x+=dx*p.speed; p.y+=dy*p.speed;
+  const sX = (typeof save.moveSensX === 'number') ? save.moveSensX : 1;
+  const sY = (typeof save.moveSensY === 'number') ? save.moveSensY : 1;
+  p.x+=dx*p.speed*sX; p.y+=dy*p.speed*sY;
   p.x=clamp(p.x,12,W-12); p.y=clamp(p.y,12,H-12);
   p.px=p.x|0; p.py=p.y|0;
 
@@ -1596,6 +1630,7 @@ function drawEnemyBullets() {
 
 function doBomb(p) {
   bombFlash=22;
+  triggerShake(10, 22);
   // Clear all small enemies entirely
   for(const e of enemies){
     if(!e.alive) continue;
@@ -2766,6 +2801,7 @@ function hitPlayer(p) {
     SFX.hitPlayer(); return;
   }
   SFX.hitPlayer(); p.lives--;
+  triggerShake(7, 14);
   // Damage drops weapon level by 1
   if (p.weaponLevel > 1) {
     p.weaponLevel--;
@@ -2848,6 +2884,7 @@ function killBoss() {
   if(!boss||!boss.alive) return;
   const wasLvl = level;
   boss.alive=false; score+=boss.pts; bossActive=false;
+  triggerShake(18, 50);
   SFX.bossDefeat(); spawnExplosion(boss.x,boss.y,'huge');
   // Auto-credit diamonds + bonus coins
   const dGain = 2 + Math.floor(wasLvl/2) + (endlessMode?1:0);
@@ -2975,9 +3012,15 @@ function updateWaves() {
   waveTimer++;
   if(bossActive) return;
 
-  // Boss trigger: enough kills AND no enemies on screen
+  // Boss trigger: kill quota met → enter boss IMMEDIATELY (clear any stragglers)
   const threshold = BOSS_KILL_THRESHOLD[Math.min(level-1, BOSS_KILL_THRESHOLD.length-1)];
-  if(killCount>=threshold && enemies.length===0) { spawnBoss(); return; }
+  if(killCount>=threshold) {
+    for (const e of enemies) {
+      if (e.alive) { spawnExplosion(e.x, e.y, 'medium'); e.alive=false; }
+    }
+    spawnBoss();
+    return;
+  }
 
   const d=getDiff();
   // Endless: random pool blend; Stage: strict pool per level
@@ -3318,36 +3361,78 @@ function drawPause() {
 
   for (const btn of pauseBtns) drawButton(btn.x, btn.y, btn.w, btn.h, btn.text, false);
 
+  // Sensitivity sliders
+  cx.fillStyle='#ffcc00';
+  cx.font="bold 13px 'Courier New', monospace";
+  cx.textAlign='center';
+  cx.fillText('遥 感 灵 敏 度', W/2, 376);
+  drawSensSlider(70, 392, 340, '横向', 'moveSensX');
+  drawSensSlider(70, 422, 340, '纵向', 'moveSensY');
+
   // Music section
   cx.fillStyle='#ffcc00';
-  cx.font="bold 14px 'Courier New', monospace";
-  cx.fillText('音 乐 设 置', W/2, 400);
+  cx.font="bold 13px 'Courier New', monospace";
+  cx.textAlign='center';
+  cx.fillText('音 乐 设 置', W/2, 460);
 
   // BGM toggle
-  drawButton(60, 420, 170, 42, bgmEnabled?'🎵 音乐: 开':'🎵 音乐: 关', bgmEnabled);
-  drawButton(250,420, 170, 42, '♬ 切换曲目', false);
+  drawButton(60, 478, 170, 36, bgmEnabled?'🎵 音乐: 开':'🎵 音乐: 关', bgmEnabled);
+  drawButton(250,478, 170, 36, '♬ 切换曲目', false);
   cx.fillStyle='#88aaee';
-  cx.font="12px 'Courier New', monospace";
-  cx.fillText('当前曲目: '+BGM_TRACK_NAMES[bgmTrack], W/2, 480);
+  cx.font="11px 'Courier New', monospace";
+  cx.textAlign='center';
+  cx.fillText('当前: '+BGM_TRACK_NAMES[bgmTrack], W/2, 530);
 
   // Track grid
   for (let i=0;i<BGM_TRACKS.length;i++) {
-    const bx = 60 + (i%5)*72, by = 500;
+    const bx = 60 + (i%5)*72, by = 540;
     const sel = bgmTrack===i;
     cx.fillStyle = sel ? '#005577' : '#001833';
-    cx.fillRect(bx, by, 64, 38);
+    cx.fillRect(bx, by, 64, 36);
     cx.strokeStyle = sel ? '#00ffff' : '#335577';
-    cx.strokeRect(bx, by, 64, 38);
+    cx.strokeRect(bx, by, 64, 36);
     cx.fillStyle = sel ? '#ffffff' : '#88ccee';
     cx.font="11px 'Courier New'";
-    cx.fillText(BGM_TRACKS[i].name.slice(0,3), bx+32, by+16);
-    cx.fillText('#'+(i+1), bx+32, by+30);
+    cx.fillText(BGM_TRACKS[i].name.slice(0,3), bx+32, by+15);
+    cx.fillText('#'+(i+1), bx+32, by+28);
   }
 
   cx.fillStyle='#666';
   cx.font="11px 'Courier New', monospace";
-  cx.fillText('按 P 继续  /  按 ESC 返回主页', W/2, 615);
+  cx.fillText('按 P 继续  /  按 ESC 返回主页', W/2, 600);
   cx.textAlign='left';
+}
+
+const SENS_MIN = 0.3, SENS_MAX = 2.0;
+function drawSensSlider(x, y, w, label, key) {
+  const v = (typeof save[key] === 'number') ? save[key] : 1;
+  const t = (v - SENS_MIN) / (SENS_MAX - SENS_MIN);
+  // Label left
+  cx.fillStyle='#88ccee'; cx.font="11px 'Courier New'"; cx.textAlign='left';
+  cx.fillText(label, x-50, y+10);
+  // Bar background
+  cx.fillStyle='#0a1828'; cx.fillRect(x, y+6, w, 6);
+  cx.strokeStyle='#244466'; cx.strokeRect(x+0.5, y+6.5, w-1, 5);
+  // Filled portion
+  cx.fillStyle='#00ffcc'; cx.fillRect(x, y+6, w*t, 6);
+  // Thumb
+  cx.fillStyle='#ffffff';
+  cx.fillRect(x+w*t-4, y+1, 8, 16);
+  cx.strokeStyle='#00ffff'; cx.lineWidth=1;
+  cx.strokeRect(x+w*t-4+0.5, y+1.5, 7, 15);
+  // Value
+  cx.fillStyle='#ffcc00'; cx.font="11px 'Courier New'"; cx.textAlign='left';
+  cx.fillText(v.toFixed(2)+'x', x+w+8, y+10);
+}
+function hitSensSlider(mx, my, x, y, w, key) {
+  if (my>=y && my<=y+18 && mx>=x-8 && mx<=x+w+8) {
+    let t = (mx - x) / w;
+    t = Math.max(0, Math.min(1, t));
+    save[key] = +(SENS_MIN + (SENS_MAX-SENS_MIN)*t).toFixed(2);
+    writeSave();
+    return true;
+  }
+  return false;
 }
 
 function clickPause(mx,my) {
@@ -3363,24 +3448,26 @@ function clickPause(mx,my) {
       return;
     }
   }
+  // Sensitivity sliders
+  if (hitSensSlider(mx, my, 70, 392, 340, 'moveSensX')) return;
+  if (hitSensSlider(mx, my, 70, 422, 340, 'moveSensY')) return;
   // BGM toggle
-  if (mx>=60 && mx<=230 && my>=420 && my<=462) {
+  if (mx>=60 && mx<=230 && my>=478 && my<=514) {
     toggleBGM();
     return;
   }
   // Track cycle btn
-  if (mx>=250 && mx<=420 && my>=420 && my<=462) {
+  if (mx>=250 && mx<=420 && my>=478 && my<=514) {
     bgmTrack=(bgmTrack+1)%BGM_TRACKS.length;
     stopBGM();
     return;
   }
   // Track grid pick
   for (let i=0;i<BGM_TRACKS.length;i++) {
-    const bx = 60 + (i%5)*72, by = 500;
-    if (mx>=bx && mx<=bx+64 && my>=by && my<=by+38) {
+    const bx = 60 + (i%5)*72, by = 540;
+    if (mx>=bx && mx<=bx+64 && my>=by && my<=by+36) {
       bgmTrack = i;
       stopBGM();
-      if (bgmEnabled) {/* will resume on game */}
       SFX.buySuccess();
       return;
     }
@@ -3702,6 +3789,19 @@ document.getElementById('btn-track').addEventListener('click',()=>{
   if(bgmEnabled&&screen==='game')startBGM();
   document.getElementById('btn-track').title='♬ '+BGM_TRACK_NAMES[bgmTrack];
 });
+// Speed multiplier buttons
+const spdBtns = document.querySelectorAll('.spd-btn');
+function setGameSpeed(s) {
+  gameSpeed = s;
+  spdBtns.forEach(b => {
+    b.classList.toggle('active', parseFloat(b.dataset.spd) === s);
+  });
+}
+spdBtns.forEach(b => {
+  const handler = e => { e.preventDefault(); setGameSpeed(parseFloat(b.dataset.spd)); };
+  b.addEventListener('click', handler);
+  b.addEventListener('touchstart', handler, {passive:false});
+});
 
 // ─── MAIN LOOP ────────────────────────────────────────────────────────────────
 function update() {
@@ -3732,9 +3832,16 @@ function update() {
   updateFTs();
   enemies=enemies.filter(e=>e.alive);
   if(bombFlash>0) bombFlash--;
+  if(shakeT>0){shakeT--; if(shakeT===0) shakeM=0;}
 }
 
 function drawGameField() {
+  cx.save();
+  if (shakeT > 0) {
+    const ox = (Math.random()*2-1)*shakeM;
+    const oy = (Math.random()*2-1)*shakeM;
+    cx.translate(ox, oy);
+  }
   drawBackground();
   if(bombFlash>0){cx.fillStyle=`rgba(255,255,255,${bombFlash/22*0.7})`;cx.fillRect(0,0,W,H);}
   for(const e of enemies) drawEnemy(e);
@@ -3746,6 +3853,8 @@ function drawGameField() {
   drawWingmen();
   for(const p of players) drawPlayer(p);
   drawFTs();
+  cx.restore();
+  // HUD + joystick visual outside shake transform
   drawHUD();
   drawJoystick();
 }
@@ -3780,7 +3889,14 @@ function draw() {
 }
 
 function loop() {
-  update();
+  // Speed multiplier — accumulator drives variable update rate (0.5x..3x)
+  speedAccum += gameSpeed;
+  let safetyCap = 6;
+  while (speedAccum >= 1 && safetyCap-- > 0) {
+    update();
+    speedAccum -= 1;
+  }
+  if (speedAccum < 0) speedAccum = 0;
   draw();
   refreshBombCount();
   requestAnimationFrame(loop);
