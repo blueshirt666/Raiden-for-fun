@@ -3228,7 +3228,6 @@ function clickTitle(mx,my) {
 }
 
 // ─── SHOP SCREEN ─────────────────────────────────────────────────────────────
-let shopSubTab = 0; // planes: 0=全部 1=金币 2=钻石  bgs: 0=传统 1=福利姬
 function drawShop() {
   fillPx('#000818',0,0,W,H);
   cx.fillStyle='#00ffff';cx.font="bold 20px 'Courier New', monospace";cx.textAlign='center';
@@ -3236,18 +3235,8 @@ function drawShop() {
   cx.fillStyle='#ffcc00';cx.font="14px 'Courier New', monospace";cx.textAlign='center';
   cx.fillText('🪙 '+save.coins+'   💎 '+save.diamonds,W/2,54);cx.textAlign='left';
 
-  drawButton(20,68,210,30,'飞机皮肤',shopTab===0);
-  drawButton(250,68,210,30,'背景皮肤',shopTab===1);
-
-  // Sub tabs
-  if (shopTab===0) {
-    drawSubTab( 20, 100, 145, 24, '全 部', shopSubTab===0);
-    drawSubTab(170, 100, 145, 24, '🪙 金币',shopSubTab===1);
-    drawSubTab(320, 100, 140, 24, '💎 钻石',shopSubTab===2);
-  } else {
-    drawSubTab( 20, 100, 220, 24, '传统地图', shopSubTab===0);
-    drawSubTab(245, 100, 215, 24, '🗡 鬼刀系列', shopSubTab===1);
-  }
+  drawButton(20,68,210,34,'飞机皮肤',shopTab===0);
+  drawButton(250,68,210,34,'背景皮肤',shopTab===1);
 
   if(shopTab===0) drawShopPlanes();
   else drawShopBGs();
@@ -3260,33 +3249,12 @@ function drawShop() {
   cx.fillStyle='#aa6600'; cx.font="12px 'Courier New'"; cx.textAlign='center';
   cx.fillText('🪙+9999  💎+99',245,677); cx.textAlign='left';
 }
-function drawSubTab(x,y,w,h,label,active) {
-  cx.fillStyle = active ? '#114466' : '#0a1828';
-  cx.fillRect(x,y,w,h);
-  cx.strokeStyle = active ? '#00ffff' : '#244466';
-  cx.lineWidth = 1;
-  cx.strokeRect(x+0.5,y+0.5,w-1,h-1);
-  cx.fillStyle = active ? '#aaffff' : '#7799bb';
-  cx.font="bold 11px 'Courier New', monospace";
-  cx.textAlign='center';
-  cx.fillText(label, x+w/2, y+16);
-  cx.textAlign='left';
-}
 
-function planeMatchesSubTab(skin) {
-  if (shopSubTab===0) return true;
-  if (shopSubTab===1) return skin[2]==='free' || skin[2]==='g';
-  if (shopSubTab===2) return skin[2]==='d';
-  return true;
-}
 function drawShopPlanes() {
-  const cols=4,cw=110,ch=110,sx=10,sy=132;
-  let cell = 0;
+  const cols=4,cw=110,ch=110,sx=10,sy=115;
   for(let i=0;i<PLANE_SKINS.length;i++){
     const skin=PLANE_SKINS[i];
-    if (!planeMatchesSubTab(skin)) continue;
-    const col=cell%cols, row=Math.floor(cell/cols);
-    cell++;
+    const col=i%cols, row=Math.floor(i/cols);
     const bx=sx+col*cw, by=sy+row*ch;
     const owned=save.planes[i];
     const isP1=save.selP1===i, isP2=save.selP2===i, isHL=shopSelectedPlane===i;
@@ -3310,23 +3278,16 @@ function drawShopPlanes() {
 }
 
 let shopBGScroll = 0;
-function bgMatchesSubTab(bg) {
-  const isAnime = bg[3].startsWith('anime');
-  return shopSubTab===0 ? !isAnime : isAnime;
-}
 function drawShopBGs() {
-  const cols=2,cw=220,ch=72,sx=15,sy=132;
+  const cols=2,cw=220,ch=72,sx=15,sy=115;
   // clip to scroll area
   cx.save();
-  cx.beginPath(); cx.rect(0,sy-2,W,520); cx.clip();
-  let cell = 0;
+  cx.beginPath(); cx.rect(0,sy-2,W,540); cx.clip();
   for(let i=0;i<BG_SKINS.length;i++){
     const bg=BG_SKINS[i];
-    if (!bgMatchesSubTab(bg)) continue;
-    const col=cell%cols, row=Math.floor(cell/cols);
-    cell++;
+    const col=i%cols, row=Math.floor(i/cols);
     const bx=sx+col*cw, by=sy+row*ch - shopBGScroll;
-    if (by + ch < sy - 5 || by > sy + 520) continue;
+    if (by + ch < sy - 5 || by > sy + 540) continue;
     const owned=save.bgs[i], isSel=save.selBG===i, isHL=shopSelectedBG===i;
     const bgc=getBGColors(bg[3]);
     fillPx(bgc.sky,bx+2,by+2,cw-4,42);
@@ -3378,32 +3339,15 @@ function clickShop(mx,my) {
   if(mx>=350&&mx<=460&&my>=655&&my<=691){equipSelected();return;}
   if(mx>=160&&mx<=330&&my>=655&&my<=691){save.coins+=9999;save.diamonds+=99;writeSave();SFX.buySuccess();return;}
   // Main tabs row
-  if(my>=68&&my<=98){
-    if(mx>=20&&mx<=230){shopTab=0;shopSelectedPlane=-1;shopSubTab=0;}
-    else if(mx>=250&&mx<=460){shopTab=1;shopSelectedBG=-1;shopSubTab=0;shopBGScroll=0;}
-    return;
-  }
-  // Sub tabs row
-  if(my>=100&&my<=124){
-    if(shopTab===0){
-      if(mx>=20&&mx<=165) shopSubTab=0;
-      else if(mx>=170&&mx<=315) shopSubTab=1;
-      else if(mx>=320&&mx<=460) shopSubTab=2;
-    } else {
-      if(mx>=20&&mx<=240) shopSubTab=0;
-      else if(mx>=245&&mx<=460) shopSubTab=1;
-      shopBGScroll = 0;
-    }
+  if(my>=68&&my<=102){
+    if(mx>=20&&mx<=230){shopTab=0;shopSelectedPlane=-1;}
+    else if(mx>=250&&mx<=460){shopTab=1;shopSelectedBG=-1;shopBGScroll=0;}
     return;
   }
   if(shopTab===0){
-    const cols=4,cw=110,ch=110,sx=10,sy=132;
-    let cell = 0;
+    const cols=4,cw=110,ch=110,sx=10,sy=115;
     for(let i=0;i<PLANE_SKINS.length;i++){
-      if (!planeMatchesSubTab(PLANE_SKINS[i])) continue;
-      const col=cell%cols, row=Math.floor(cell/cols);
-      cell++;
-      const bx=sx+col*cw, by=sy+row*ch;
+      const bx=sx+(i%cols)*cw, by=sy+Math.floor(i/cols)*ch;
       if(mx>=bx&&mx<=bx+cw&&my>=by&&my<=by+ch){
         if(!save.planes[i]){
           const sk=PLANE_SKINS[i];
@@ -3415,15 +3359,11 @@ function clickShop(mx,my) {
       }
     }
   } else {
-    const cols=2,cw=220,ch=72,sx=15,sy=132;
-    let cell = 0;
+    const cols=2,cw=220,ch=72,sx=15,sy=115;
     for(let i=0;i<BG_SKINS.length;i++){
       const bg=BG_SKINS[i];
-      if (!bgMatchesSubTab(bg)) continue;
-      const col=cell%cols, row=Math.floor(cell/cols);
-      cell++;
-      const bx=sx+col*cw, by=sy+row*ch - shopBGScroll;
-      if(my < sy-2 || my > sy+520) continue;
+      const bx=sx+(i%cols)*cw, by=sy+Math.floor(i/cols)*ch - shopBGScroll;
+      if(my < sy-2 || my > sy+540) continue;
       if(mx>=bx&&mx<=bx+cw&&my>=by&&my<=by+ch){
         if(!save.bgs[i]){
           if(bg[2]==='free'){save.bgs[i]=true;writeSave();SFX.buySuccess();shopSelectedBG=i;}
@@ -3896,9 +3836,8 @@ canvas.addEventListener('click',e=>{
 canvas.addEventListener('wheel', e=>{
   if (screen === 'shop' && shopTab === 1) {
     e.preventDefault();
-    const filtered = BG_SKINS.filter(bgMatchesSubTab).length;
-    const totalH = Math.ceil(filtered/2) * 72;
-    const maxScroll = Math.max(0, totalH - 520);
+    const totalH = Math.ceil(BG_SKINS.length/2) * 72;
+    const maxScroll = Math.max(0, totalH - 540);
     shopBGScroll = clamp(shopBGScroll + (e.deltaY>0?40:-40), 0, maxScroll);
   }
 }, {passive:false});
