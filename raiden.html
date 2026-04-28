@@ -2985,7 +2985,17 @@ function spawnBoss() {
 function updateBoss() {
   if(!boss||!boss.alive) return;
   boss.moveTimer++;
-  if(!boss.entryDone){boss.y+=2;if(boss.y>=80){boss.entryDone=true;boss.y=80;}boss.px=boss.x|0;boss.py=boss.y|0;return;}
+  if(!boss.entryDone){
+    boss.y+=2;
+    if(boss.y>=80){
+      boss.entryDone=true;
+      boss.y=80;
+      boss.anchorX = boss.x;
+      boss.anchorY = boss.y;
+    }
+    boss.px=boss.x|0;boss.py=boss.y|0;
+    return;
+  }
   // Phase tracking — 100% initial / 70% second form / 40% RAGE
   const hr=boss.hp/boss.maxHp;
   if(hr<0.7&&boss.phase===0){
@@ -3000,10 +3010,55 @@ function updateBoss() {
     triggerShake(22, 60);
     bombFlash = 14;
   }
-  // Per-boss movement + attacks
+  // Per-boss movement + attacks (always run for firing patterns)
+  const prevX = boss.x, prevY = boss.y;
   bossLogic(boss);
+  // Phase 0 (100%~70%): pure firing — pin to entry anchor
+  if (boss.phase === 0) {
+    boss.x = prevX;
+    boss.y = prevY;
+    // Slow drift toward anchor for stability
+    boss.x += (boss.anchorX - boss.x) * 0.04;
+    boss.y += (boss.anchorY - boss.y) * 0.04;
+  }
+  // Phase 1 (70%~40%): can move + periodic dash toward player
+  if (boss.phase === 1) {
+    if (!boss.dashState) boss.dashState = {state:'idle', timer:0, tx:0};
+    const ds = boss.dashState;
+    ds.timer++;
+    if (ds.state === 'idle' && ds.timer > 200) {
+      ds.state='lunge';
+      ds.timer=0;
+      const t = players.find(p=>!p.dead);
+      ds.tx = t ? t.x : W/2;
+      addFT('!突进!', boss.x, boss.y-20, '#ff4444');
+    } else if (ds.state === 'lunge') {
+      boss.y += 4.5;
+      if (Math.abs(boss.x - ds.tx) > 4) boss.x += Math.sign(ds.tx - boss.x) * 2.2;
+      if (ds.timer > 32 || boss.y > H*0.55) { ds.state='retreat'; ds.timer=0; triggerShake(8, 12); }
+    } else if (ds.state === 'retreat') {
+      boss.y -= 3;
+      if (boss.y <= 80) { boss.y = 80; ds.state='idle'; ds.timer=0; }
+    }
+  }
+  // Phase 2 (rage <40%): summon mobs every ~4s
+  if (boss.phase === 2) {
+    if (!boss.summonTimer) boss.summonTimer = 0;
+    boss.summonTimer++;
+    if (boss.summonTimer >= 240 && enemies.length < MAX_ENEMIES - 4) {
+      boss.summonTimer = 0;
+      const types = ['scout','dart','swarmlet','speeder','zigzag'];
+      const t = types[rndInt(0, types.length-1)];
+      for (let i=-1;i<=1;i++) {
+        if (enemies.length < MAX_ENEMIES) enemies.push(mkEnemy(t, boss.x + i*40, boss.y + 50));
+      }
+      addFT('召 唤 援 军', boss.x, boss.y-30, '#ff6688');
+      triggerShake(6, 14);
+    }
+  }
   // Clamp
   boss.x=clamp(boss.x,60,W-60);
+  boss.y=clamp(boss.y,40,H-100);
   boss.px=boss.x|0;boss.py=boss.y|0;
 }
 
@@ -3763,10 +3818,12 @@ function spawnWingman(player, wType) {
     }
     return;
   }
-  // Different color: cap at 2; replace OLDEST (preserve incoming level=1)
+  // Different color: cap at 2; replace LOWEST-level (high-level wingmen are protected)
   while (owned.length >= WINGMAN_MAX) {
-    const oldest = owned.shift();
-    oldest.alive = false;
+    let lowest = owned[0];
+    for (const w of owned) if ((w.level||1) < (lowest.level||1)) lowest = w;
+    lowest.alive = false;
+    owned.splice(owned.indexOf(lowest), 1);
   }
   const slot = wingmen.filter(w=>w.owner===player&&w.alive).length;
   wingmen.push({
@@ -3841,27 +3898,89 @@ function fireWingmanBullet(w) {
 function drawWingmen() {
   for(const w of wingmen) {
     if(!w.alive||w.owner.dead) continue;
-    const wc=WINGMAN_COLORS[w.wType];
+    const wc = WINGMAN_COLORS[w.wType];
+    const wcD = shadeHex(wc, -35);
+    const wcL = shadeHex(wc, 35);
     const lv = w.level||1;
-    // Draw mini escort plane
-    cx.save(); cx.translate(w.x|0, w.y|0);
-    cx.fillStyle=wc+'cc';
-    cx.beginPath(); cx.moveTo(0,-10); cx.lineTo(-8,6); cx.lineTo(8,6); cx.closePath(); cx.fill();
-    cx.fillRect(-11,2,22,3);
-    // Engine glow
-    const eg=cx.createRadialGradient(0,7,1,0,7,7);
-    eg.addColorStop(0,wc); eg.addColorStop(1,wc+'00');
-    cx.fillStyle=eg; cx.beginPath(); cx.arc(0,7,7,0,Math.PI*2); cx.fill();
-    // Type indicator glow halo (intensity scales with level)
-    cx.strokeStyle=wc; cx.lineWidth=1+Math.floor((lv-1)/2);
-    cx.globalAlpha=0.4+0.12*lv+Math.sin(frame*0.15)*0.2;
-    cx.beginPath(); cx.ellipse(0,0,14+lv,14+lv,0,0,Math.PI*2); cx.stroke();
-    cx.globalAlpha=1;
-    // Level dots above
-    for (let i=0;i<lv;i++) {
-      cx.fillStyle = '#ffffff';
-      cx.fillRect(-6+i*3, -16, 2, 2);
+    // Track lateral velocity → bank
+    if (typeof w.lastX !== 'number') w.lastX = w.x;
+    const dxw = w.x - w.lastX;
+    w.lastX = w.x;
+    w.bank = (w.bank||0) * 0.7 + dxw * 0.18;
+    const bk = clamp(w.bank, -0.85, 0.85);
+
+    // Shape-aware shadow
+    cx.save();
+    cx.globalAlpha = 0.30;
+    cx.fillStyle = '#000010';
+    cx.translate((w.x|0)+3, (w.y|0)+10);
+    cx.beginPath(); cx.ellipse(0, 0, 9, 3, 0, 0, Math.PI*2); cx.fill();
+    cx.beginPath(); cx.ellipse(-7, 1, 6, 2, 0.2, 0, Math.PI*2); cx.fill();
+    cx.beginPath(); cx.ellipse( 7, 1, 6, 2,-0.2, 0, Math.PI*2); cx.fill();
+    cx.restore();
+
+    // Plane body
+    cx.save();
+    cx.translate(w.x|0, w.y|0);
+    if (bk) {
+      cx.rotate(bk * 0.18);
+      cx.scale(1 - 0.25*Math.abs(bk), 1);
     }
+    // Halo (level-scaled)
+    cx.strokeStyle = wc;
+    cx.lineWidth = 1 + Math.floor((lv-1)/2);
+    cx.globalAlpha = 0.35 + 0.10*lv + Math.sin(frame*0.15)*0.18;
+    cx.beginPath(); cx.ellipse(0, 0, 14+lv, 14+lv, 0, 0, Math.PI*2); cx.stroke();
+    cx.globalAlpha = 1;
+
+    // Lower wing (deep)
+    cx.fillStyle = wcD;
+    cx.beginPath(); cx.moveTo(-2,1); cx.lineTo(-15,7); cx.lineTo(-13,10); cx.lineTo(-3,4); cx.closePath(); cx.fill();
+    cx.beginPath(); cx.moveTo( 2,1); cx.lineTo( 15,7); cx.lineTo( 13,10); cx.lineTo( 3,4); cx.closePath(); cx.fill();
+    // Upper wing (highlight)
+    cx.fillStyle = wc;
+    cx.beginPath(); cx.moveTo(-2,1); cx.lineTo(-12,5); cx.lineTo(-11,7); cx.lineTo(-3,3); cx.closePath(); cx.fill();
+    cx.beginPath(); cx.moveTo( 2,1); cx.lineTo( 12,5); cx.lineTo( 11,7); cx.lineTo( 3,3); cx.closePath(); cx.fill();
+    // Wingtip lights
+    cx.fillStyle = '#ff4444'; cx.fillRect(-15, 6, 1.6, 1.5);
+    cx.fillStyle = '#44ff44'; cx.fillRect( 13, 6, 1.6, 1.5);
+
+    // Slim fuselage with vertical gradient
+    const bg = cx.createLinearGradient(-4, -10, 4, 12);
+    bg.addColorStop(0, wcL);
+    bg.addColorStop(0.5, wc);
+    bg.addColorStop(1, wcD);
+    cx.fillStyle = bg;
+    cx.beginPath();
+    cx.moveTo(0,-10); cx.lineTo(-3,-5); cx.lineTo(-4,8); cx.lineTo(-1,11); cx.lineTo(1,11); cx.lineTo(4,8); cx.lineTo(3,-5); cx.closePath();
+    cx.fill();
+    // Center crease
+    cx.strokeStyle='rgba(0,0,0,0.55)'; cx.lineWidth=0.5;
+    cx.beginPath(); cx.moveTo(0,-10); cx.lineTo(0,11); cx.stroke();
+    // Tail fin
+    cx.fillStyle = wcD;
+    cx.beginPath(); cx.moveTo(-1,4); cx.lineTo(-1,10); cx.lineTo(0,11); cx.lineTo(1,10); cx.lineTo(1,4); cx.closePath(); cx.fill();
+    // Cockpit canopy
+    cx.fillStyle = '#aaeeff';
+    cx.beginPath(); cx.ellipse(0, -2, 1.6, 3.2, 0, 0, Math.PI*2); cx.fill();
+    cx.strokeStyle='rgba(0,0,0,0.5)'; cx.lineWidth=0.4; cx.stroke();
+    // Cannon
+    cx.fillStyle = '#1a1a1a';
+    cx.fillRect(-0.6, -8, 1.2, 4);
+    // Engine afterburner
+    const eg = cx.createRadialGradient(0, 12, 1, 0, 12, 6);
+    eg.addColorStop(0, '#ffffff');
+    eg.addColorStop(0.4, wc);
+    eg.addColorStop(1, wc + '00');
+    cx.fillStyle = eg;
+    cx.beginPath(); cx.arc(0, 12, 6, 0, Math.PI*2); cx.fill();
+    cx.restore();
+
+    // Level pips above (no banking)
+    cx.save();
+    cx.translate(w.x|0, w.y|0);
+    cx.fillStyle = '#ffffff';
+    for (let i=0;i<lv;i++) cx.fillRect(-6+i*3, -16, 2, 2);
     cx.restore();
   }
 }
@@ -4077,7 +4196,7 @@ function killBoss() {
       finalScore = score;
       save.coins += sessionCoins;
       save.diamonds += sessionDiamonds;
-      submitEndlessScore(score, wasLvl);
+      submitEndlessScore(score, wasLvl, 'lv100-victory');
       clearEndlessSnapshot();
       writeSave(); stopBGM(); screen='victory';
     }, 1400);
@@ -4289,7 +4408,8 @@ const titleBtns=[
   {x:140,y:330,w:200,h:44,text:'关 卡 模 式',act:'solo'},
   {x:140,y:384,w:200,h:44,text:'无 尽 模 式',act:'endless'},
   {x:140,y:438,w:200,h:44,text:'商    城',act:'shop'},
-  {x:140,y:492,w:200,h:44,text:'排 行 榜',act:'leaderboard'},
+  {x:140,y:492,w:200,h:38,text:'排 行 榜',act:'leaderboard'},
+  {x:140,y:534,w:200,h:38,text:'🛠 控 制 台',act:'console'},
 ];
 
 // Only renders if the medal is earned — unearned slots stay empty.
@@ -4329,23 +4449,23 @@ function drawTitle() {
     const text = (btn.act==='endless') ? endlessButtonText() : btn.text;
     drawButton(btn.x,btn.y,btn.w,btn.h,text, btn.act==='endless' && !!save.endlessState);
   }
-  if (save.endlessState) {
-    cx.fillStyle='#220000';
-    cx.fillRect(346, 388, 28, 36);
-    cx.strokeStyle='#883333'; cx.strokeRect(346, 388, 28, 36);
-    cx.fillStyle='#ff6666'; cx.font="16px sans-serif";
-    cx.textAlign='center'; cx.textBaseline='middle';
-    cx.fillText('🗑', 360, 406);
-    cx.textBaseline='alphabetic';
-  }
-
-  // 关卡模式 → 只显示当前最高勋章 (金 > 银 > 铜)
+  // 关卡模式 → 只显示当前最高勋章 (金 > 银 > 铜)，x=370
   const medals = save.medals || {};
   let topKey = null;
   if (medals.hell) topKey = 'hell';
   else if (medals.veteran) topKey = 'veteran';
   else if (medals.novice) topKey = 'novice';
   if (topKey) drawMedalIcon(370, 352, true, topKey);
+
+  // 无尽快照存在 → 垃圾桶图标（与勋章纵向对齐 x=370，无边框）
+  if (save.endlessState) {
+    cx.fillStyle='#ff6666';
+    cx.font="20px sans-serif";
+    cx.textAlign='center';
+    cx.textBaseline='middle';
+    cx.fillText('🗑', 370, 406);
+    cx.textBaseline='alphabetic';
+  }
 
   // Footer
   cx.fillStyle='#ffcc00';cx.font="13px 'Courier New', monospace";cx.textAlign='center';
@@ -4354,10 +4474,14 @@ function drawTitle() {
 }
 
 function clickTitle(mx,my) {
-  if (save.endlessState && mx>=346 && mx<=374 && my>=388 && my<=424) {
-    clearEndlessSnapshot();
-    SFX.buyFail();
-    return;
+  // Trash icon at (370, 406), ~22px hit radius
+  if (save.endlessState) {
+    const dx = mx - 370, dy = my - 406;
+    if (dx*dx + dy*dy < 484) {
+      clearEndlessSnapshot();
+      SFX.buyFail();
+      return;
+    }
   }
   for(const btn of titleBtns)
     if(mx>=btn.x&&mx<=btn.x+btn.w&&my>=btn.y&&my<=btn.y+btn.h){
@@ -4365,6 +4489,7 @@ function clickTitle(mx,my) {
       else if(btn.act==='endless') startGame(false,true);
       else if(btn.act==='shop') screen='shop';
       else if(btn.act==='leaderboard') screen='leaderboard';
+      else if(btn.act==='console') screen='console';
     }
 }
 
@@ -4456,6 +4581,7 @@ function clickTitleSettings(mx, my) {
 }
 
 // ─── LEADERBOARD SCREEN ──────────────────────────────────────────────────────
+let leaderboardScroll = 0;
 function drawLeaderboard() {
   fillPx('#000818',0,0,W,H);
   cx.textAlign='center';
@@ -4471,10 +4597,11 @@ function drawLeaderboard() {
   cx.font="bold 11px 'Courier New', monospace";
   cx.textAlign='left';
   cx.fillText('#',  22, 110);
-  cx.fillText('LV', 56, 110);
-  cx.fillText('分数', 110, 110);
-  cx.fillText('用时', 220, 110);
-  cx.fillText('日期', 320, 110);
+  cx.fillText('LV', 50, 110);
+  cx.fillText('分数', 96, 110);
+  cx.fillText('用时', 200, 110);
+  cx.fillText('日期', 290, 110);
+  cx.fillText('外挂', 410, 110);
   cx.strokeStyle='#224466'; cx.lineWidth=1;
   cx.beginPath(); cx.moveTo(20,118); cx.lineTo(W-20,118); cx.stroke();
 
@@ -4487,45 +4614,60 @@ function drawLeaderboard() {
     cx.fillStyle='#334455';
     cx.fillText('去无尽模式留下你的痕迹吧！', W/2, 374);
   } else {
+    cx.save();
+    cx.beginPath(); cx.rect(0, 122, W, 524); cx.clip();
+    const rowH = 38;
     for (let i=0;i<lb.length;i++) {
       const e = lb[i];
-      const ry = 138 + i*44;
-      // Row background (alternating)
+      const ry = 138 + i*rowH - leaderboardScroll;
+      if (ry + rowH < 122 || ry > 646) continue;
       if (i % 2 === 0) {
         cx.fillStyle='rgba(20,40,60,0.5)';
-        cx.fillRect(20, ry-16, W-40, 36);
+        cx.fillRect(20, ry-16, W-40, rowH-2);
       }
-      // Rank with medal coloring
       cx.fillStyle = i===0 ? '#ffcc44' : i===1 ? '#bbbbbb' : i===2 ? '#cc8844' : '#88aacc';
-      cx.font="bold 16px 'Courier New', monospace";
+      cx.font="bold 14px 'Courier New', monospace";
       cx.textAlign='left';
       cx.fillText('#'+(i+1), 22, ry+5);
-      // Level
-      cx.font="bold 13px 'Courier New', monospace";
+      cx.font="bold 12px 'Courier New', monospace";
       cx.fillStyle='#fff';
-      cx.fillText('LV '+(e.level||1), 56, ry+5);
-      // Score
+      cx.fillText('LV'+(e.level||1), 50, ry+5);
       cx.fillStyle='#ffcc00';
-      cx.fillText(String(e.score||0).padStart(7,' '), 110, ry+5);
-      // Duration
+      cx.fillText(String(e.score||0).padStart(7,' '), 96, ry+5);
       cx.fillStyle='#88ddee';
-      cx.font="12px 'Courier New', monospace";
-      cx.fillText(fmtDuration(e.durationSec || 0), 220, ry+5);
-      // Date
-      cx.fillStyle='#aacccc';
       cx.font="11px 'Courier New', monospace";
-      cx.fillText(fmtDate(e.dateMs || 0), 320, ry+5);
+      cx.fillText(fmtDuration(e.durationSec || 0), 200, ry+5);
+      cx.fillStyle='#aacccc';
+      cx.font="10px 'Courier New', monospace";
+      cx.fillText(fmtDate(e.dateMs || 0), 290, ry+5);
+      // Invincible flag icon
+      if (e.invincible) {
+        cx.fillStyle = '#ff4444';
+        cx.font="bold 14px 'Courier New', monospace";
+        cx.fillText('💀', 416, ry+6);
+      }
+    }
+    cx.restore();
+    // Scrollbar
+    const totalH = lb.length * rowH;
+    if (totalH > 524) {
+      const trackH = 520;
+      const knobH = Math.max(20, trackH * (524/totalH));
+      const maxS = totalH - 524;
+      const knobY = 124 + (trackH - knobH) * (leaderboardScroll/maxS);
+      cx.fillStyle = 'rgba(255,255,255,0.18)';
+      cx.fillRect(W - 8, 124, 3, trackH);
+      cx.fillStyle = '#00ffff';
+      cx.fillRect(W - 8, knobY, 3, knobH);
     }
   }
 
   drawButton(20, 655, 110, 36, '← 返回', false);
-  drawButton(180, 655, 120, 36, '🛠 控制台', false);
   if (lb.length > 0) drawButton(330, 655, 130, 36, '清空记录', false);
   cx.textAlign='left';
 }
 function clickLeaderboard(mx,my) {
   if (mx>=20 && mx<=130 && my>=655 && my<=691) { screen='title'; return; }
-  if (mx>=180 && mx<=300 && my>=655 && my<=691) { screen='console'; showConsolePanel(true); return; }
   if (mx>=330 && mx<=460 && my>=655 && my<=691) {
     if (confirm('确定清空所有无尽记录?')) {
       save.endlessLeaderboard = [];
@@ -4763,9 +4905,8 @@ function clickDeath(mx,my) {
         if (sessionDiamonds + save.diamonds >= deathReviveCost) doRevive();
         else SFX.buyFail();
       } else {
-        // Save & home — endless: submit score to leaderboard
         if (endlessMode) {
-          submitEndlessScore(score, level);
+          submitEndlessScore(score, level, 'death-home');
           clearEndlessSnapshot();
         }
         save.coins += sessionCoins; save.diamonds += sessionDiamonds;
@@ -4928,8 +5069,11 @@ function clickPause(mx,my) {
         startGame(twoPlayer, endlessMode, endlessMode?1:level);
       }
       else if (btn.act==='home') {
-        // Save partial winnings + endless snapshot (so player can continue later)
-        if (endlessMode) saveEndlessSnapshot();
+        // Endless: keep snapshot for resume + record this run on the leaderboard
+        if (endlessMode) {
+          saveEndlessSnapshot();
+          submitEndlessScore(score, level, 'pause-home');
+        }
         save.coins += sessionCoins; save.diamonds += sessionDiamonds;
         sessionCoins = 0; sessionDiamonds = 0;
         writeSave(); stopBGM(); screen='title';
@@ -5204,16 +5348,20 @@ function clickGameOver(mx,my) {
 }
 
 // ─── ENDLESS LEADERBOARD ─────────────────────────────────────────────────────
-let endlessStartTime = 0;   // ms when current endless run started
-function submitEndlessScore(scoreVal, lvVal) {
+let endlessStartTime = 0;       // ms when current endless run started
+let endlessInvincibleUsed = false; // whether 💀 was ever toggled in this run
+function submitEndlessScore(scoreVal, lvVal, exitReason) {
   if (!Array.isArray(save.endlessLeaderboard)) save.endlessLeaderboard = [];
   const durationSec = endlessStartTime ? Math.max(1, Math.round((Date.now()-endlessStartTime)/1000)) : 0;
   save.endlessLeaderboard.push({
     score: scoreVal|0, level: lvVal|0,
     durationSec, dateMs: Date.now(),
+    invincible: !!endlessInvincibleUsed,
+    exit: exitReason || 'unknown',
   });
   save.endlessLeaderboard.sort((a,b)=>b.score-a.score);
-  save.endlessLeaderboard = save.endlessLeaderboard.slice(0, 10);
+  // Permanent local file: keep up to 50 entries (was 10)
+  save.endlessLeaderboard = save.endlessLeaderboard.slice(0, 50);
   writeSave();
 }
 function fmtDuration(s) {
@@ -5258,7 +5406,10 @@ function startGame(two, endless, startLv) {
   players.push(createPlayer(1,save.selP1));
   if(two) players.push(createPlayer(2,save.selP2));
   initBGStars(BG_SKINS[save.selBG][3]);
-  if (endlessMode) endlessStartTime = Date.now();
+  if (endlessMode) {
+    endlessStartTime = Date.now();
+    endlessInvincibleUsed = !!invincible;   // already on at start? count it
+  }
   // Restore endless snapshot if present
   if (endlessMode && save.endlessState) {
     const s = save.endlessState;
@@ -5408,7 +5559,7 @@ document.addEventListener('keydown',e=>{
     else if (screen==='pause') { screen='game'; if(bgmEnabled) startBGM(); }
     document.getElementById('btn-pause').classList.toggle('active', screen==='pause');
   }
-  if(e.key==='g'||e.key==='G'){invincible=!invincible;document.getElementById('btn-invincible').classList.toggle('active',invincible);refreshInfBomb();}
+  if(e.key==='g'||e.key==='G'){invincible=!invincible;document.getElementById('btn-invincible').classList.toggle('active',invincible);refreshInfBomb();if(invincible&&endlessMode)endlessInvincibleUsed=true;}
   if(e.key==='m'||e.key==='M') toggleBGM();
   if(e.key==='t'||e.key==='T'){bgmTrack=(bgmTrack+1)%BGM_TRACKS.length;stopBGM();if(bgmEnabled&&screen==='game')startBGM();}
   if((e.key==='Escape'||e.key==='Esc')){
@@ -5420,7 +5571,7 @@ document.addEventListener('keydown',e=>{
       document.getElementById('btn-pause').classList.remove('active');
     } else if (screen==='death') {
       if (endlessMode) {
-        submitEndlessScore(score, level);
+        submitEndlessScore(score, level, 'death-esc');
         clearEndlessSnapshot();
       }
       save.coins += sessionCoins; save.diamonds += sessionDiamonds;
@@ -5430,7 +5581,7 @@ document.addEventListener('keydown',e=>{
       screen='title';
     } else if (screen==='console') {
       showConsolePanel(false);
-      screen='leaderboard';
+      screen='title';
     }
   }
   if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','z','Z','x','X',' ','Spacebar'].includes(e.key)) e.preventDefault();
@@ -5468,6 +5619,14 @@ canvas.addEventListener('wheel', e=>{
     const maxS = Math.max(0, listH - DROPDOWN_VISIBLE_H);
     bgmDropdownScroll = clamp(bgmDropdownScroll + (e.deltaY>0?28:-28), 0, maxS);
   }
+  // Leaderboard scroll
+  if (screen==='leaderboard') {
+    e.preventDefault();
+    const lb = save.endlessLeaderboard || [];
+    const totalH = lb.length * 38;
+    const maxS = Math.max(0, totalH - 524);
+    leaderboardScroll = clamp(leaderboardScroll + (e.deltaY>0?38:-38), 0, maxS);
+  }
 }, {passive:false});
 
 function syncPauseBtn() {
@@ -5491,7 +5650,7 @@ document.getElementById('btn-pause').addEventListener('click',()=>{
   else if (screen==='pause') { screen='game'; if(bgmEnabled) startBGM(); }
   document.getElementById('btn-pause').classList.toggle('active', screen==='pause');
 });
-document.getElementById('btn-invincible').addEventListener('click',()=>{invincible=!invincible;document.getElementById('btn-invincible').classList.toggle('active',invincible);refreshInfBomb();});
+document.getElementById('btn-invincible').addEventListener('click',()=>{invincible=!invincible;document.getElementById('btn-invincible').classList.toggle('active',invincible);refreshInfBomb();if(invincible&&endlessMode)endlessInvincibleUsed=true;});
 // Single cycling speed button (0.5 → 1 → 2 → 3 → 0.5 ...)
 const SPEED_CYCLE = [0.5, 1, 2, 3];
 const speedBtn = document.getElementById('btn-speed');
@@ -5721,7 +5880,7 @@ function showConsolePanel(show) {
 }
 document.getElementById('console-back').addEventListener('click', ()=>{
   showConsolePanel(false);
-  screen = 'leaderboard';
+  screen = 'title';
 });
 document.getElementById('console-reset').addEventListener('click', ()=>{
   if (confirm('重置所有控制台数据为默认?')) {
