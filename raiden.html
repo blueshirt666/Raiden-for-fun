@@ -3403,14 +3403,14 @@ function killEnemy(e) {
       enemies.push(c);
     }
   }
-  // Power-up drops (no longer including coin/diamond — those are auto)
+  // Power-up drops (rates significantly bumped per request)
   const dr=Math.random();
-  if(dr<0.045) spawnPickup(e.x,e.y,'weapon',rndInt(0,9));
-  else if(dr<0.105) spawnPickup(e.x,e.y,'star',1);
-  else if(dr<0.125) spawnPickup(e.x,e.y,'life',1);
-  else if(dr<0.145) spawnPickup(e.x,e.y,'bomb',1);
-  else if(dr<0.175) spawnPickup(e.x,e.y,'wingman',rndInt(0,4));
-  else if(dr<0.190) spawnPickup(e.x,e.y,'shield',1);
+  if(dr<0.10)       spawnPickup(e.x,e.y,'weapon',rndInt(0,9));
+  else if(dr<0.22)  spawnPickup(e.x,e.y,'star',1);
+  else if(dr<0.27)  spawnPickup(e.x,e.y,'life',1);
+  else if(dr<0.32)  spawnPickup(e.x,e.y,'bomb',1);
+  else if(dr<0.40)  spawnPickup(e.x,e.y,'wingman',rndInt(0,4));
+  else if(dr<0.45)  spawnPickup(e.x,e.y,'shield',1);
   SFX[e.type==='carrier'||e.type==='tank'||e.type==='elite'?'killBig':'killBasic']();
 }
 
@@ -3543,12 +3543,12 @@ function getDiff() {
       hpMult:     Math.min(1 + endlessLv*0.045, 5),
     };
   }
-  // Stage: tier-multiplied
+  // Stage: tier-multiplied (more enemies, faster waves than before)
   const m = TIER_MUL[currentTier()];
   return {
-    spawnRate: Math.max(150 - lv*7, 70),
-    formRate:  Math.max(380 - lv*15, 170),
-    enemyCount: 1 + Math.floor(lv/3),
+    spawnRate: Math.max(95 - lv*5, 40),     // 出怪间隔大幅缩短
+    formRate:  Math.max(260 - lv*12, 110),  // 编队节奏加快
+    enemyCount: 2 + Math.floor(lv/2),       // 单波数量 ↑
     bulletSpd:  (0.5 + lv*0.06) * m,
     hpMult:     (1 + lv*0.12) * m,
   };
@@ -3637,7 +3637,30 @@ const titleBtns=[
   {x:140,y:330,w:200,h:44,text:'关 卡 模 式',act:'solo'},
   {x:140,y:384,w:200,h:44,text:'无 尽 模 式',act:'endless'},
   {x:140,y:438,w:200,h:44,text:'商    城',act:'shop'},
+  {x:140,y:492,w:200,h:44,text:'排 行 榜',act:'leaderboard'},
 ];
+
+function drawMedalIcon(x, y, earned, key) {
+  const colors = { novice:'#cd7f32', veteran:'#c0c0c0', hell:'#ffd700' };
+  if (earned) {
+    const g = cx.createRadialGradient(x-3, y-3, 1, x, y, 13);
+    g.addColorStop(0,'#fff'); g.addColorStop(0.4, colors[key]); g.addColorStop(1,'#000');
+    cx.fillStyle = g;
+    cx.beginPath(); cx.arc(x, y, 11, 0, Math.PI*2); cx.fill();
+    cx.strokeStyle='#ffeeaa'; cx.lineWidth=1; cx.stroke();
+    cx.fillStyle='#000'; cx.font="bold 10px 'Courier New', monospace"; cx.textAlign='center';
+    cx.fillText('★', x, y+4);
+  } else {
+    // Iron / unearned medal
+    const g = cx.createRadialGradient(x-3, y-3, 1, x, y, 13);
+    g.addColorStop(0,'#666'); g.addColorStop(0.5,'#3a3a3a'); g.addColorStop(1,'#1a1a1a');
+    cx.fillStyle = g;
+    cx.beginPath(); cx.arc(x, y, 11, 0, Math.PI*2); cx.fill();
+    cx.strokeStyle='#555'; cx.lineWidth=1; cx.stroke();
+    cx.fillStyle='#222'; cx.font="bold 10px 'Courier New', monospace"; cx.textAlign='center';
+    cx.fillText('☆', x, y+4);
+  }
+}
 function endlessButtonText() {
   if (save.endlessState) return '继续无尽 · LV '+save.endlessState.level;
   return '无 尽 模 式';
@@ -3671,50 +3694,17 @@ function drawTitle() {
     cx.fillText('🗑', 360, 412);
   }
 
-  // ─ Medals row ─
+  // 关卡模式 → 旁边显示 3 枚勋章 (铜/银/金)，未获得显示铁牌
   const medals = save.medals || {};
-  const tiers = [{key:'novice', col:'#cd7f32', label:'新手'},
-                 {key:'veteran', col:'#c0c0c0', label:'老手'},
-                 {key:'hell',    col:'#ffd700', label:'地狱'}];
-  cx.fillStyle='#88ccee'; cx.font="11px 'Courier New', monospace"; cx.textAlign='center';
-  cx.fillText('通关勋章', W/2, 498);
+  const tierKeys = ['novice','veteran','hell'];
+  const my = 352;
   for (let i=0;i<3;i++) {
-    const cxX = W/2 + (i-1)*60, cxY = 520;
-    if (medals[tiers[i].key]) {
-      const g = cx.createRadialGradient(cxX-3, cxY-3, 1, cxX, cxY, 18);
-      g.addColorStop(0,'#fff'); g.addColorStop(0.4, tiers[i].col); g.addColorStop(1,'#000');
-      cx.fillStyle = g;
-      cx.beginPath(); cx.arc(cxX, cxY, 16, 0, Math.PI*2); cx.fill();
-      cx.strokeStyle = '#ffeeaa'; cx.lineWidth=1; cx.stroke();
-      cx.fillStyle='#000'; cx.font="bold 11px 'Courier New'";
-      cx.fillText('★', cxX, cxY+4);
-    } else {
-      cx.strokeStyle = '#334466'; cx.lineWidth=1.5;
-      cx.beginPath(); cx.arc(cxX, cxY, 16, 0, Math.PI*2); cx.stroke();
-    }
-    cx.fillStyle='#88aacc'; cx.font="10px 'Courier New'";
-    cx.fillText(tiers[i].label, cxX, cxY+30);
-  }
-
-  // ─ Endless leaderboard (top 3) ─
-  const lb = save.endlessLeaderboard || [];
-  cx.fillStyle='#ff88aa'; cx.font="11px 'Courier New', monospace";
-  cx.fillText('🏆 无尽榜 TOP 3', W/2, 570);
-  if (lb.length === 0) {
-    cx.fillStyle='#445566'; cx.font="10px 'Courier New', monospace";
-    cx.fillText('暂无记录', W/2, 590);
-  } else {
-    cx.font="10px 'Courier New', monospace";
-    for (let i=0;i<Math.min(3, lb.length);i++) {
-      const e = lb[i];
-      cx.fillStyle = ['#ffcc44','#bbbbbb','#cc8844'][i] || '#888';
-      const line = '#'+(i+1)+' Lv'+e.level+' · '+String(e.score).padStart(7,' ')+' · '+fmtDate(e.dateMs);
-      cx.fillText(line, W/2, 588 + i*14);
-    }
+    drawMedalIcon(360 + i*30, my, !!medals[tierKeys[i]], tierKeys[i]);
   }
 
   // Footer
-  cx.fillStyle='#ffcc00';cx.font="13px 'Courier New', monospace";cx.fillText('🪙 '+save.coins+'   💎 '+save.diamonds, W/2, 654);
+  cx.fillStyle='#ffcc00';cx.font="13px 'Courier New', monospace";cx.textAlign='center';
+  cx.fillText('🪙 '+save.coins+'   💎 '+save.diamonds, W/2, 654);
   cx.textAlign='left';
 }
 
@@ -3729,7 +3719,87 @@ function clickTitle(mx,my) {
       if(btn.act==='solo') screen='tierSelect';
       else if(btn.act==='endless') startGame(false,true);
       else if(btn.act==='shop') screen='shop';
+      else if(btn.act==='leaderboard') screen='leaderboard';
     }
+}
+
+// ─── LEADERBOARD SCREEN ──────────────────────────────────────────────────────
+function drawLeaderboard() {
+  fillPx('#000818',0,0,W,H);
+  cx.textAlign='center';
+  cx.fillStyle='#00ffff';
+  cx.font="bold 24px 'Courier New', monospace";
+  cx.fillText('🏆 无尽排行榜', W/2, 54);
+  cx.fillStyle='#88ccee';
+  cx.font="11px 'Courier New', monospace";
+  cx.fillText('记录每次无尽模式的游玩数据 · 按分数从高到低', W/2, 78);
+
+  // Column headers
+  cx.fillStyle='#446688';
+  cx.font="bold 11px 'Courier New', monospace";
+  cx.textAlign='left';
+  cx.fillText('#',  22, 110);
+  cx.fillText('LV', 56, 110);
+  cx.fillText('分数', 110, 110);
+  cx.fillText('用时', 220, 110);
+  cx.fillText('日期', 320, 110);
+  cx.strokeStyle='#224466'; cx.lineWidth=1;
+  cx.beginPath(); cx.moveTo(20,118); cx.lineTo(W-20,118); cx.stroke();
+
+  const lb = save.endlessLeaderboard || [];
+  if (lb.length === 0) {
+    cx.fillStyle='#445566';
+    cx.font="13px 'Courier New', monospace";
+    cx.textAlign='center';
+    cx.fillText('暂无记录', W/2, 350);
+    cx.fillStyle='#334455';
+    cx.fillText('去无尽模式留下你的痕迹吧！', W/2, 374);
+  } else {
+    for (let i=0;i<lb.length;i++) {
+      const e = lb[i];
+      const ry = 138 + i*44;
+      // Row background (alternating)
+      if (i % 2 === 0) {
+        cx.fillStyle='rgba(20,40,60,0.5)';
+        cx.fillRect(20, ry-16, W-40, 36);
+      }
+      // Rank with medal coloring
+      cx.fillStyle = i===0 ? '#ffcc44' : i===1 ? '#bbbbbb' : i===2 ? '#cc8844' : '#88aacc';
+      cx.font="bold 16px 'Courier New', monospace";
+      cx.textAlign='left';
+      cx.fillText('#'+(i+1), 22, ry+5);
+      // Level
+      cx.font="bold 13px 'Courier New', monospace";
+      cx.fillStyle='#fff';
+      cx.fillText('LV '+(e.level||1), 56, ry+5);
+      // Score
+      cx.fillStyle='#ffcc00';
+      cx.fillText(String(e.score||0).padStart(7,' '), 110, ry+5);
+      // Duration
+      cx.fillStyle='#88ddee';
+      cx.font="12px 'Courier New', monospace";
+      cx.fillText(fmtDuration(e.durationSec || 0), 220, ry+5);
+      // Date
+      cx.fillStyle='#aacccc';
+      cx.font="11px 'Courier New', monospace";
+      cx.fillText(fmtDate(e.dateMs || 0), 320, ry+5);
+    }
+  }
+
+  drawButton(20, 655, 110, 36, '← 返回', false);
+  if (lb.length > 0) drawButton(330, 655, 130, 36, '清空记录', false);
+  cx.textAlign='left';
+}
+function clickLeaderboard(mx,my) {
+  if (mx>=20 && mx<=130 && my>=655 && my<=691) { screen='title'; return; }
+  if (mx>=330 && mx<=460 && my>=655 && my<=691) {
+    if (confirm('确定清空所有无尽记录?')) {
+      save.endlessLeaderboard = [];
+      writeSave();
+      SFX.buySuccess();
+    }
+    return;
+  }
 }
 
 // ─── SHOP SCREEN ─────────────────────────────────────────────────────────────
@@ -4498,6 +4568,7 @@ function handleTouchStart(e) {
       else if (screen==='shop') clickShop(p.x, p.y);
       else if (screen==='tierSelect') clickTierSelect(p.x, p.y);
       else if (screen==='stageSelect') clickStageSelect(p.x, p.y);
+      else if (screen==='leaderboard') clickLeaderboard(p.x, p.y);
       else if (screen==='gameover') clickGameOver(p.x, p.y);
       else if (screen==='victory') clickVictory(p.x, p.y);
       else if (screen==='death') clickDeath(p.x, p.y);
@@ -4574,7 +4645,7 @@ document.addEventListener('keydown',e=>{
       }
       save.coins += sessionCoins; save.diamonds += sessionDiamonds;
       writeSave(); screen='title';
-    } else if (screen==='shop' || screen==='stageSelect' || screen==='tierSelect') {
+    } else if (screen==='shop' || screen==='stageSelect' || screen==='tierSelect' || screen==='leaderboard') {
       screen='title';
     }
   }
@@ -4591,6 +4662,7 @@ canvas.addEventListener('click',e=>{
   else if(screen==='shop') clickShop(mx,my);
   else if(screen==='tierSelect') clickTierSelect(mx,my);
   else if(screen==='stageSelect') clickStageSelect(mx,my);
+  else if(screen==='leaderboard') clickLeaderboard(mx,my);
   else if(screen==='gameover') clickGameOver(mx,my);
   else if(screen==='victory') clickVictory(mx,my);
   else if(screen==='death') clickDeath(mx,my);
@@ -4716,6 +4788,9 @@ function draw() {
   } else if(screen==='stageSelect') {
     frame++;
     drawStageSelect();
+  } else if(screen==='leaderboard') {
+    frame++;
+    drawLeaderboard();
   } else if(screen==='game') {
     drawGameField();
   } else if(screen==='pause') {
