@@ -21,11 +21,10 @@ canvas { display:block; width:100%; height:100%; image-rendering:auto; }
 }
 #btn-pause { top:10px; }
 #btn-invincible { top:64px; }
-#btn-bgm { top:118px; }
 .side-btn:hover { background:#333; border-color:#888; }
 .side-btn.active { border-color:#0ff; background:#002233; }
 #btn-speed {
-  position:absolute; right:-52px; top:226px; width:44px; height:44px;
+  position:absolute; right:-52px; top:118px; width:44px; height:44px;
   background:#221a00; border:2px solid #ffaa00; color:#ffcc44;
   font-size:14px; font-weight:bold; cursor:pointer;
   display:flex; align-items:center; justify-content:center;
@@ -33,7 +32,7 @@ canvas { display:block; width:100%; height:100%; image-rendering:auto; }
 }
 #btn-speed:hover { background:#332200; border-color:#ffcc44; }
 #btn-infbomb {
-  position:absolute; right:-52px; top:280px; width:44px; height:44px;
+  position:absolute; right:-52px; top:172px; width:44px; height:44px;
   background:#221122; border:2px solid #ff44ff; color:#ffaaff;
   font-size:18px; cursor:pointer;
   display:flex; align-items:center; justify-content:center;
@@ -49,11 +48,9 @@ canvas { display:block; width:100%; height:100%; image-rendering:auto; }
   body.is-mobile .side-btn { right:auto; width:36px; height:36px; font-size:14px; }
   body.is-mobile #btn-pause { top:6px; left:6px; }
   body.is-mobile #btn-invincible { top:6px; left:48px; opacity:.55; }
-  body.is-mobile #btn-bgm { top:6px; left:90px; }
-  body.is-mobile #btn-track { top:6px; left:132px; }
   body.is-mobile .touch-only { display:flex; }
-  body.is-mobile #btn-speed   { right:auto; left:174px; top:6px; width:36px; height:36px; font-size:11px; }
-  body.is-mobile #btn-infbomb { right:auto; left:216px; top:6px; width:36px; height:36px; font-size:14px; }
+  body.is-mobile #btn-speed   { right:auto; left:90px;  top:6px; width:36px; height:36px; font-size:11px; }
+  body.is-mobile #btn-infbomb { right:auto; left:132px; top:6px; width:36px; height:36px; font-size:14px; }
 }
 #btn-bomb {
   position:absolute; right:14px; bottom:18px;
@@ -167,13 +164,13 @@ function defaultSave() {
     planes: Array(20).fill(false).map((_,i)=>i===0),
     bgs: Array(BG_SKINS.length).fill(false).map((_,i)=>i===0),
     selP1: 0, selP2: 1, selBG: 0,
-    // Per-tier stage progress (novice unlocked by default)
     stageProgress: { novice:1, veteran:0, hell:0 },
     medals: { novice:false, veteran:false, hell:false },
     tier: 'novice',
     moveSensX: 1.0, moveSensY: 1.0,
+    pixelScale: 1.0,
     endlessState: null,
-    endlessLeaderboard: [],   // [{score, level, durationSec, dateMs}]
+    endlessLeaderboard: [],
   };
 }
 let save = defaultSave();
@@ -212,6 +209,7 @@ function loadSave() {
       if (typeof d.tier === 'string' && TIER_MUL[d.tier]) save.tier = d.tier;
       if (typeof d.moveSensX === 'number') save.moveSensX = d.moveSensX;
       if (typeof d.moveSensY === 'number') save.moveSensY = d.moveSensY;
+      if (typeof d.pixelScale === 'number') save.pixelScale = d.pixelScale;
       if (d.endlessState && typeof d.endlessState === 'object') save.endlessState = d.endlessState;
       if (Array.isArray(d.endlessLeaderboard)) save.endlessLeaderboard = d.endlessLeaderboard.slice(0,10);
     }
@@ -4240,6 +4238,93 @@ function clickTitle(mx,my) {
     }
 }
 
+// ─── TITLE SETTINGS SCREEN ───────────────────────────────────────────────────
+function drawTitleSettings() {
+  fillPx('#000818',0,0,W,H);
+  cx.textAlign='center';
+  cx.fillStyle='#00ffff';
+  cx.font="bold 22px 'Courier New', monospace";
+  cx.fillText('设  置', W/2, 56);
+  cx.fillStyle='#88ccee';
+  cx.font="11px 'Courier New', monospace";
+  cx.fillText('音乐 · 灵敏度 · 画面分辨率', W/2, 80);
+
+  // Resolution
+  cx.fillStyle='#ffcc00'; cx.font="bold 13px 'Courier New', monospace";
+  cx.fillText('画 面 分 辨 率', W/2, 124);
+  drawResSlider(70, 142, 340);
+  // Hint
+  cx.fillStyle='#557799'; cx.font="10px 'Courier New', monospace";
+  const hwScale = (window.devicePixelRatio||1).toFixed(2);
+  cx.fillText('设备最大像素比 '+hwScale+'x · 拉到 3x 为最高', W/2, 178);
+
+  // Sensitivity
+  cx.fillStyle='#ffcc00'; cx.font="bold 13px 'Courier New', monospace";
+  cx.fillText('遥 感 灵 敏 度', W/2, 220);
+  drawSensSlider(70, 240, 340, '横向', 'moveSensX');
+  drawSensSlider(70, 270, 340, '纵向', 'moveSensY');
+
+  // Music
+  cx.fillStyle='#ffcc00'; cx.font="bold 13px 'Courier New', monospace";
+  cx.fillText('音 乐 设 置', W/2, 320);
+  drawButton(60, 338, 170, 36, bgmEnabled?'🎵 音乐: 开':'🎵 音乐: 关', bgmEnabled);
+  drawDropdown(250, 338, 170, 36, BGM_TRACK_NAMES, bgmTrack, bgmDropdownOpen);
+
+  drawButton(20, 655, 110, 36, '← 返回', false);
+  cx.textAlign='left';
+}
+function drawResSlider(x, y, w) {
+  const v = save.pixelScale || 1;
+  const t = (v - PIXEL_SCALE_MIN) / (PIXEL_SCALE_MAX - PIXEL_SCALE_MIN);
+  cx.fillStyle='#88ccee'; cx.font="11px 'Courier New'"; cx.textAlign='left';
+  cx.fillText('画质', x-50, y+10);
+  cx.fillStyle='#0a1828'; cx.fillRect(x, y+6, w, 6);
+  cx.strokeStyle='#244466'; cx.strokeRect(x+0.5, y+6.5, w-1, 5);
+  cx.fillStyle='#ffcc44'; cx.fillRect(x, y+6, w*t, 6);
+  cx.fillStyle='#ffffff';
+  cx.fillRect(x+w*t-4, y+1, 8, 16);
+  cx.strokeStyle='#ffcc44'; cx.lineWidth=1; cx.strokeRect(x+w*t-4+0.5, y+1.5, 7, 15);
+  cx.fillStyle='#ffcc00'; cx.font="11px 'Courier New'"; cx.textAlign='left';
+  cx.fillText(v.toFixed(2)+'x', x+w+8, y+10);
+}
+function hitResSlider(mx, my, x, y, w) {
+  if (my>=y && my<=y+18 && mx>=x-8 && mx<=x+w+8) {
+    let t = (mx - x) / w;
+    t = Math.max(0, Math.min(1, t));
+    save.pixelScale = +(PIXEL_SCALE_MIN + (PIXEL_SCALE_MAX-PIXEL_SCALE_MIN)*t).toFixed(2);
+    writeSave();
+    applyResolution();
+    return true;
+  }
+  return false;
+}
+function clickTitleSettings(mx, my) {
+  if (mx>=20 && mx<=130 && my>=655 && my<=691) {
+    bgmDropdownOpen = false; screen='title'; return;
+  }
+  // Dropdown picks first
+  if (bgmDropdownOpen) {
+    const lx=250, ly=338+36+2, lw=170, itemH=DROPDOWN_ITEM_H, visH=DROPDOWN_VISIBLE_H;
+    if (mx>=lx && mx<=lx+lw && my>=ly && my<=ly+visH) {
+      const localY = (my - ly) + bgmDropdownScroll;
+      const idx = Math.floor(localY / itemH);
+      if (idx>=0 && idx<BGM_TRACKS.length) {
+        bgmTrack = idx; stopBGM(); if (bgmEnabled) startBGM(); SFX.buySuccess();
+      }
+      bgmDropdownOpen = false;
+      return;
+    }
+    if (!(mx>=250 && mx<=420 && my>=338 && my<=374)) bgmDropdownOpen = false;
+  }
+  if (hitResSlider(mx, my, 70, 142, 340)) return;
+  if (hitSensSlider(mx, my, 70, 240, 340, 'moveSensX')) return;
+  if (hitSensSlider(mx, my, 70, 270, 340, 'moveSensY')) return;
+  // BGM toggle
+  if (mx>=60 && mx<=230 && my>=338 && my<=374) { toggleBGM(); return; }
+  // Dropdown header
+  if (mx>=250 && mx<=420 && my>=338 && my<=374) { bgmDropdownOpen = !bgmDropdownOpen; return; }
+}
+
 // ─── LEADERBOARD SCREEN ──────────────────────────────────────────────────────
 function drawLeaderboard() {
   fillPx('#000818',0,0,W,H);
@@ -4354,10 +4439,25 @@ function drawShopPlanes() {
     cx.strokeStyle=isP1?'#00ffff':isP2?'#ff8844':isHL?'#4488cc':'#224466';
     cx.lineWidth=isP1||isP2?2:1;
     cx.strokeRect((bx+1)|0,(by+1)|0,(cw-2)|0,(ch-2)|0);
-    // Plane image — kept inside the border, name placed below
-    drawVectorPlane(skin[3],skin[4],cx,(bx+cw/2)|0,(by+34)|0,1.45,false);
-    // Name (inside border, below image)
-    cx.fillStyle=owned?'#aaddff':'#7799bb';cx.font="bold 10px 'Courier New', monospace";cx.textAlign='center';
+    // Plane image — clipped to image area so wings/details never overflow border
+    cx.save();
+    cx.beginPath(); cx.rect(bx+3, by+3, cw-15, 56); cx.clip();
+    drawVectorPlane(skin[3],skin[4],cx,(bx+cw/2)|0,(by+34)|0,1.18,false);
+    // Per-skin tail/hull stripe decal — accent color from cockpit hue
+    cx.fillStyle = skin[4][1] + 'cc';
+    cx.fillRect((bx+cw/2-1)|0, (by+22)|0, 2, 24);
+    // Tiny squadron serial — extra differentiation per ship
+    cx.fillStyle='rgba(255,255,255,0.55)';
+    cx.font="bold 6px 'Courier New', monospace";
+    cx.textAlign='center';
+    cx.fillText('NO.'+String(i+1).padStart(2,'0'), (bx+cw/2)|0, (by+55)|0);
+    cx.restore();
+    // Separator line
+    cx.strokeStyle = owned ? '#225577' : '#222';
+    cx.lineWidth = 0.6;
+    cx.beginPath(); cx.moveTo(bx+6, by+62); cx.lineTo(bx+cw-16, by+62); cx.stroke();
+    // Name
+    cx.fillStyle=owned?'#aaddff':'#7799bb';cx.font="bold 11px 'Courier New', monospace";cx.textAlign='center';
     cx.fillText(skin[0],(bx+cw/2)|0,(by+76)|0);
     // Owned mark or price
     if(owned){
@@ -4592,6 +4692,12 @@ function drawPause() {
 }
 
 let bgmDropdownOpen = false;
+let bgmDropdownScroll = 0;
+const DROPDOWN_VISIBLE_H = 180;       // visible list height
+const DROPDOWN_ITEM_H    = 28;
+function dropdownListBounds(x, y, w, h) {
+  return { lx: x, ly: y + h + 2, lw: w, lh: DROPDOWN_VISIBLE_H };
+}
 function drawDropdown(x, y, w, h, items, selectedIdx, open) {
   // Header showing current value
   cx.fillStyle = open ? '#003344' : '#001828';
@@ -4607,24 +4713,44 @@ function drawDropdown(x, y, w, h, items, selectedIdx, open) {
   cx.font="bold 14px 'Courier New', monospace";
   cx.fillText(open ? '▲' : '▼', x+w-22, y+h/2+5);
   cx.textAlign='left';
-  // Open list overlay
+  // Open list overlay (scrollable)
   if (open) {
-    const itemH = 30;
-    const listH = items.length * itemH;
+    const itemH = DROPDOWN_ITEM_H;
+    const listFullH = items.length * itemH;
+    const visH = Math.min(DROPDOWN_VISIBLE_H, listFullH);
+    const maxScroll = Math.max(0, listFullH - visH);
+    bgmDropdownScroll = clamp(bgmDropdownScroll, 0, maxScroll);
     const lx = x, ly = y + h + 2;
+    // Background + clip
     cx.fillStyle='#001828';
-    cx.fillRect(lx, ly, w, listH);
+    cx.fillRect(lx, ly, w, visH);
     cx.strokeStyle='#00ffff';
     cx.lineWidth = 2;
-    cx.strokeRect(lx+1, ly+1, w-2, listH-2);
+    cx.strokeRect(lx+1, ly+1, w-2, visH-2);
+    cx.save();
+    cx.beginPath(); cx.rect(lx+2, ly+2, w-4, visH-4); cx.clip();
     for (let i=0;i<items.length;i++) {
-      const iy = ly + i*itemH;
+      const iy = ly + i*itemH - bgmDropdownScroll;
+      if (iy + itemH < ly || iy > ly + visH) continue;
       const sel = i===selectedIdx;
-      cx.fillStyle = sel ? '#005577' : 'transparent';
-      if (sel) cx.fillRect(lx+2, iy+1, w-4, itemH-2);
+      if (sel) {
+        cx.fillStyle = '#005577';
+        cx.fillRect(lx+2, iy+1, w-4, itemH-2);
+      }
       cx.fillStyle = sel ? '#ffffff' : '#88ccee';
       cx.font="bold 11px 'Courier New', monospace";
       cx.fillText('#'+(i+1)+'  '+items[i], lx+10, iy+itemH/2+4);
+    }
+    cx.restore();
+    // Scroll indicator
+    if (maxScroll > 0) {
+      const trackH = visH - 8;
+      const knobH = Math.max(20, trackH * (visH/listFullH));
+      const knobY = ly + 4 + (trackH - knobH) * (bgmDropdownScroll / maxScroll);
+      cx.fillStyle = 'rgba(255,255,255,0.18)';
+      cx.fillRect(lx + w - 6, ly + 4, 3, trackH);
+      cx.fillStyle = '#00ffff';
+      cx.fillRect(lx + w - 6, knobY, 3, knobH);
     }
   }
 }
@@ -4681,9 +4807,10 @@ function clickPause(mx,my) {
   }
   // Dropdown open: handle item picks first (covers area below header)
   if (bgmDropdownOpen) {
-    const lx=250, ly=478+36+2, lw=170, itemH=30;
-    if (mx>=lx && mx<=lx+lw && my>=ly && my<=ly+BGM_TRACKS.length*itemH) {
-      const idx = Math.floor((my - ly) / itemH);
+    const lx=250, ly=478+36+2, lw=170, itemH=DROPDOWN_ITEM_H, visH=DROPDOWN_VISIBLE_H;
+    if (mx>=lx && mx<=lx+lw && my>=ly && my<=ly+visH) {
+      const localY = (my - ly) + bgmDropdownScroll;
+      const idx = Math.floor(localY / itemH);
       if (idx>=0 && idx<BGM_TRACKS.length) {
         bgmTrack = idx;
         stopBGM();
@@ -5088,6 +5215,7 @@ function handleTouchStart(e) {
       else if (screen==='shop') clickShop(p.x, p.y);
       else if (screen==='tierSelect') clickTierSelect(p.x, p.y);
       else if (screen==='stageSelect') clickStageSelect(p.x, p.y);
+      else if (screen==='titleSettings') clickTitleSettings(p.x, p.y);
       else if (screen==='leaderboard') clickLeaderboard(p.x, p.y);
       else if (screen==='gameover') clickGameOver(p.x, p.y);
       else if (screen==='victory') clickVictory(p.x, p.y);
@@ -5165,7 +5293,8 @@ document.addEventListener('keydown',e=>{
       }
       save.coins += sessionCoins; save.diamonds += sessionDiamonds;
       writeSave(); screen='title';
-    } else if (screen==='shop' || screen==='stageSelect' || screen==='tierSelect' || screen==='leaderboard') {
+    } else if (screen==='shop' || screen==='stageSelect' || screen==='tierSelect' || screen==='leaderboard' || screen==='titleSettings') {
+      bgmDropdownOpen = false;
       screen='title';
     }
   }
@@ -5182,6 +5311,7 @@ canvas.addEventListener('click',e=>{
   else if(screen==='shop') clickShop(mx,my);
   else if(screen==='tierSelect') clickTierSelect(mx,my);
   else if(screen==='stageSelect') clickStageSelect(mx,my);
+  else if(screen==='titleSettings') clickTitleSettings(mx,my);
   else if(screen==='leaderboard') clickLeaderboard(mx,my);
   else if(screen==='gameover') clickGameOver(mx,my);
   else if(screen==='victory') clickVictory(mx,my);
@@ -5196,9 +5326,30 @@ canvas.addEventListener('wheel', e=>{
     const maxScroll = Math.max(0, totalH - 540);
     shopBGScroll = clamp(shopBGScroll + (e.deltaY>0?40:-40), 0, maxScroll);
   }
+  // BGM dropdown scroll (in pause or title settings)
+  if ((screen==='pause' || screen==='titleSettings') && bgmDropdownOpen) {
+    e.preventDefault();
+    const listH = BGM_TRACKS.length * DROPDOWN_ITEM_H;
+    const maxS = Math.max(0, listH - DROPDOWN_VISIBLE_H);
+    bgmDropdownScroll = clamp(bgmDropdownScroll + (e.deltaY>0?28:-28), 0, maxS);
+  }
 }, {passive:false});
 
+function syncPauseBtn() {
+  const btn = document.getElementById('btn-pause');
+  if (screen === 'title') {
+    btn.textContent = '⚙';
+    btn.title = '设置';
+  } else {
+    btn.textContent = '⏸';
+    btn.title = '暂停 (P)';
+  }
+}
 document.getElementById('btn-pause').addEventListener('click',()=>{
+  if (screen==='title') {
+    screen = 'titleSettings';
+    return;
+  }
   if (screen==='game') { screen='pause'; stopBGM(); }
   else if (screen==='pause') { screen='game'; if(bgmEnabled) startBGM(); }
   document.getElementById('btn-pause').classList.toggle('active', screen==='pause');
@@ -5315,6 +5466,9 @@ function draw() {
   } else if(screen==='leaderboard') {
     frame++;
     drawLeaderboard();
+  } else if(screen==='titleSettings') {
+    frame++;
+    drawTitleSettings();
   } else if(screen==='game') {
     drawGameField();
   } else if(screen==='pause') {
@@ -5335,7 +5489,6 @@ function draw() {
 }
 
 function loop() {
-  // Speed multiplier — accumulator drives variable update rate (0.5x..3x)
   speedAccum += gameSpeed;
   let safetyCap = 6;
   while (speedAccum >= 1 && safetyCap-- > 0) {
@@ -5345,10 +5498,26 @@ function loop() {
   if (speedAccum < 0) speedAccum = 0;
   draw();
   refreshBombCount();
+  syncPauseBtn();
   requestAnimationFrame(loop);
 }
 
+// ─── PIXEL RESOLUTION ────────────────────────────────────────────────────────
+const PIXEL_SCALE_MIN = 0.5, PIXEL_SCALE_MAX = 3.0;
+function applyResolution() {
+  const s = clamp(save.pixelScale || 1, PIXEL_SCALE_MIN, PIXEL_SCALE_MAX);
+  canvas.width = Math.round(W * s);
+  canvas.height = Math.round(H * s);
+  cx.imageSmoothingEnabled = true;
+  cx.setTransform(s, 0, 0, s, 0, 0);
+  // Caches depending on canvas size are invalidated
+  if (typeof bgStaticCache !== 'undefined') {
+    for (const k in bgStaticCache) delete bgStaticCache[k];
+  }
+}
+
 initBGStars('space');
+applyResolution();
 loop();
 </script>
 </body>
