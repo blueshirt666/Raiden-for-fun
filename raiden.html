@@ -3825,22 +3825,35 @@ function spawnWingman(player, wType) {
     }
     return;
   }
-  // Different color: cap at 2; replace LOWEST-level (high-level wingmen are protected)
-  while (owned.length >= WINGMAN_MAX) {
+  // Different color: cap at 2.
+  // - At cap: replace LOWEST-level wingman, INHERIT its level + slot position
+  //   (so left/right slots stay populated, no visual gap)
+  // - Below cap: take whichever side (left/right) is empty
+  let inheritedLevel = 1;
+  let slotDx = WINGMAN_OFFSETS[0].dx, slotDy = WINGMAN_OFFSETS[0].dy;
+  if (owned.length >= WINGMAN_MAX) {
     let lowest = owned[0];
     for (const w of owned) if ((w.level||1) < (lowest.level||1)) lowest = w;
+    inheritedLevel = lowest.level || 1;   // inherit replaced wingman's level
+    slotDx = lowest.dx; slotDy = lowest.dy; // inherit slot position
     lowest.alive = false;
-    owned.splice(owned.indexOf(lowest), 1);
+  } else {
+    // Pick the empty slot (the one not used by any current wingman)
+    const usedDxs = new Set(owned.map(w=>w.dx));
+    if (!usedDxs.has(WINGMAN_OFFSETS[0].dx)) { slotDx = WINGMAN_OFFSETS[0].dx; slotDy = WINGMAN_OFFSETS[0].dy; }
+    else                                    { slotDx = WINGMAN_OFFSETS[1].dx; slotDy = WINGMAN_OFFSETS[1].dy; }
   }
-  const slot = wingmen.filter(w=>w.owner===player&&w.alive).length;
   wingmen.push({
-    owner:player, wType, alive:true, level:1,
-    x:player.x, y:player.y,
-    slot, fireTimer:0,
-    dx:WINGMAN_OFFSETS[slot%2].dx,
-    dy:WINGMAN_OFFSETS[slot%2].dy,
+    owner:player, wType, alive:true, level: inheritedLevel,
+    x:player.x, y:player.y, fireTimer:0,
+    dx: slotDx, dy: slotDy,
     shieldTimer: wType===2 ? 400 : 0,
   });
+  if (inheritedLevel > 1) {
+    addFT(WINGMAN_NAMES[wType]+' 继承 Lv'+inheritedLevel, player.x, player.y-30, WINGMAN_COLORS[wType]);
+  } else {
+    addFT(WINGMAN_NAMES[wType], player.x, player.y-30, WINGMAN_COLORS[wType]);
+  }
 }
 // Drop all wingman levels by 1 on player damage; remove if at level 1
 function damageWingmen(player) {
@@ -4421,7 +4434,7 @@ const titleBtns=[
   {x:140,y:330,w:200,h:44,text:'关 卡 模 式',act:'solo'},
   {x:140,y:384,w:200,h:44,text:'无 尽 模 式',act:'endless'},
   {x:140,y:438,w:200,h:44,text:'商    城',act:'shop'},
-  {x:140,y:492,w:200,h:38,text:'排 行 榜',act:'leaderboard'},
+  {x:140,y:492,w:200,h:38,text:'📖 图    鉴',act:'codex'},
   {x:140,y:534,w:200,h:38,text:'🛠 控 制 台',act:'console'},
 ];
 
@@ -4501,7 +4514,7 @@ function clickTitle(mx,my) {
       if(btn.act==='solo') screen='tierSelect';
       else if(btn.act==='endless') startGame(false,true);
       else if(btn.act==='shop') screen='shop';
-      else if(btn.act==='leaderboard') screen='leaderboard';
+      else if(btn.act==='codex') screen='codex';
       else if(btn.act==='console') screen='console';
     }
 }
@@ -4593,7 +4606,277 @@ function clickTitleSettings(mx, my) {
   if (mx>=250 && mx<=420 && my>=338 && my<=374) { bgmDropdownOpen = !bgmDropdownOpen; return; }
 }
 
-// ─── LEADERBOARD SCREEN ──────────────────────────────────────────────────────
+// ─── CODEX (图鉴) ─────────────────────────────────────────────────────────────
+const CODEX_TABS = [
+  {id:'weapons', label:'武器'},
+  {id:'enemies', label:'敌人'},
+  {id:'bosses',  label:'Boss'},
+  {id:'wingmen', label:'僚机'},
+  {id:'pickups', label:'道具'},
+];
+let codexTab = 'weapons';
+let codexScroll = 0;
+
+const CODEX_WEAPONS = [
+  ['标准炮',  '#00ffff', '蓝色直射', '基础武器, 5 级递增弹道, 升级时增加排数与速度', 'MAX: 三排齐射 21 发 + 中央加农'],
+  ['散弹枪',  '#ff8800', '橙色喷射', '半圆扇形, 等级越高弹丸数越多', 'MAX: 17 发满屏散弹 + 5 发中央白弹'],
+  ['激光炮',  '#ff2200', '红色光柱', '持续穿透光束, 高 DPS', 'MAX: 7 道彩虹光柱'],
+  ['制导弹',  '#ffcc00', '黄色追踪', '高伤单体追击, 自动锁定', 'MAX: 7 枚紫色追踪'],
+  ['等离子',  '#aa00ff', '紫色巨弹', '大体积, 升级附带卫星散弹', 'MAX: 26px 核心 + 10 卫星轨道'],
+  ['闪电链',  '#88ffff', '青白闪电', '快速近距离弹', 'MAX: 5 道粗闪电'],
+  ['回旋镖',  '#00ff88', '绿色弧线', '滞留全关弹幕, 切关清除', 'MAX: 8 道环绕回旋镖, 持续整关'],
+  ['波动炮',  '#00ddff', '蓝色正弦', '左右摇摆穿透弹', 'MAX: 7 路相位错开正弦波'],
+  ['龙卷炮',  '#ff44ff', '紫色螺旋', '环形扩散弹幕', 'MAX: 18 弹高密度旋风'],
+  ['冰晶炮',  '#aaeeff', '冰蓝结晶', '减速扩散, 极慢冰晶弹', 'MAX: 14 弹冰风暴 + 22px 巨型核心'],
+];
+
+const CODEX_ENEMIES = [
+  ['基础机',   '#ff4444','HP 20  速 1.5  分 100','基础敌机, 直线下降+轻微摆动'],
+  ['锯齿机',   '#ff8800','HP 30  速 2.0  分 150','Z 字飞行, 难以预判'],
+  ['轰炸机',   '#aa44ff','HP 60  速 1.0  分 300','中速大体型, 周期单发瞄准'],
+  ['炮舰',     '#44aaff','HP 80  速 1.2  分 250','六边装甲, 双管交叉射击'],
+  ['坦克',     '#44ff44','HP 150 速 0.7  分 400','装甲堡垒, 5 路扇形齐射'],
+  ['速度王',   '#ffff00','HP 15  速 3.5  分 80','高速横冲, 不开火'],
+  ['母舰',     '#ff44aa','HP 200 速 0.5  分 600','三路射击 + 召唤速度王'],
+  ['飞镖机',   '#ffaaaa','HP 18  速 3.0  分 90','俯冲后发射一发高速弹'],
+  ['UFO',      '#aaffaa','HP 60  速 0.9  分 280','横向扫荡, 6 弹环形齐射'],
+  ['侦察机',   '#ffffaa','HP 10  速 4.2  分 60','极快撞击, 不开火'],
+  ['狙击手',   '#ff66ff','HP 80  速 0.4  分 320','滞空瞄准, 警告后高速发射'],
+  ['迫击炮',   '#cc8855','HP 50  速 0.6  分 240','抛物线弧射, 子弹可被打掉'],
+  ['蜂群虫',   '#ff77aa','HP 8   速 2.6  分 40','小型摇摆突进, 撞击型'],
+  ['蜂巢',     '#cc44ff','HP 140 速 0.7  分 480','六边形, 持续召唤蜂群虫'],
+  ['炮塔',     '#888888','HP 120 速 0    分 280','固定锁屏, 旋转 3 路扫射'],
+  ['隐形机',   '#553388','HP 35  速 1.6  分 220','周期隐身, 难以瞄准'],
+  ['分裂机',   '#88ddff','HP 50  速 1.1  分 240','死亡后分裂为 2 蜂群虫'],
+  ['布雷舰',   '#aaaa44','HP 90  速 0.7  分 330','掉落地雷, 子弹可击毁'],
+  ['喷气机',   '#88ccff','HP 25  速 5.0  分 110','极速直线突袭, 不开火'],
+  ['精英',     '#ff2244','HP 260 速 0.9  分 700','装甲精锐, 5 路连发 + 8 弹环爆'],
+];
+
+const CODEX_BOSS_DESC = [
+  '7 路扇形 + 周期 10 弹环爆',
+  '旋转 4-6 路螺旋射线',
+  '瞄准式三联激光, 警告后开火',
+  '召唤蜂群虫援军 + 5 弹扇射',
+  '左右镜像移动 + 同步双向弹墙',
+  '准点雷电柱从空中落下',
+  '冰晶环爆 + 慢速冰墙扇射',
+  '高速等离子弹 + 14 弹外环',
+  '3 个旋转触手 + 中心轴攻击',
+  '4 模式轮换: 扇射/12环/瞄准追/纵向密集',
+  '水瓶倾倒水流弹 + 周期落雨',
+  '双鱼阴阳旋转 + 双向追击',
+];
+
+const CODEX_PICKUPS = [
+  ['🔫 武器', '#ff8800', '替换为新型武器, 等级保留'],
+  ['★ 星星',  '#ffff00', '武器 +1 级 (Lv5 后再吃 → LV MAX 5s/次)'],
+  ['❤ 生命', '#ff4444', '+1 命'],
+  ['💥 核弹', '#aaaaff', '+1 核弹库存 (空格触发)'],
+  ['🛡 护盾', '#00ffcc', '获得 3 次抗弹护盾'],
+  ['僚机',    '#00ffcc', '召唤指定颜色僚机, 同色再吃可升级 (Lv max 5)'],
+];
+
+function drawCodex() {
+  fillPx('#000818',0,0,W,H);
+  cx.textAlign='center';
+  cx.fillStyle='#00ffff';
+  cx.font="bold 22px 'Courier New', monospace";
+  cx.fillText('📖 图  鉴', W/2, 50);
+  cx.fillStyle='#88ccee';
+  cx.font="11px 'Courier New', monospace";
+  cx.fillText('武器 / 敌人 / Boss / 僚机 / 道具 一览', W/2, 76);
+
+  // Tabs
+  const tabsY = 92, tabH = 28, gap = 4;
+  const totalW = W - 40;
+  const tabW = (totalW - gap*4) / 5;
+  for (let i=0;i<CODEX_TABS.length;i++) {
+    const tx = 20 + i*(tabW+gap);
+    const t = CODEX_TABS[i];
+    const active = t.id===codexTab;
+    cx.fillStyle = active?'#114466':'#0a1828';
+    cx.fillRect(tx, tabsY, tabW, tabH);
+    cx.strokeStyle = active?'#00ffff':'#244466';
+    cx.lineWidth = 1;
+    cx.strokeRect(tx+0.5, tabsY+0.5, tabW-1, tabH-1);
+    cx.fillStyle = active?'#aaffff':'#7799bb';
+    cx.font="bold 12px 'Courier New', monospace";
+    cx.fillText(t.label, tx+tabW/2, tabsY+18);
+  }
+
+  // Body (scroll-clipped)
+  const bodyY = 130, bodyH = 510;
+  cx.save();
+  cx.beginPath(); cx.rect(0, bodyY, W, bodyH); cx.clip();
+  let totalContentH = 0;
+  if      (codexTab==='weapons') totalContentH = drawCodexWeapons(bodyY - codexScroll);
+  else if (codexTab==='enemies') totalContentH = drawCodexEnemies(bodyY - codexScroll);
+  else if (codexTab==='bosses')  totalContentH = drawCodexBosses(bodyY - codexScroll);
+  else if (codexTab==='wingmen') totalContentH = drawCodexWingmen(bodyY - codexScroll);
+  else if (codexTab==='pickups') totalContentH = drawCodexPickups(bodyY - codexScroll);
+  cx.restore();
+
+  // Scrollbar
+  const maxScroll = Math.max(0, totalContentH - bodyH);
+  if (maxScroll > 0) {
+    const trackH = bodyH - 8;
+    const knobH = Math.max(20, trackH * (bodyH/totalContentH));
+    const knobY = bodyY + 4 + (trackH - knobH) * (codexScroll/maxScroll);
+    cx.fillStyle = 'rgba(255,255,255,0.18)';
+    cx.fillRect(W - 8, bodyY+4, 3, trackH);
+    cx.fillStyle = '#00ffff';
+    cx.fillRect(W - 8, knobY, 3, knobH);
+  }
+  // Cache for scroll handler
+  codexContentH = totalContentH;
+
+  drawButton(20, 655, 110, 36, '← 返回', false);
+  cx.textAlign='left';
+}
+let codexContentH = 0;
+
+function drawCodexWeapons(startY) {
+  const rowH = 80;
+  cx.textAlign='left';
+  for (let i=0;i<CODEX_WEAPONS.length;i++) {
+    const [n, col, type, desc, max] = CODEX_WEAPONS[i];
+    const ry = startY + i*rowH + 6;
+    cx.fillStyle = 'rgba(20,40,60,0.45)';
+    cx.fillRect(16, ry, W-32, rowH-8);
+    // Color band
+    cx.fillStyle = col;
+    cx.fillRect(16, ry, 4, rowH-8);
+    cx.fillStyle = col;
+    cx.font="bold 14px 'Courier New', monospace";
+    cx.fillText(n, 28, ry+18);
+    cx.fillStyle = '#88ccee';
+    cx.font="10px 'Courier New', monospace";
+    cx.fillText(type, 100, ry+18);
+    cx.fillStyle = '#cccccc';
+    cx.font="11px 'Courier New', monospace";
+    cx.fillText(desc, 28, ry+38);
+    cx.fillStyle = '#ff66ff';
+    cx.font="bold 10px 'Courier New', monospace";
+    cx.fillText(max, 28, ry+58);
+  }
+  return CODEX_WEAPONS.length * rowH + 20;
+}
+
+function drawCodexEnemies(startY) {
+  const rowH = 60;
+  cx.textAlign='left';
+  for (let i=0;i<CODEX_ENEMIES.length;i++) {
+    const [n, col, stat, desc] = CODEX_ENEMIES[i];
+    const ry = startY + i*rowH + 6;
+    cx.fillStyle = 'rgba(20,40,60,0.45)';
+    cx.fillRect(16, ry, W-32, rowH-8);
+    cx.fillStyle = col;
+    cx.fillRect(16, ry, 4, rowH-8);
+    cx.fillStyle = col;
+    cx.font="bold 13px 'Courier New', monospace";
+    cx.fillText(n, 28, ry+18);
+    cx.fillStyle = '#ffcc88';
+    cx.font="10px 'Courier New', monospace";
+    cx.fillText(stat, 100, ry+18);
+    cx.fillStyle = '#cccccc';
+    cx.font="11px 'Courier New', monospace";
+    cx.fillText(desc, 28, ry+40);
+  }
+  return CODEX_ENEMIES.length * rowH + 20;
+}
+
+function drawCodexBosses(startY) {
+  const rowH = 70;
+  cx.textAlign='left';
+  for (let i=0;i<BOSS_DEFS.length;i++) {
+    const def = BOSS_DEFS[i];
+    const ry = startY + i*rowH + 6;
+    cx.fillStyle = 'rgba(40,20,40,0.55)';
+    cx.fillRect(16, ry, W-32, rowH-8);
+    cx.fillStyle = def.color;
+    cx.fillRect(16, ry, 4, rowH-8);
+    cx.fillStyle = def.color;
+    cx.font="bold 14px 'Courier New', monospace";
+    cx.fillText('Lv'+(i+1)+'  '+def.name, 28, ry+18);
+    cx.fillStyle = '#ffcc88';
+    cx.font="10px 'Courier New', monospace";
+    cx.fillText('基础 HP '+def.hp+'   阶段: 100% / 70% / 40% 狂怒', 28, ry+36);
+    cx.fillStyle = '#cccccc';
+    cx.font="11px 'Courier New', monospace";
+    cx.fillText(CODEX_BOSS_DESC[i] || '', 28, ry+54);
+  }
+  return BOSS_DEFS.length * rowH + 20;
+}
+
+function drawCodexWingmen(startY) {
+  const rowH = 70;
+  cx.textAlign='left';
+  const descs = [
+    '持续直射激光, Lv 越高弹幅越宽, 攻速提升',
+    '单发高伤导弹, Lv3+追加双侧, Lv5+大量齐射',
+    '不开火但自动给玩家 (2+lv) 次抗弹护盾',
+    '三向散射, Lv 越高弹丸数 +1',
+    '大体积重弹, Lv 越高伤害爆发显著',
+  ];
+  for (let i=0;i<WINGMAN_NAMES.length;i++) {
+    const ry = startY + i*rowH + 6;
+    cx.fillStyle = 'rgba(20,40,60,0.45)';
+    cx.fillRect(16, ry, W-32, rowH-8);
+    cx.fillStyle = WINGMAN_COLORS[i];
+    cx.fillRect(16, ry, 4, rowH-8);
+    cx.fillStyle = WINGMAN_COLORS[i];
+    cx.font="bold 14px 'Courier New', monospace";
+    cx.fillText(WINGMAN_NAMES[i], 28, ry+18);
+    cx.fillStyle = '#ffcc88';
+    cx.font="10px 'Courier New', monospace";
+    cx.fillText('颜色 '+WINGMAN_COLORS[i]+'   最大 Lv 5', 28, ry+36);
+    cx.fillStyle = '#cccccc';
+    cx.font="11px 'Courier New', monospace";
+    cx.fillText(descs[i] || '', 28, ry+54);
+  }
+  return WINGMAN_NAMES.length * rowH + 20;
+}
+
+function drawCodexPickups(startY) {
+  const rowH = 56;
+  cx.textAlign='left';
+  for (let i=0;i<CODEX_PICKUPS.length;i++) {
+    const [n, col, desc] = CODEX_PICKUPS[i];
+    const ry = startY + i*rowH + 6;
+    cx.fillStyle = 'rgba(20,40,60,0.45)';
+    cx.fillRect(16, ry, W-32, rowH-8);
+    cx.fillStyle = col;
+    cx.fillRect(16, ry, 4, rowH-8);
+    cx.fillStyle = col;
+    cx.font="bold 14px 'Courier New', monospace";
+    cx.fillText(n, 28, ry+22);
+    cx.fillStyle = '#cccccc';
+    cx.font="11px 'Courier New', monospace";
+    cx.fillText(desc, 28, ry+42);
+  }
+  return CODEX_PICKUPS.length * rowH + 20;
+}
+
+function clickCodex(mx, my) {
+  if (mx>=20 && mx<=130 && my>=655 && my<=691) { screen='title'; return; }
+  // Tabs
+  const tabsY = 92, tabH = 28, gap = 4;
+  const totalW = W - 40;
+  const tabW = (totalW - gap*4) / 5;
+  if (my>=tabsY && my<=tabsY+tabH) {
+    for (let i=0;i<CODEX_TABS.length;i++) {
+      const tx = 20 + i*(tabW+gap);
+      if (mx>=tx && mx<=tx+tabW) {
+        codexTab = CODEX_TABS[i].id;
+        codexScroll = 0;
+        return;
+      }
+    }
+  }
+}
+
+// ─── LEADERBOARD SCREEN (legacy data still tracked silently) ─────────────────
 let leaderboardScroll = 0;
 function drawLeaderboard() {
   fillPx('#000818',0,0,W,H);
@@ -5512,7 +5795,7 @@ function handleTouchStart(e) {
       else if (screen==='tierSelect') clickTierSelect(p.x, p.y);
       else if (screen==='stageSelect') clickStageSelect(p.x, p.y);
       else if (screen==='titleSettings') clickTitleSettings(p.x, p.y);
-      else if (screen==='leaderboard') clickLeaderboard(p.x, p.y);
+      else if (screen==='codex') clickCodex(p.x, p.y);
       else if (screen==='gameover') clickGameOver(p.x, p.y);
       else if (screen==='victory') clickVictory(p.x, p.y);
       else if (screen==='death') clickDeath(p.x, p.y);
@@ -5589,7 +5872,7 @@ document.addEventListener('keydown',e=>{
       }
       save.coins += sessionCoins; save.diamonds += sessionDiamonds;
       writeSave(); screen='title';
-    } else if (screen==='shop' || screen==='stageSelect' || screen==='tierSelect' || screen==='leaderboard' || screen==='titleSettings') {
+    } else if (screen==='shop' || screen==='stageSelect' || screen==='tierSelect' || screen==='codex' || screen==='titleSettings') {
       bgmDropdownOpen = false;
       screen='title';
     } else if (screen==='console') {
@@ -5611,7 +5894,7 @@ canvas.addEventListener('click',e=>{
   else if(screen==='tierSelect') clickTierSelect(mx,my);
   else if(screen==='stageSelect') clickStageSelect(mx,my);
   else if(screen==='titleSettings') clickTitleSettings(mx,my);
-  else if(screen==='leaderboard') clickLeaderboard(mx,my);
+  else if(screen==='codex') clickCodex(mx,my);
   else if(screen==='gameover') clickGameOver(mx,my);
   else if(screen==='victory') clickVictory(mx,my);
   else if(screen==='death') clickDeath(mx,my);
@@ -5632,13 +5915,11 @@ canvas.addEventListener('wheel', e=>{
     const maxS = Math.max(0, listH - DROPDOWN_VISIBLE_H);
     bgmDropdownScroll = clamp(bgmDropdownScroll + (e.deltaY>0?28:-28), 0, maxS);
   }
-  // Leaderboard scroll
-  if (screen==='leaderboard') {
+  // Codex scroll
+  if (screen==='codex') {
     e.preventDefault();
-    const lb = save.endlessLeaderboard || [];
-    const totalH = lb.length * 38;
-    const maxS = Math.max(0, totalH - 524);
-    leaderboardScroll = clamp(leaderboardScroll + (e.deltaY>0?38:-38), 0, maxS);
+    const maxS = Math.max(0, (codexContentH || 0) - 510);
+    codexScroll = clamp(codexScroll + (e.deltaY>0?40:-40), 0, maxS);
   }
 }, {passive:false});
 
@@ -5772,9 +6053,9 @@ function draw() {
   } else if(screen==='stageSelect') {
     frame++;
     drawStageSelect();
-  } else if(screen==='leaderboard') {
+  } else if(screen==='codex') {
     frame++;
-    drawLeaderboard();
+    drawCodex();
   } else if(screen==='titleSettings') {
     frame++;
     drawTitleSettings();
