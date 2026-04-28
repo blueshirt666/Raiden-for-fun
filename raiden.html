@@ -787,70 +787,235 @@ function fillPx(color, x, y, w, h) {
 // Draw a smooth vector plane. shapeIdx 0-3 = different silhouettes.
 // colors = [body, cockpit, wing, engine_glow]
 // cx must be in identity transform when called.
+// Shade a hex color: amt > 0 lightens, < 0 darkens
+function shadeHex(hex, amt) {
+  const r = parseInt(hex.slice(1,3),16);
+  const g = parseInt(hex.slice(3,5),16);
+  const b = parseInt(hex.slice(5,7),16);
+  const f = v => Math.max(0, Math.min(255, v + amt));
+  return '#'+[f(r),f(g),f(b)].map(v=>v.toString(16).padStart(2,'0')).join('');
+}
+
 function drawVectorPlane(shapeIdx, colors, cx2, px, py, sc, flip) {
   const [bc, cc, wc, gc] = colors;
   const s = sc || 1;
+  const bcL = shadeHex(bc, 35), bcD = shadeHex(bc, -45);
+  const wcD = shadeHex(wc, -35);
   cx2.save();
   cx2.translate(px, py);
   cx2.scale(s, flip ? -s : s);
+  cx2.lineCap = 'round'; cx2.lineJoin = 'round';
 
-  // Engine glow
-  const gg = cx2.createRadialGradient(0, 16, 1, 0, 16, 11);
-  gg.addColorStop(0, gc + 'ff');
-  gg.addColorStop(1, gc + '00');
-  cx2.fillStyle = gg;
-  cx2.beginPath(); cx2.arc(0, 16, 11, 0, Math.PI*2); cx2.fill();
-
-  if (shapeIdx === 0) {
-    // Sleek interceptor
-    cx2.fillStyle = wc;
-    cx2.beginPath(); cx2.moveTo(0,-10); cx2.lineTo(-18,12); cx2.lineTo(-10,6); cx2.closePath(); cx2.fill();
-    cx2.beginPath(); cx2.moveTo(0,-10); cx2.lineTo(18,12); cx2.lineTo(10,6); cx2.closePath(); cx2.fill();
-    const bg = cx2.createLinearGradient(-6,-20,6,20);
-    bg.addColorStop(0, cc); bg.addColorStop(0.4, bc); bg.addColorStop(1, wc);
-    cx2.fillStyle = bg;
-    cx2.beginPath(); cx2.moveTo(0,-20); cx2.lineTo(-6,0); cx2.lineTo(-5,16); cx2.lineTo(5,16); cx2.lineTo(6,0); cx2.closePath(); cx2.fill();
-  } else if (shapeIdx === 1) {
-    // Wide wing fighter
-    cx2.fillStyle = wc;
-    cx2.beginPath(); cx2.moveTo(-2,0); cx2.lineTo(-22,14); cx2.lineTo(-20,4); cx2.lineTo(-8,-2); cx2.closePath(); cx2.fill();
-    cx2.beginPath(); cx2.moveTo(2,0); cx2.lineTo(22,14); cx2.lineTo(20,4); cx2.lineTo(8,-2); cx2.closePath(); cx2.fill();
-    const bg = cx2.createLinearGradient(-7,-18,7,18);
-    bg.addColorStop(0, cc); bg.addColorStop(0.4, bc); bg.addColorStop(1, wc);
-    cx2.fillStyle = bg;
-    cx2.beginPath(); cx2.moveTo(0,-18); cx2.lineTo(-7,2); cx2.lineTo(-5,16); cx2.lineTo(5,16); cx2.lineTo(7,2); cx2.closePath(); cx2.fill();
-  } else if (shapeIdx === 2) {
-    // Arrow-head assault
-    cx2.fillStyle = wc;
-    cx2.beginPath(); cx2.moveTo(0,-8); cx2.lineTo(-20,8); cx2.lineTo(-14,2); cx2.lineTo(-4,6); cx2.closePath(); cx2.fill();
-    cx2.beginPath(); cx2.moveTo(0,-8); cx2.lineTo(20,8); cx2.lineTo(14,2); cx2.lineTo(4,6); cx2.closePath(); cx2.fill();
-    // Twin engines
-    cx2.fillStyle = gc+'99';
-    cx2.fillRect(-9,12,5,8); cx2.fillRect(4,12,5,8);
-    const bg = cx2.createLinearGradient(-5,-22,5,16);
-    bg.addColorStop(0, cc); bg.addColorStop(0.5, bc); bg.addColorStop(1, wc);
-    cx2.fillStyle = bg;
-    cx2.beginPath(); cx2.moveTo(0,-22); cx2.lineTo(-5,-2); cx2.lineTo(-5,16); cx2.lineTo(5,16); cx2.lineTo(5,-2); cx2.closePath(); cx2.fill();
-  } else {
-    // Heavy gunship
-    cx2.fillStyle = wc;
-    cx2.beginPath(); cx2.moveTo(-4,-4); cx2.lineTo(-24,10); cx2.lineTo(-22,2); cx2.lineTo(-10,-2); cx2.closePath(); cx2.fill();
-    cx2.beginPath(); cx2.moveTo(4,-4); cx2.lineTo(24,10); cx2.lineTo(22,2); cx2.lineTo(10,-2); cx2.closePath(); cx2.fill();
-    // Gun pods
-    cx2.fillStyle = bc+'bb';
-    cx2.fillRect(-14,0,4,10); cx2.fillRect(10,0,4,10);
-    const bg = cx2.createLinearGradient(-8,-16,8,18);
-    bg.addColorStop(0, cc); bg.addColorStop(0.4, bc); bg.addColorStop(1, wc);
-    cx2.fillStyle = bg;
-    cx2.beginPath(); cx2.moveTo(0,-16); cx2.lineTo(-8,0); cx2.lineTo(-7,18); cx2.lineTo(7,18); cx2.lineTo(8,0); cx2.closePath(); cx2.fill();
+  // Twin afterburner exhaust
+  for (const nx of [-3.5, 3.5]) {
+    const gg = cx2.createRadialGradient(nx, 17, 0.5, nx, 17, 8);
+    gg.addColorStop(0, '#ffffff');
+    gg.addColorStop(0.35, gc);
+    gg.addColorStop(1, gc + '00');
+    cx2.fillStyle = gg;
+    cx2.beginPath(); cx2.arc(nx, 17, 8, 0, Math.PI*2); cx2.fill();
   }
 
-  // Cockpit canopy
-  cx2.fillStyle = cc + 'cc';
-  cx2.beginPath(); cx2.ellipse(0, -8, 4, 7, 0, 0, Math.PI*2); cx2.fill();
+  if (shapeIdx === 0) {
+    // ─ Sleek interceptor (delta wing) ─
+    // Lower wing layer
+    cx2.fillStyle = wcD;
+    cx2.beginPath(); cx2.moveTo(-3,-2); cx2.lineTo(-22,14); cx2.lineTo(-12,14); cx2.lineTo(-4,6); cx2.closePath(); cx2.fill();
+    cx2.beginPath(); cx2.moveTo( 3,-2); cx2.lineTo( 22,14); cx2.lineTo( 12,14); cx2.lineTo( 4,6); cx2.closePath(); cx2.fill();
+    // Wingtip missiles
+    cx2.fillStyle = '#888'; cx2.fillRect(-22,12,2,5); cx2.fillRect(20,12,2,5);
+    cx2.fillStyle = '#ddd'; cx2.fillRect(-22,11,2,1); cx2.fillRect(20,11,2,1);
+    cx2.fillStyle = '#ff4422'; cx2.fillRect(-22,16,2,1); cx2.fillRect(20,16,2,1);
+    // Wing top highlight
+    cx2.fillStyle = wc;
+    cx2.beginPath(); cx2.moveTo(-3,-1); cx2.lineTo(-19,11); cx2.lineTo(-12,11); cx2.lineTo(-4,5); cx2.closePath(); cx2.fill();
+    cx2.beginPath(); cx2.moveTo( 3,-1); cx2.lineTo( 19,11); cx2.lineTo( 12,11); cx2.lineTo( 4,5); cx2.closePath(); cx2.fill();
+
+    // Fuselage with metallic gradient
+    const bg = cx2.createLinearGradient(-7,-22, 7,18);
+    bg.addColorStop(0, bcL);
+    bg.addColorStop(0.5, bc);
+    bg.addColorStop(1, bcD);
+    cx2.fillStyle = bg;
+    cx2.beginPath();
+    cx2.moveTo(0,-22); cx2.lineTo(-3,-12); cx2.lineTo(-7,2); cx2.lineTo(-6,15); cx2.lineTo(-2,17); cx2.lineTo(2,17); cx2.lineTo(6,15); cx2.lineTo(7,2); cx2.lineTo(3,-12); cx2.closePath();
+    cx2.fill();
+    // Center crease + panel lines
+    cx2.strokeStyle = 'rgba(0,0,0,0.45)';
+    cx2.lineWidth = 0.6;
+    cx2.beginPath();
+    cx2.moveTo(0,-22); cx2.lineTo(0,17);
+    cx2.moveTo(-5,2); cx2.lineTo(5,2);
+    cx2.moveTo(-6,8); cx2.lineTo(6,8);
+    cx2.stroke();
+    // Vertical tail fin
+    cx2.fillStyle = bcD;
+    cx2.beginPath(); cx2.moveTo(-1,5); cx2.lineTo(-1,15); cx2.lineTo(0,17); cx2.lineTo(1,15); cx2.lineTo(1,5); cx2.closePath(); cx2.fill();
+    // Twin nose cannons
+    cx2.fillStyle = '#1a1a1a';
+    cx2.fillRect(-2,-14,1.5,8); cx2.fillRect(0.5,-14,1.5,8);
+    cx2.fillStyle = '#ff8800';
+    cx2.fillRect(-2,-15,1.5,1); cx2.fillRect(0.5,-15,1.5,1);
+    // Outline
+    cx2.strokeStyle = bcD; cx2.lineWidth = 0.7;
+    cx2.beginPath();
+    cx2.moveTo(0,-22); cx2.lineTo(-3,-12); cx2.lineTo(-7,2); cx2.lineTo(-6,15); cx2.lineTo(-2,17); cx2.lineTo(2,17); cx2.lineTo(6,15); cx2.lineTo(7,2); cx2.lineTo(3,-12); cx2.closePath();
+    cx2.stroke();
+
+  } else if (shapeIdx === 1) {
+    // ─ Wide-wing fighter (heavier, swept wings) ─
+    cx2.fillStyle = wcD;
+    cx2.beginPath(); cx2.moveTo(-2,0); cx2.lineTo(-23,14); cx2.lineTo(-21,4); cx2.lineTo(-8,-2); cx2.closePath(); cx2.fill();
+    cx2.beginPath(); cx2.moveTo( 2,0); cx2.lineTo( 23,14); cx2.lineTo( 21,4); cx2.lineTo( 8,-2); cx2.closePath(); cx2.fill();
+    // Wing-mounted missile pylons (2 per wing)
+    cx2.fillStyle = '#777';
+    cx2.fillRect(-18,8,3,5); cx2.fillRect(-12,9,3,5);
+    cx2.fillRect(15,8,3,5); cx2.fillRect(9,9,3,5);
+    cx2.fillStyle = '#ff5522';
+    cx2.fillRect(-18,12,3,1); cx2.fillRect(-12,13,3,1);
+    cx2.fillRect(15,12,3,1); cx2.fillRect(9,13,3,1);
+    // Wing top highlight
+    cx2.fillStyle = wc;
+    cx2.beginPath(); cx2.moveTo(-2,0); cx2.lineTo(-21,11); cx2.lineTo(-19,4); cx2.lineTo(-8,-1); cx2.closePath(); cx2.fill();
+    cx2.beginPath(); cx2.moveTo( 2,0); cx2.lineTo( 21,11); cx2.lineTo( 19,4); cx2.lineTo( 8,-1); cx2.closePath(); cx2.fill();
+    // Fuselage
+    const bg = cx2.createLinearGradient(-8,-20, 8,18);
+    bg.addColorStop(0, bcL); bg.addColorStop(0.5, bc); bg.addColorStop(1, bcD);
+    cx2.fillStyle = bg;
+    cx2.beginPath();
+    cx2.moveTo(0,-20); cx2.lineTo(-4,-10); cx2.lineTo(-8,4); cx2.lineTo(-6,16); cx2.lineTo(-2,18); cx2.lineTo(2,18); cx2.lineTo(6,16); cx2.lineTo(8,4); cx2.lineTo(4,-10); cx2.closePath();
+    cx2.fill();
+    // Air intakes (sides under cockpit)
+    cx2.fillStyle = bcD;
+    cx2.beginPath(); cx2.ellipse(-5,-2,2,3,0,0,Math.PI*2); cx2.fill();
+    cx2.beginPath(); cx2.ellipse( 5,-2,2,3,0,0,Math.PI*2); cx2.fill();
+    cx2.fillStyle = '#000';
+    cx2.beginPath(); cx2.ellipse(-5,-2,1.2,2,0,0,Math.PI*2); cx2.fill();
+    cx2.beginPath(); cx2.ellipse( 5,-2,1.2,2,0,0,Math.PI*2); cx2.fill();
+    // Panel lines
+    cx2.strokeStyle='rgba(0,0,0,0.4)'; cx2.lineWidth=0.6;
+    cx2.beginPath();
+    cx2.moveTo(0,-20); cx2.lineTo(0,18);
+    cx2.moveTo(-7,6); cx2.lineTo(7,6);
+    cx2.moveTo(-6,12); cx2.lineTo(6,12);
+    cx2.stroke();
+    // Twin tail fins
+    cx2.fillStyle = bcD;
+    cx2.beginPath(); cx2.moveTo(-3,8); cx2.lineTo(-2,16); cx2.lineTo(-1,16); cx2.lineTo(-2,8); cx2.closePath(); cx2.fill();
+    cx2.beginPath(); cx2.moveTo( 3,8); cx2.lineTo( 2,16); cx2.lineTo( 1,16); cx2.lineTo( 2,8); cx2.closePath(); cx2.fill();
+    // Nose cannon
+    cx2.fillStyle = '#1a1a1a'; cx2.fillRect(-1,-16,2,7);
+    // Outline
+    cx2.strokeStyle = bcD; cx2.lineWidth = 0.7;
+    cx2.beginPath();
+    cx2.moveTo(0,-20); cx2.lineTo(-4,-10); cx2.lineTo(-8,4); cx2.lineTo(-6,16); cx2.lineTo(-2,18); cx2.lineTo(2,18); cx2.lineTo(6,16); cx2.lineTo(8,4); cx2.lineTo(4,-10); cx2.closePath();
+    cx2.stroke();
+
+  } else if (shapeIdx === 2) {
+    // ─ Arrow-head assault (twin engines) ─
+    cx2.fillStyle = wcD;
+    cx2.beginPath(); cx2.moveTo(0,-8); cx2.lineTo(-21,9); cx2.lineTo(-15,2); cx2.lineTo(-4,6); cx2.closePath(); cx2.fill();
+    cx2.beginPath(); cx2.moveTo(0,-8); cx2.lineTo( 21,9); cx2.lineTo( 15,2); cx2.lineTo( 4,6); cx2.closePath(); cx2.fill();
+    cx2.fillStyle = wc;
+    cx2.beginPath(); cx2.moveTo(0,-7); cx2.lineTo(-18,7); cx2.lineTo(-13,3); cx2.lineTo(-4,5); cx2.closePath(); cx2.fill();
+    cx2.beginPath(); cx2.moveTo(0,-7); cx2.lineTo( 18,7); cx2.lineTo( 13,3); cx2.lineTo( 4,5); cx2.closePath(); cx2.fill();
+    // Wingtip lights
+    cx2.fillStyle = '#ff4444'; cx2.fillRect(-21,8,2,1.5);
+    cx2.fillStyle = '#44ff44'; cx2.fillRect( 19,8,2,1.5);
+    // Twin engines (rectangular pods)
+    cx2.fillStyle = bcD;
+    cx2.fillRect(-10,12,5,9); cx2.fillRect(5,12,5,9);
+    cx2.fillStyle = '#000';
+    cx2.fillRect(-9,17,3,3); cx2.fillRect(6,17,3,3);
+    // Fuselage
+    const bg = cx2.createLinearGradient(-6,-22, 6,18);
+    bg.addColorStop(0, bcL); bg.addColorStop(0.5, bc); bg.addColorStop(1, bcD);
+    cx2.fillStyle = bg;
+    cx2.beginPath();
+    cx2.moveTo(0,-22); cx2.lineTo(-4,-10); cx2.lineTo(-6,-1); cx2.lineTo(-5,16); cx2.lineTo(-1,18); cx2.lineTo(1,18); cx2.lineTo(5,16); cx2.lineTo(6,-1); cx2.lineTo(4,-10); cx2.closePath();
+    cx2.fill();
+    // Cannon barrels (3 forward)
+    cx2.fillStyle = '#1a1a1a';
+    cx2.fillRect(-2,-18,1.5,8); cx2.fillRect(0.5,-18,1.5,8);
+    // Panel lines
+    cx2.strokeStyle='rgba(0,0,0,0.45)'; cx2.lineWidth=0.6;
+    cx2.beginPath();
+    cx2.moveTo(0,-22); cx2.lineTo(0,18);
+    cx2.moveTo(-5,4); cx2.lineTo(5,4);
+    cx2.stroke();
+    // Center vertical fin
+    cx2.fillStyle = bcD;
+    cx2.beginPath(); cx2.moveTo(-1,4); cx2.lineTo(-1,12); cx2.lineTo(0,15); cx2.lineTo(1,12); cx2.lineTo(1,4); cx2.closePath(); cx2.fill();
+    // Outline
+    cx2.strokeStyle = bcD; cx2.lineWidth = 0.7;
+    cx2.beginPath();
+    cx2.moveTo(0,-22); cx2.lineTo(-4,-10); cx2.lineTo(-6,-1); cx2.lineTo(-5,16); cx2.lineTo(-1,18); cx2.lineTo(1,18); cx2.lineTo(5,16); cx2.lineTo(6,-1); cx2.lineTo(4,-10); cx2.closePath();
+    cx2.stroke();
+
+  } else {
+    // ─ Heavy gunship (wide-body, gun pods) ─
+    cx2.fillStyle = wcD;
+    cx2.beginPath(); cx2.moveTo(-4,-4); cx2.lineTo(-25,12); cx2.lineTo(-22,2); cx2.lineTo(-10,-2); cx2.closePath(); cx2.fill();
+    cx2.beginPath(); cx2.moveTo( 4,-4); cx2.lineTo( 25,12); cx2.lineTo( 22,2); cx2.lineTo( 10,-2); cx2.closePath(); cx2.fill();
+    cx2.fillStyle = wc;
+    cx2.beginPath(); cx2.moveTo(-4,-4); cx2.lineTo(-22,9); cx2.lineTo(-20,3); cx2.lineTo(-10,-1); cx2.closePath(); cx2.fill();
+    cx2.beginPath(); cx2.moveTo( 4,-4); cx2.lineTo( 22,9); cx2.lineTo( 20,3); cx2.lineTo( 10,-1); cx2.closePath(); cx2.fill();
+    // 4 wing-mounted gun pods
+    cx2.fillStyle = bcD;
+    for (const px2 of [-15,-9,9,15]) {
+      cx2.fillRect(px2-1.5, 1, 3, 12);
+      cx2.fillStyle = '#1a1a1a'; cx2.fillRect(px2-0.7, 12, 1.5, 3);
+      cx2.fillStyle = bcD;
+    }
+    // Wing missile rails
+    cx2.fillStyle = '#ff4422';
+    cx2.fillRect(-22,7,2,1); cx2.fillRect(20,7,2,1);
+    // Wide fuselage
+    const bg = cx2.createLinearGradient(-9,-18, 9,20);
+    bg.addColorStop(0, bcL); bg.addColorStop(0.5, bc); bg.addColorStop(1, bcD);
+    cx2.fillStyle = bg;
+    cx2.beginPath();
+    cx2.moveTo(0,-18); cx2.lineTo(-5,-8); cx2.lineTo(-9,3); cx2.lineTo(-7,18); cx2.lineTo(-2,20); cx2.lineTo(2,20); cx2.lineTo(7,18); cx2.lineTo(9,3); cx2.lineTo(5,-8); cx2.closePath();
+    cx2.fill();
+    // Heavy panel lines
+    cx2.strokeStyle='rgba(0,0,0,0.5)'; cx2.lineWidth=0.7;
+    cx2.beginPath();
+    cx2.moveTo(0,-18); cx2.lineTo(0,20);
+    cx2.moveTo(-8,5); cx2.lineTo(8,5);
+    cx2.moveTo(-7,12); cx2.lineTo(7,12);
+    cx2.stroke();
+    // Twin tail fins
+    cx2.fillStyle = bcD;
+    cx2.beginPath(); cx2.moveTo(-3,10); cx2.lineTo(-3,18); cx2.lineTo(-2,18); cx2.lineTo(-2,10); cx2.closePath(); cx2.fill();
+    cx2.beginPath(); cx2.moveTo( 3,10); cx2.lineTo( 3,18); cx2.lineTo( 2,18); cx2.lineTo( 2,10); cx2.closePath(); cx2.fill();
+    // Heavy nose cannon
+    cx2.fillStyle = '#1a1a1a';
+    cx2.fillRect(-2,-13,4,8);
+    cx2.fillStyle = '#ff8800';
+    cx2.fillRect(-2,-14,4,1);
+    // Outline
+    cx2.strokeStyle = bcD; cx2.lineWidth = 0.8;
+    cx2.beginPath();
+    cx2.moveTo(0,-18); cx2.lineTo(-5,-8); cx2.lineTo(-9,3); cx2.lineTo(-7,18); cx2.lineTo(-2,20); cx2.lineTo(2,20); cx2.lineTo(7,18); cx2.lineTo(9,3); cx2.lineTo(5,-8); cx2.closePath();
+    cx2.stroke();
+  }
+
+  // Cockpit canopy (multi-layer for sharpness)
+  const cg = cx2.createLinearGradient(0,-15, 0,-2);
+  cg.addColorStop(0, '#ffffff');
+  cg.addColorStop(0.35, cc);
+  cg.addColorStop(1, shadeHex(cc, -50));
+  cx2.fillStyle = cg;
+  cx2.beginPath(); cx2.ellipse(0, -8, 3.5, 6.5, 0, 0, Math.PI*2); cx2.fill();
+  // Canopy frame
+  cx2.strokeStyle = 'rgba(0,0,0,0.6)';
+  cx2.lineWidth = 0.6;
+  cx2.beginPath(); cx2.ellipse(0, -8, 3.5, 6.5, 0, 0, Math.PI*2); cx2.stroke();
+  // Canopy split line
+  cx2.beginPath(); cx2.moveTo(0,-14); cx2.lineTo(0,-2); cx2.stroke();
   // Highlight
-  cx2.fillStyle = 'rgba(255,255,255,0.35)';
-  cx2.beginPath(); cx2.ellipse(-1, -10, 2, 4, -0.2, 0, Math.PI*2); cx2.fill();
+  cx2.fillStyle = 'rgba(255,255,255,0.6)';
+  cx2.beginPath(); cx2.ellipse(-1, -10, 1.2, 2.8, -0.2, 0, Math.PI*2); cx2.fill();
 
   cx2.restore();
 }
@@ -1881,8 +2046,20 @@ function drawEnemy(e) {
       cx.beginPath(); cx.moveTo(0,e.h*.5); cx.lineTo(e.w*.5,-e.h*.15); cx.lineTo(e.w*.2,-e.h*.5); cx.closePath(); cx.fill();
       cx.fillStyle=rg; // body
       cx.beginPath(); cx.moveTo(0,e.h*.55); cx.lineTo(-e.w*.18,e.h*.1); cx.lineTo(-e.w*.15,-e.h*.5); cx.lineTo(e.w*.15,-e.h*.5); cx.lineTo(e.w*.18,e.h*.1); cx.closePath(); cx.fill();
-      cx.fillStyle='rgba(0,255,220,.55)'; // cockpit
-      cx.beginPath(); cx.ellipse(0,e.h*.2,3,5,0,0,Math.PI*2); cx.fill();
+      // Panel lines + outline for HD feel
+      cx.strokeStyle='rgba(0,0,0,0.55)'; cx.lineWidth=0.8;
+      cx.beginPath();
+      cx.moveTo(0,-e.h*.5); cx.lineTo(0,e.h*.55);
+      cx.moveTo(-e.w*.16,-e.h*.05); cx.lineTo(e.w*.16,-e.h*.05);
+      cx.stroke();
+      // Wing-tip lights
+      cx.fillStyle='#ff4444'; cx.fillRect(-e.w*.5,-e.h*.16,2,1.5);
+      cx.fillStyle='#44ff44'; cx.fillRect( e.w*.5-2,-e.h*.16,2,1.5);
+      // Twin cannons
+      cx.fillStyle='#1a1a1a'; cx.fillRect(-1.5,e.h*.45,1.2,5); cx.fillRect(0.3,e.h*.45,1.2,5);
+      cx.fillStyle='rgba(0,255,220,.7)'; // cockpit
+      cx.beginPath(); cx.ellipse(0,e.h*.2,2.6,4.5,0,0,Math.PI*2); cx.fill();
+      cx.strokeStyle='rgba(0,0,0,0.7)'; cx.lineWidth=0.6; cx.stroke();
       break;
     }
     case 'zigzag': {
@@ -1892,8 +2069,14 @@ function drawEnemy(e) {
       cx.beginPath(); cx.moveTo(e.w*.05,e.h*.1); cx.lineTo(e.w*.5,e.h*.4); cx.lineTo(e.w*.35,-e.h*.3); cx.lineTo(e.w*.1,-e.h*.5); cx.closePath(); cx.fill();
       cx.fillStyle=rg;
       cx.beginPath(); cx.moveTo(0,e.h*.55); cx.lineTo(-e.w*.16,0); cx.lineTo(-e.w*.12,-e.h*.5); cx.lineTo(e.w*.12,-e.h*.5); cx.lineTo(e.w*.16,0); cx.closePath(); cx.fill();
-      cx.fillStyle='rgba(255,200,.55)';
-      cx.beginPath(); cx.ellipse(0,e.h*.2,3,4,0,0,Math.PI*2); cx.fill();
+      // Panel + cannon
+      cx.strokeStyle='rgba(0,0,0,0.55)'; cx.lineWidth=0.8;
+      cx.beginPath(); cx.moveTo(0,-e.h*.5); cx.lineTo(0,e.h*.55); cx.stroke();
+      cx.fillStyle='#1a1a1a'; cx.fillRect(-0.6,e.h*.45,1.2,5);
+      // Cockpit (fixed: previous color string was malformed)
+      cx.fillStyle='rgba(255,220,80,.75)';
+      cx.beginPath(); cx.ellipse(0,e.h*.2,2.6,4,0,0,Math.PI*2); cx.fill();
+      cx.strokeStyle='rgba(0,0,0,0.7)'; cx.lineWidth=0.5; cx.stroke();
       break;
     }
     case 'bomber': {
@@ -1916,14 +2099,28 @@ function drawEnemy(e) {
       cx.beginPath();
       for(let i=0;i<6;i++){const ag=i/6*Math.PI*2-Math.PI/2;cx.lineTo(Math.cos(ag)*e.w*.5,Math.sin(ag)*e.h*.5);}
       cx.closePath(); cx.fill();
-      cx.strokeStyle=e.col+'cc'; cx.lineWidth=1.5; cx.stroke();
-      cx.fillStyle=e.col+'aa'; // dual gun barrels pointing down
-      cx.fillRect(-e.w*.46,-3,e.w*.2,7); cx.fillRect(e.w*.26,-3,e.w*.2,7);
-      // barrel tips
-      cx.fillStyle='#ffffff55';
-      cx.fillRect(-e.w*.42,3,e.w*.12,3); cx.fillRect(e.w*.3,3,e.w*.12,3);
-      cx.fillStyle='rgba(80,200,255,.65)';
-      cx.beginPath(); cx.ellipse(0,-e.h*.08,e.w*.16,e.h*.18,0,0,Math.PI*2); cx.fill();
+      cx.strokeStyle='rgba(0,0,0,0.65)'; cx.lineWidth=1.2; cx.stroke();
+      // Inner panel hex outline
+      cx.strokeStyle=e.col;
+      cx.lineWidth=0.8;
+      cx.beginPath();
+      for(let i=0;i<6;i++){const ag=i/6*Math.PI*2-Math.PI/2;cx.lineTo(Math.cos(ag)*e.w*.32,Math.sin(ag)*e.h*.32);}
+      cx.closePath(); cx.stroke();
+      // Dual gun pods + barrels
+      cx.fillStyle='#222';
+      cx.fillRect(-e.w*.46,-3,e.w*.2,8); cx.fillRect(e.w*.26,-3,e.w*.2,8);
+      cx.fillStyle='#1a1a1a';
+      cx.fillRect(-e.w*.42, 5, e.w*.12, 5); cx.fillRect(e.w*.3, 5, e.w*.12, 5);
+      cx.fillStyle='#ff8800';
+      cx.fillRect(-e.w*.42, 9, e.w*.12, 1.5); cx.fillRect(e.w*.3, 9, e.w*.12, 1.5);
+      // Cockpit (clearer)
+      cx.fillStyle='rgba(80,200,255,.85)';
+      cx.beginPath(); cx.ellipse(0,-e.h*.08,e.w*.18,e.h*.2,0,0,Math.PI*2); cx.fill();
+      cx.strokeStyle='rgba(0,0,0,0.6)'; cx.lineWidth=0.6; cx.stroke();
+      // Sensor dots
+      cx.fillStyle='#ff4444';
+      cx.beginPath(); cx.arc(-e.w*.25,-e.h*.3,1.4,0,Math.PI*2); cx.fill();
+      cx.beginPath(); cx.arc( e.w*.25,-e.h*.3,1.4,0,Math.PI*2); cx.fill();
       break;
     }
     case 'tank': {
@@ -1984,8 +2181,17 @@ function drawEnemy(e) {
       cx.beginPath(); cx.moveTo(0,e.h*.55); cx.lineTo(-e.w*.55,e.h*.1); cx.lineTo(-e.w*.15,-e.h*.45); cx.lineTo(0,-e.h*.5); cx.lineTo(e.w*.15,-e.h*.45); cx.lineTo(e.w*.55,e.h*.1); cx.closePath(); cx.fill();
       cx.fillStyle=rg;
       cx.beginPath(); cx.ellipse(0,0,e.w*.18,e.h*.4,0,0,Math.PI*2); cx.fill();
-      cx.fillStyle='rgba(255,200,255,.65)';
-      cx.beginPath(); cx.ellipse(0,e.h*.15,2,3,0,0,Math.PI*2); cx.fill();
+      // Outline + center crease
+      cx.strokeStyle='rgba(0,0,0,0.55)'; cx.lineWidth=0.7;
+      cx.beginPath(); cx.moveTo(0,-e.h*.5); cx.lineTo(0,e.h*.55); cx.stroke();
+      // Wing-tip lights
+      cx.fillStyle='#ff4444'; cx.fillRect(-e.w*.55,e.h*.05,2,1.5);
+      cx.fillStyle='#44ff44'; cx.fillRect( e.w*.55-2,e.h*.05,2,1.5);
+      // Cannon
+      cx.fillStyle='#1a1a1a'; cx.fillRect(-0.6,e.h*.45,1.2,5);
+      cx.fillStyle='rgba(255,200,255,.75)';
+      cx.beginPath(); cx.ellipse(0,e.h*.15,2.2,3.2,0,0,Math.PI*2); cx.fill();
+      cx.strokeStyle='rgba(0,0,0,.6)'; cx.lineWidth=0.5; cx.stroke();
       break;
     }
     case 'saucer': {
@@ -2119,8 +2325,19 @@ function drawEnemy(e) {
       // Tall slender rocket-jet
       cx.fillStyle=e.col+'aa';
       cx.beginPath(); cx.moveTo(-e.w*.05,-e.h*.5); cx.lineTo(-e.w*.5,e.h*.1); cx.lineTo(-e.w*.18,e.h*.5); cx.lineTo(e.w*.18,e.h*.5); cx.lineTo(e.w*.5,e.h*.1); cx.lineTo(e.w*.05,-e.h*.5); cx.closePath(); cx.fill();
+      cx.strokeStyle='rgba(0,0,0,0.55)'; cx.lineWidth=0.7;
+      cx.stroke();
+      // Center fuselage stripe
+      cx.fillStyle=e.col;
+      cx.fillRect(-1.5,-e.h*.45,3,e.h*.85);
+      // Cockpit
+      cx.fillStyle='rgba(120,200,255,.75)';
+      cx.beginPath(); cx.ellipse(0,-e.h*.05,1.8,3.5,0,0,Math.PI*2); cx.fill();
+      // Engine glow streak
       cx.fillStyle='#ffffff66';
       cx.fillRect(-2,e.h*.45,4,8);
+      cx.fillStyle='#ffaa44aa';
+      cx.fillRect(-1.2,e.h*.5,2.4,5);
       break;
     }
     case 'elite': {
@@ -2128,19 +2345,32 @@ function drawEnemy(e) {
       cx.fillStyle=rg;
       cx.beginPath(); cx.roundRect(-e.w*.5,-e.h*.5,e.w,e.h,6); cx.fill();
       cx.strokeStyle='#440011'; cx.lineWidth=2; cx.stroke();
-      // armor lines
-      cx.strokeStyle='rgba(0,0,0,.4)';
-      cx.beginPath(); cx.moveTo(-e.w*.5,0); cx.lineTo(e.w*.5,0); cx.stroke();
+      // armor lines (multi-segment plating)
+      cx.strokeStyle='rgba(0,0,0,.5)'; cx.lineWidth=1;
+      cx.beginPath(); cx.moveTo(-e.w*.5,-e.h*.2); cx.lineTo(e.w*.5,-e.h*.2); cx.stroke();
+      cx.beginPath(); cx.moveTo(-e.w*.5, e.h*.1); cx.lineTo(e.w*.5, e.h*.1); cx.stroke();
+      cx.beginPath(); cx.moveTo(0,-e.h*.5); cx.lineTo(0,e.h*.5); cx.stroke();
       // Twin cannons
       cx.fillStyle='#220011';
       cx.fillRect(-e.w*.32,-e.h*.6,5,e.h*.4);
       cx.fillRect(e.w*.27,-e.h*.6,5,e.h*.4);
+      cx.fillStyle='#ff8800';
+      cx.fillRect(-e.w*.32,-e.h*.62,5,1.5);
+      cx.fillRect(e.w*.27,-e.h*.62,5,1.5);
       // Wing extensions
       cx.fillStyle=e.col+'66';
       cx.beginPath(); cx.moveTo(-e.w*.5,-e.h*.1); cx.lineTo(-e.w*.85,e.h*.2); cx.lineTo(-e.w*.5,e.h*.3); cx.closePath(); cx.fill();
       cx.beginPath(); cx.moveTo(e.w*.5,-e.h*.1); cx.lineTo(e.w*.85,e.h*.2); cx.lineTo(e.w*.5,e.h*.3); cx.closePath(); cx.fill();
-      cx.fillStyle='rgba(255,80,120,.7)';
-      cx.beginPath(); cx.arc(0,-e.h*.1,4,0,Math.PI*2); cx.fill();
+      cx.fillStyle=e.col;
+      cx.beginPath(); cx.moveTo(-e.w*.5,-e.h*.05); cx.lineTo(-e.w*.78,e.h*.18); cx.lineTo(-e.w*.5,e.h*.25); cx.closePath(); cx.fill();
+      cx.beginPath(); cx.moveTo(e.w*.5,-e.h*.05); cx.lineTo(e.w*.78,e.h*.18); cx.lineTo(e.w*.5,e.h*.25); cx.closePath(); cx.fill();
+      // Cockpit
+      cx.fillStyle='rgba(255,80,120,.85)';
+      cx.beginPath(); cx.ellipse(0,-e.h*.1,4.5,5,0,0,Math.PI*2); cx.fill();
+      cx.strokeStyle='rgba(0,0,0,0.6)'; cx.lineWidth=0.7; cx.stroke();
+      // Centerpiece pulse light
+      cx.fillStyle='#ffffff';
+      cx.beginPath(); cx.arc(0,e.h*.18,1.6,0,Math.PI*2); cx.fill();
       break;
     }
   }
@@ -2420,6 +2650,8 @@ function drawBossShape(b) {
   const og=cx.createRadialGradient(0,0,20,0,0,70);
   og.addColorStop(0,b.color+'88'); og.addColorStop(1,b.color+'00');
   cx.fillStyle=og; cx.beginPath(); cx.arc(0,0,70,0,Math.PI*2); cx.fill();
+  // Sharper render: stronger linework defaults
+  cx.lineCap='round'; cx.lineJoin='round';
   // Rage red aura
   if (b.phase>=3) {
     const rg=cx.createRadialGradient(0,0,30,0,0,100);
@@ -3425,7 +3657,6 @@ function drawTitle() {
   for(let i=0;i<8;i++){const bx=(i*60+frame*2)%(W+60)-30;fillPx('#00ffff',bx|0,200,8,3);fillPx('#0066ff',(bx+4)|0,198,4,7);}
   for(let i=0;i<6;i++){const bx=W-((i*80+frame*1.5)%(W+80));fillPx('#ff8800',bx|0,220,6,3);}
 
-  cx.fillStyle='#66aaff';cx.font="14px 'Courier New', monospace";cx.fillText('INSERT COIN - PRESS START',W/2,285);
   if(Math.floor(frame/40)%2===0){cx.fillStyle='#ffff44';cx.font="16px 'Courier New', monospace";cx.fillText('▼ SELECT ▼',W/2,312);}
 
   for(const btn of titleBtns) {
@@ -3433,9 +3664,6 @@ function drawTitle() {
     drawButton(btn.x,btn.y,btn.w,btn.h,text, btn.act==='endless' && !!save.endlessState);
   }
   if (save.endlessState) {
-    cx.fillStyle='#aa4444'; cx.font="10px 'Courier New', monospace"; cx.textAlign='center';
-    cx.fillText('点击继续 · 长按右侧🗑放弃进度', W/2+106, 432);
-    // small reset btn
     cx.fillStyle='#220000';
     cx.fillRect(346, 388, 28, 36);
     cx.strokeStyle='#883333'; cx.strokeRect(346, 388, 28, 36);
@@ -3486,8 +3714,7 @@ function drawTitle() {
   }
 
   // Footer
-  cx.fillStyle='#ffcc00';cx.font="13px 'Courier New', monospace";cx.fillText('🪙 '+save.coins+'   💎 '+save.diamonds, W/2, 644);
-  cx.fillStyle='#446688';cx.font="9px 'Courier New', monospace";cx.fillText('RAIDEN v3.0  ♬ '+BGM_TRACK_NAMES[bgmTrack],W/2,664);
+  cx.fillStyle='#ffcc00';cx.font="13px 'Courier New', monospace";cx.fillText('🪙 '+save.coins+'   💎 '+save.diamonds, W/2, 654);
   cx.textAlign='left';
 }
 
@@ -3540,7 +3767,7 @@ function drawShopPlanes() {
     cx.strokeStyle=isP1?'#00ffff':isP2?'#ff8844':isHL?'#4488cc':'#224466';
     cx.lineWidth=isP1||isP2?2:1;
     cx.strokeRect((bx+1)|0,(by+1)|0,(cw-2)|0,(ch-2)|0);
-    drawVectorPlane(skin[3],skin[4],cx,(bx+cw/2)|0,(by+40)|0,1.5,false);
+    drawVectorPlane(skin[3],skin[4],cx,(bx+cw/2)|0,(by+38)|0,1.9,false);
     cx.fillStyle=owned?'#aaddff':'#556677';cx.font="10px 'Courier New', monospace";cx.textAlign='center';
     cx.fillText(skin[0],(bx+cw/2)|0,(by+55)|0);
     if(owned){
