@@ -63,6 +63,30 @@ canvas { display:block; width:100%; height:100%; image-rendering:auto; }
 }
 #btn-bomb:active { transform:scale(0.92); background:radial-gradient(circle at 30% 30%, #aabbff, #4477ff 60%, #002288); }
 #btn-bomb .count { position:absolute; top:-4px; right:-4px; background:#ff4422; border-radius:50%; min-width:18px; height:18px; font-size:10px; display:flex; align-items:center; justify-content:center; padding:0 3px; font-weight:bold; }
+#console-panel {
+  position:absolute; left:0; top:0; right:0; bottom:0;
+  background:rgba(0,8,24,0.97);
+  display:none; flex-direction:column;
+  color:#fff; font-family:'Courier New', monospace;
+  z-index:40; padding:14px 12px; overflow:hidden;
+}
+#console-panel.show { display:flex; }
+#console-panel h2 { font-size:18px; color:#00ffff; margin-bottom:6px; text-align:center; letter-spacing:3px; }
+#console-panel .sub { font-size:10px; color:#88aacc; text-align:center; margin-bottom:10px; }
+#console-panel .tabs { display:flex; gap:4px; margin-bottom:10px; flex-wrap:wrap; }
+#console-panel .tab { flex:1; padding:6px 4px; background:#0a1828; border:1px solid #244466; color:#88aacc; font-size:11px; cursor:pointer; text-align:center; border-radius:3px; }
+#console-panel .tab.active { background:#114466; border-color:#00ffff; color:#aaffff; }
+#console-panel .body { flex:1; overflow-y:auto; padding:6px 2px; font-size:11px; }
+#console-panel .row { display:flex; align-items:center; padding:4px 6px; gap:6px; border-bottom:1px dashed #1f3a5a; }
+#console-panel .row label { flex:1; color:#aaccee; font-size:11px; }
+#console-panel .row .desc { color:#557799; font-size:9px; }
+#console-panel input[type=number] { width:64px; background:#001828; border:1px solid #335577; color:#ffcc44; font-family:inherit; font-size:11px; padding:3px 5px; border-radius:2px; text-align:right; -moz-appearance:textfield; }
+#console-panel input[type=number]::-webkit-inner-spin-button, #console-panel input[type=number]::-webkit-outer-spin-button { -webkit-appearance:none; margin:0; }
+#console-panel .footer { display:flex; gap:8px; margin-top:8px; }
+#console-panel .footer button { flex:1; padding:8px; background:#112233; border:2px solid #4488aa; color:#88ccee; font-family:inherit; font-size:12px; cursor:pointer; border-radius:3px; }
+#console-panel .footer button:hover { background:#226688; border-color:#00ffff; color:#fff; }
+#console-panel .footer button.warn { border-color:#aa4444; color:#ff8888; }
+#console-panel .footer button.warn:hover { background:#660000; }
 </style>
 </head>
 <body>
@@ -74,6 +98,16 @@ canvas { display:block; width:100%; height:100%; image-rendering:auto; }
   <button id="btn-speed" title="切换倍速">1.0x</button>
   <button id="btn-infbomb" title="无限核弹">💥∞</button>
   <!-- Bomb hidden: 移动端双击屏幕触发，桌面端 X 键 -->
+  <div id="console-panel">
+    <h2>🛠 控制台</h2>
+    <div class="sub">实时调整游戏数据 · 自动保存</div>
+    <div class="tabs" id="console-tabs"></div>
+    <div class="body" id="console-body"></div>
+    <div class="footer">
+      <button id="console-reset" class="warn">重置默认</button>
+      <button id="console-back">← 返回排行榜</button>
+    </div>
+  </div>
 </div>
 <script>
 'use strict';
@@ -171,6 +205,36 @@ function defaultSave() {
     pixelScale: 1.0,
     endlessState: null,
     endlessLeaderboard: [],
+    console: defaultConsole(),
+  };
+}
+function defaultConsole() {
+  return {
+    // Player
+    playerSpeed: 4,         // base move speed (px/frame)
+    playerLives: 3,         // initial lives
+    playerBombs: 3,         // initial bombs
+    weaponDmgMul: 1.0,      // global player bullet damage multiplier
+    fireRateMul: 1.0,       // shoot interval multiplier (>1 slower, <1 faster)
+    bulletSpeedMul: 1.0,    // player bullet velocity multiplier
+    starMaxDuration: 5,     // LV MAX seconds when picking star at Lv5
+    reviveBombs: 5,         // bombs granted on revive
+    // Enemy
+    enemyHpMul: 1.0,        // global enemy HP multiplier
+    enemySpeedMul: 1.0,     // enemy move speed multiplier
+    enemyBulletSpdMul: 1.0, // enemy bullet velocity multiplier
+    enemyFireRateMul: 1.0,  // enemy fire interval multiplier
+    spawnRateMul: 1.0,      // spawn frequency multiplier (lower → faster)
+    enemyCountMul: 1.0,     // wave size multiplier
+    // Boss
+    bossHpMul: 1.0,         // boss HP multiplier
+    bossFireRateMul: 1.0,   // boss attack interval multiplier
+    bossBarMul: 1.0,        // bar count multiplier
+    // Pickups & Difficulty
+    dropRateMul: 1.0,       // overall drop rate multiplier (cap 95%)
+    coinMul: 1.0,           // coin reward multiplier
+    diamondMul: 1.0,        // diamond reward multiplier
+    bossKillMul: 1.0,       // boss-kill threshold multiplier (more kills needed)
   };
 }
 let save = defaultSave();
@@ -212,6 +276,13 @@ function loadSave() {
       if (typeof d.pixelScale === 'number') save.pixelScale = d.pixelScale;
       if (d.endlessState && typeof d.endlessState === 'object') save.endlessState = d.endlessState;
       if (Array.isArray(d.endlessLeaderboard)) save.endlessLeaderboard = d.endlessLeaderboard.slice(0,10);
+      if (d.console && typeof d.console === 'object') {
+        const def = defaultConsole();
+        for (const k in def) {
+          if (typeof d.console[k] === 'number') def[k] = d.console[k];
+        }
+        save.console = def;
+      }
     }
   } catch(e) {}
 }
@@ -1830,12 +1901,13 @@ function updateBG() {
 const WEAPON_NAMES=['标准炮','散弹枪','激光炮','制导弹','等离子','闪电链','回旋镖','波动炮','龙卷炮','冰晶炮'];
 
 function createPlayer(pNum, skinIdx) {
+  const C = save.console || defaultConsole();
   return {
     x: pNum===1 ? W*0.65 : W*0.35,
     y: H-120,
     px:0, py:0,
-    speed:4,
-    lives:3, bombs:3,
+    speed: C.playerSpeed,
+    lives: C.playerLives, bombs: C.playerBombs,
     skinIdx,
     weapon:0, weaponLevel:1,
     weaponMax:0,            // frames remaining of LV MAX state
@@ -1852,10 +1924,16 @@ function drawPlayer(p) {
   const skin = PLANE_SKINS[p.skinIdx];
   const colors = [...skin[4]];
   if (p.pNum===2) colors[0]=shiftColor(colors[0],30);
-  // Ground shadow under plane
-  cx.fillStyle = 'rgba(0,0,0,0.32)';
+  // Shape-aware shadow: re-render the plane silhouette in dark + offset
+  cx.save();
+  cx.globalAlpha = 0.34;
+  drawVectorPlane(skin[3], ['#0a0a14','#000010','#06060a','#000000'], cx,
+    p.px + 6, p.py + 14, 1, false, p.bank || 0);
+  cx.restore();
+  // Soft ground oval underneath for grounding cue
+  cx.fillStyle = 'rgba(0,0,0,0.22)';
   cx.beginPath();
-  cx.ellipse(p.px + 6, p.py + 22, 18 * (1 - 0.3*Math.abs(p.bank||0)), 5, 0, 0, Math.PI*2);
+  cx.ellipse(p.px + 6, p.py + 26, 16 * (1 - 0.25*Math.abs(p.bank||0)), 3.2, 0, 0, Math.PI*2);
   cx.fill();
   // LV MAX rainbow halo behind plane
   if (p.weaponMax > 0) {
@@ -1947,7 +2025,16 @@ function updatePlayer(p, keys) {
 
 // ─── BULLETS ─────────────────────────────────────────────────────────────────
 function mkB(x,y,vx,vy,color,w,h,owner,dmg) {
-  return {x,y,px:x|0,py:y|0,vx,vy,color,w,h,owner,dmg:dmg||10,alive:true};
+  // Player bullets honor console multipliers; enemy/wingman bullets pass owner so we
+  // only scale player-owned. (Wingman bullets count as player damage too.)
+  const C = save.console || defaultConsole();
+  const isPlayer = !!owner && (owner.pNum !== undefined);
+  const finalDmg = (dmg || 10) * (isPlayer ? C.weaponDmgMul : 1);
+  const sm = isPlayer ? C.bulletSpeedMul : 1;
+  return {x, y, px:x|0, py:y|0,
+          vx: vx*sm, vy: vy*sm,
+          color, w, h, owner,
+          dmg: finalDmg, alive:true};
 }
 function mkLaser(x,playerY,wl,owner) {
   return {x,y:0,px:x|0,py:0,vx:0,vy:0,color:'#ff2200',w:3+wl*2,h:playerY+12,
@@ -2062,8 +2149,9 @@ function fireBulletMax(p) {
 
 function fireBullet(p) {
   const x=p.x, y=p.y, wl=p.weaponLevel;
+  const C = save.console || defaultConsole();
   const delays=[7,11,3,18,11,8,20,10,18,14];
-  p.shootTimer=Math.max(1,(delays[p.weapon]-(wl-1)*1)|0);
+  p.shootTimer=Math.max(1, Math.round((delays[p.weapon]-(wl-1)*1) * C.fireRateMul));
 
   // ─ LV MAX 超级形态 (5s) ─
   if (p.weaponMax > 0) {
@@ -2313,11 +2401,13 @@ const ENEMY_CFG = {
 function mkEnemy(type, x, y) {
   const c=ENEMY_CFG[type]||ENEMY_CFG.basic;
   const diff=getDiff();
+  const C = save.console || defaultConsole();
+  const sp = c.spd*(0.7+level*0.03)*C.enemySpeedMul;
   return {
     type,x,y,px:x|0,py:y|0,
     hp:c.hp*diff.hpMult, maxHp:c.hp*diff.hpMult,
-    speed:c.spd*(0.7+level*0.03), pts:c.pts, w:c.w, h:c.h, col:c.col, cv:c.cv,
-    alive:true, moveTimer:0, vx:rnd(-1,1), vy:c.spd,
+    speed:sp, pts:c.pts, w:c.w, h:c.h, col:c.col, cv:c.cv,
+    alive:true, moveTimer:0, vx:rnd(-1,1), vy:sp,
     splitChild:false,
   };
 }
@@ -2325,8 +2415,9 @@ function mkEnemy(type, x, y) {
 function updateEnemy(e) {
   if(!e.alive) return;
   e.moveTimer++;
-  // Density relief: in endless mode, scale firing intervals up
-  const fireMul = endlessMode ? 1.6 : 1.0;
+  // Density relief: in endless mode, scale firing intervals up; console also multiplies
+  const C = save.console || defaultConsole();
+  const fireMul = (endlessMode ? 1.6 : 1.0) * C.enemyFireRateMul;
   switch(e.type) {
     case 'basic':   e.y+=e.speed; e.x+=Math.sin(e.moveTimer*0.03)*0.5; break;
     case 'zigzag':  e.y+=e.speed; e.x+=Math.sin(e.moveTimer*0.08)*3; break;
@@ -2464,10 +2555,28 @@ function drawEnemy(e) {
   const dxDelta = e.x - e.lastX;
   e.lastX = e.x;
   e.bank = clamp((e.bank||0)*0.7 + dxDelta*0.18, -1, 1);
-  // Ground shadow
-  cx.fillStyle = 'rgba(0,0,0,0.30)';
+  // Shape-aware shadow: body silhouette + two wing blobs offset down/right
+  cx.save();
+  cx.globalAlpha = 0.30;
+  cx.translate(x + 5, y + 10);
+  if (e.bank) {
+    cx.rotate(e.bank * 0.15);
+    cx.scale(1 - 0.22*Math.abs(e.bank), 1);
+  }
+  cx.fillStyle = '#000010';
+  // Body shadow
   cx.beginPath();
-  cx.ellipse(x + 5, y + e.h*0.55, e.w*0.5*(1-0.25*Math.abs(e.bank)), 4, 0, 0, Math.PI*2);
+  cx.ellipse(0, 0, e.w*0.32, e.h*0.5, 0, 0, Math.PI*2); cx.fill();
+  // Wing shadows
+  cx.beginPath();
+  cx.ellipse(-e.w*0.32, e.h*0.05, e.w*0.22, e.h*0.18, 0.18, 0, Math.PI*2); cx.fill();
+  cx.beginPath();
+  cx.ellipse( e.w*0.32, e.h*0.05, e.w*0.22, e.h*0.18,-0.18, 0, Math.PI*2); cx.fill();
+  cx.restore();
+  // Tight ground oval
+  cx.fillStyle = 'rgba(0,0,0,0.22)';
+  cx.beginPath();
+  cx.ellipse(x + 5, y + e.h*0.55 + 2, e.w*0.42*(1-0.25*Math.abs(e.bank)), 3, 0, 0, Math.PI*2);
   cx.fill();
   cx.save(); cx.translate(x, y);
   // Banking transform
@@ -2856,8 +2965,9 @@ function spawnBoss() {
   SFX.bossAppear();
   const idx = bossIndex();
   const def = BOSS_DEFS[idx];
-  const barCount = clamp(1 + Math.floor((level-1)/2), 1, 5);
-  const hp = (def.hp + level*150) * barCount;
+  const C = save.console || defaultConsole();
+  const barCount = clamp(Math.round((1 + Math.floor((level-1)/2)) * (C.bossBarMul||1)), 1, 9);
+  const hp = (def.hp + level*150) * barCount * C.bossHpMul;
   boss = {
     bossType: idx,
     x: W/2, y: -80, px:W/2|0, py:-80,
@@ -2876,12 +2986,15 @@ function updateBoss() {
   if(!boss||!boss.alive) return;
   boss.moveTimer++;
   if(!boss.entryDone){boss.y+=2;if(boss.y>=80){boss.entryDone=true;boss.y=80;}boss.px=boss.x|0;boss.py=boss.y|0;return;}
-  // Phase tracking — 70% / 40% / 10% (rage)
+  // Phase tracking — 100% initial / 70% second form / 40% RAGE
   const hr=boss.hp/boss.maxHp;
-  if(hr<0.7&&boss.phase===0){boss.phase=1; addFT('PHASE 2', boss.x, boss.y-30, '#ffaa00'); triggerShake(8,20);}
-  if(hr<0.4&&boss.phase===1){boss.phase=2; addFT('PHASE 3', boss.x, boss.y-30, '#ff4400'); triggerShake(12,24);}
-  if(hr<0.1&&boss.phase===2){
-    boss.phase=3;
+  if(hr<0.7&&boss.phase===0){
+    boss.phase=1;
+    addFT('PHASE 2', boss.x, boss.y-30, '#ffaa00');
+    triggerShake(10,22);
+  }
+  if(hr<0.4&&boss.phase===1){
+    boss.phase=2;
     addFT('★  狂  怒  ★', W/2, H/2-40, '#ff0000');
     addFT(boss.name + ' 进入狂怒形态!', W/2, H/2-15, '#ffff44');
     triggerShake(22, 60);
@@ -2897,11 +3010,11 @@ function updateBoss() {
 // Boss-specific behavior table
 function bossLogic(b) {
   const phase=b.phase, mt=b.moveTimer;
-  // Rage (phase>=3) → fire 2.5× faster, plus periodic radial burst
-  const rageMul = phase>=3 ? 0.4 : 1.0;
-  const fireMul = (endlessMode ? 1.4 : 1.0) * rageMul;
-  // Rage radial burst — every 35 frames in rage mode
-  if (phase >= 3 && mt % 35 === 0) {
+  const C = save.console || defaultConsole();
+  // Rage now triggers at 40% (phase 2). Fire 2.5× faster + periodic radial burst.
+  const rageMul = phase>=2 ? 0.4 : 1.0;
+  const fireMul = (endlessMode ? 1.4 : 1.0) * rageMul * C.bossFireRateMul;
+  if (phase >= 2 && mt % 35 === 0) {
     for (let a=0;a<18;a++) {
       const ag = (a/18)*Math.PI*2;
       enemyBullets.push({x:b.x,y:b.y,px:b.x|0,py:b.y|0,
@@ -3604,8 +3717,9 @@ function collectPickups() {
               SFX.levelUp();
               addFT('★UP',pk.x,pk.y,'#ffff00');
             } else {
-              // Already Lv5 → grant 5 seconds of LV MAX (stacks)
-              p.weaponMax = (p.weaponMax || 0) + 300;
+              // Already Lv5 → grant LV MAX duration (stacks; from console)
+              const Cx = save.console || defaultConsole();
+              p.weaponMax = (p.weaponMax || 0) + Math.round((Cx.starMaxDuration||5)*60);
               SFX.levelUp();
               triggerShake(6, 12);
               addFT('★ LV MAX ★', pk.x, pk.y, '#ff66ff');
@@ -3866,12 +3980,13 @@ function doRevive() {
   if (sessionDiamonds + save.diamonds < deathReviveCost) return false;
   if (sessionDiamonds >= deathReviveCost) sessionDiamonds -= deathReviveCost;
   else { const need = deathReviveCost - sessionDiamonds; sessionDiamonds = 0; save.diamonds -= need; writeSave(); }
-  // Restore player(s) — revive grants a fresh load of 5 bombs
+  // Restore player(s) — revive grants console-configured bomb count
+  const C = save.console || defaultConsole();
   for (const p of players) {
-    p.lives = 3; p.dead = false; p.respawnTimer = 0;
+    p.lives = C.playerLives; p.dead = false; p.respawnTimer = 0;
     p.invTimer = 180; p.shield = 240; p.shieldHits = 3;
     p.x = p.pNum===1 ? W*0.65 : W*0.35; p.y = H-120;
-    p.bombs = 5;
+    p.bombs = C.reviveBombs;
   }
   // Wipe field hazards
   enemyBullets.length = 0;
@@ -3889,9 +4004,11 @@ function killEnemy(e) {
   spawnExplosion(e.x,e.y,e.type==='carrier'||e.type==='tank'||e.type==='elite'?'large':'medium');
   addFT('+'+e.pts,e.x,e.y,'#ffffff');
   // Auto-credit coins (no physical drops)
-  const cv={basic:8,zigzag:12,bomber:25,gunship:20,tank:40,speeder:6,carrier:50,
+  const cvBase={basic:8,zigzag:12,bomber:25,gunship:20,tank:40,speeder:6,carrier:50,
             dart:8,saucer:22,scout:5,sniper:24,mortar:20,swarmlet:3,hive:36,
             turret:24,stealth:18,splitter:18,minelayer:26,jet:9,elite:55}[e.type]||8;
+  const C = save.console || defaultConsole();
+  const cv = Math.max(1, Math.round(cvBase * C.coinMul));
   sessionCoins += cv;
   score += cv;
   addFT('🪙+'+cv, e.x+10, e.y, '#ffcc00');
@@ -3904,8 +4021,9 @@ function killEnemy(e) {
       enemies.push(c);
     }
   }
-  // Power-up drops (rates significantly bumped per request)
-  const dr=Math.random();
+  // Power-up drops (console-tunable multiplier)
+  const dropMul = clamp(C.dropRateMul || 1, 0, 5);
+  const dr = Math.random() / dropMul;   // smaller dr → higher chance
   if(dr<0.10)       spawnPickup(e.x,e.y,'weapon',rndInt(0,9));
   else if(dr<0.22)  spawnPickup(e.x,e.y,'star',1);
   else if(dr<0.27)  spawnPickup(e.x,e.y,'life',1);
@@ -3921,9 +4039,10 @@ function killBoss() {
   boss.alive=false; score+=boss.pts; bossActive=false;
   triggerShake(18, 50);
   SFX.bossDefeat(); spawnExplosion(boss.x,boss.y,'huge');
-  // Auto-credit diamonds + bonus coins
-  const dGain = 2 + Math.floor(wasLvl/2) + (endlessMode?1:0);
-  const cGain = 80 + wasLvl*30;
+  // Auto-credit diamonds + bonus coins (console multipliers)
+  const C = save.console || defaultConsole();
+  const dGain = Math.max(1, Math.round((2 + Math.floor(wasLvl/2) + (endlessMode?1:0)) * C.diamondMul));
+  const cGain = Math.max(1, Math.round((80 + wasLvl*30) * C.coinMul));
   sessionDiamonds += dGain;
   sessionCoins += cGain;
   score += cGain;
@@ -4037,24 +4156,33 @@ function poolForLevel(lv) {
 function getDiff() {
   const lv = Math.min(level, 12);
   const endlessLv = endlessMode ? Math.min(level, 100) : lv;
+  const C = save.console || defaultConsole();
+  let d;
   if (endlessMode) {
-    return {
+    d = {
       spawnRate: Math.max(170 - endlessLv*1.4, 60),
       formRate:  Math.max(460 - endlessLv*3, 180),
       enemyCount: 1 + Math.floor(endlessLv/6),
       bulletSpd:  Math.min(0.55 + endlessLv*0.018, 1.6),
       hpMult:     Math.min(1 + endlessLv*0.045, 5),
     };
+  } else {
+    const m = TIER_MUL[currentTier()];
+    d = {
+      spawnRate: Math.max(95 - lv*5, 40),
+      formRate:  Math.max(260 - lv*12, 110),
+      enemyCount: 2 + Math.floor(lv/2),
+      bulletSpd:  (0.5 + lv*0.06) * m,
+      hpMult:     (1 + lv*0.12) * m,
+    };
   }
-  // Stage: tier-multiplied (more enemies, faster waves than before)
-  const m = TIER_MUL[currentTier()];
-  return {
-    spawnRate: Math.max(95 - lv*5, 40),     // 出怪间隔大幅缩短
-    formRate:  Math.max(260 - lv*12, 110),  // 编队节奏加快
-    enemyCount: 2 + Math.floor(lv/2),       // 单波数量 ↑
-    bulletSpd:  (0.5 + lv*0.06) * m,
-    hpMult:     (1 + lv*0.12) * m,
-  };
+  // Apply console multipliers
+  d.spawnRate  = Math.max(15, Math.round(d.spawnRate * C.spawnRateMul));
+  d.formRate   = Math.max(40, Math.round(d.formRate  * C.spawnRateMul));
+  d.enemyCount = Math.max(1, Math.round(d.enemyCount * C.enemyCountMul));
+  d.bulletSpd  = d.bulletSpd * C.enemyBulletSpdMul;
+  d.hpMult     = d.hpMult    * C.enemyHpMul;
+  return d;
 }
 
 function updateWaves() {
@@ -4062,7 +4190,9 @@ function updateWaves() {
   if(bossActive) return;
 
   // Boss trigger: kill quota met → enter boss IMMEDIATELY (clear any stragglers)
-  const threshold = BOSS_KILL_THRESHOLD[Math.min(level-1, BOSS_KILL_THRESHOLD.length-1)];
+  const C = save.console || defaultConsole();
+  const baseThr = BOSS_KILL_THRESHOLD[Math.min(level-1, BOSS_KILL_THRESHOLD.length-1)];
+  const threshold = Math.max(3, Math.round(baseThr * (C.bossKillMul || 1)));
   if(killCount>=threshold) {
     for (const e of enemies) {
       if (e.alive) { spawnExplosion(e.x, e.y, 'medium'); e.alive=false; }
@@ -4209,13 +4339,13 @@ function drawTitle() {
     cx.textBaseline='alphabetic';
   }
 
-  // 关卡模式 → 旁边显示 3 枚勋章 (铜/银/金)，未获得显示铁牌
+  // 关卡模式 → 只显示当前最高勋章 (金 > 银 > 铜)
   const medals = save.medals || {};
-  const tierKeys = ['novice','veteran','hell'];
-  const my = 352;
-  for (let i=0;i<3;i++) {
-    drawMedalIcon(360 + i*30, my, !!medals[tierKeys[i]], tierKeys[i]);
-  }
+  let topKey = null;
+  if (medals.hell) topKey = 'hell';
+  else if (medals.veteran) topKey = 'veteran';
+  else if (medals.novice) topKey = 'novice';
+  if (topKey) drawMedalIcon(370, 352, true, topKey);
 
   // Footer
   cx.fillStyle='#ffcc00';cx.font="13px 'Courier New', monospace";cx.textAlign='center';
@@ -4389,11 +4519,13 @@ function drawLeaderboard() {
   }
 
   drawButton(20, 655, 110, 36, '← 返回', false);
+  drawButton(180, 655, 120, 36, '🛠 控制台', false);
   if (lb.length > 0) drawButton(330, 655, 130, 36, '清空记录', false);
   cx.textAlign='left';
 }
 function clickLeaderboard(mx,my) {
   if (mx>=20 && mx<=130 && my>=655 && my<=691) { screen='title'; return; }
+  if (mx>=180 && mx<=300 && my>=655 && my<=691) { screen='console'; showConsolePanel(true); return; }
   if (mx>=330 && mx<=460 && my>=655 && my<=691) {
     if (confirm('确定清空所有无尽记录?')) {
       save.endlessLeaderboard = [];
@@ -5296,6 +5428,9 @@ document.addEventListener('keydown',e=>{
     } else if (screen==='shop' || screen==='stageSelect' || screen==='tierSelect' || screen==='leaderboard' || screen==='titleSettings') {
       bgmDropdownOpen = false;
       screen='title';
+    } else if (screen==='console') {
+      showConsolePanel(false);
+      screen='leaderboard';
     }
   }
   if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','z','Z','x','X',' ','Spacebar'].includes(e.key)) e.preventDefault();
@@ -5344,6 +5479,8 @@ function syncPauseBtn() {
     btn.textContent = '⏸';
     btn.title = '暂停 (P)';
   }
+  // Sync console DOM panel visibility with screen state
+  consolePanelEl.classList.toggle('show', screen === 'console');
 }
 document.getElementById('btn-pause').addEventListener('click',()=>{
   if (screen==='title') {
@@ -5469,6 +5606,8 @@ function draw() {
   } else if(screen==='titleSettings') {
     frame++;
     drawTitleSettings();
+  } else if(screen==='console') {
+    fillPx('#000818',0,0,W,H);   // DOM panel covers the canvas
   } else if(screen==='game') {
     drawGameField();
   } else if(screen==='pause') {
@@ -5501,6 +5640,96 @@ function loop() {
   syncPauseBtn();
   requestAnimationFrame(loop);
 }
+
+// ─── DEV CONSOLE PANEL ───────────────────────────────────────────────────────
+const CONSOLE_TABS = [
+  { id:'player', label:'玩家', fields: [
+    {k:'playerSpeed',    name:'移动速度',     min:1,  max:12, step:0.5, desc:'每帧像素'},
+    {k:'playerLives',    name:'初始生命',     min:1,  max:9,  step:1,   desc:''},
+    {k:'playerBombs',    name:'初始导弹数',   min:0,  max:9,  step:1,   desc:''},
+    {k:'reviveBombs',    name:'复活导弹数',   min:0,  max:9,  step:1,   desc:''},
+    {k:'weaponDmgMul',   name:'伤害倍率',     min:0.1,max:10, step:0.1, desc:'×'},
+    {k:'fireRateMul',    name:'射速倍率',     min:0.1,max:5,  step:0.1, desc:'×间隔'},
+    {k:'bulletSpeedMul', name:'子弹速度倍率', min:0.5,max:5,  step:0.1, desc:'×'},
+    {k:'starMaxDuration',name:'LV MAX 秒数',  min:1,  max:30, step:1,   desc:'秒'},
+  ]},
+  { id:'enemy', label:'敌人', fields: [
+    {k:'enemyHpMul',        name:'敌人血量倍率',     min:0.1,max:10,step:0.1,desc:'×'},
+    {k:'enemySpeedMul',     name:'敌人速度倍率',     min:0.1,max:5, step:0.1,desc:'×'},
+    {k:'enemyBulletSpdMul', name:'敌弹速度倍率',     min:0.1,max:5, step:0.1,desc:'×'},
+    {k:'enemyFireRateMul',  name:'敌弹间隔倍率',     min:0.1,max:5, step:0.1,desc:'×间隔'},
+    {k:'spawnRateMul',      name:'刷怪间隔倍率',     min:0.1,max:5, step:0.1,desc:'×间隔'},
+    {k:'enemyCountMul',     name:'每波数量倍率',     min:0.1,max:5, step:0.1,desc:'×'},
+  ]},
+  { id:'boss', label:'Boss', fields: [
+    {k:'bossHpMul',       name:'Boss 血量倍率',  min:0.1,max:10,step:0.1,desc:'×'},
+    {k:'bossFireRateMul', name:'Boss 攻速倍率',  min:0.1,max:5, step:0.1,desc:'×间隔'},
+    {k:'bossBarMul',      name:'Boss 血条数倍率',min:0.1,max:5, step:0.1,desc:'×段数'},
+  ]},
+  { id:'progress', label:'进度/经济', fields: [
+    {k:'dropRateMul', name:'道具掉落倍率',   min:0,  max:5,  step:0.1, desc:'×'},
+    {k:'coinMul',     name:'金币倍率',       min:0,  max:20, step:0.1, desc:'×'},
+    {k:'diamondMul',  name:'钻石倍率',       min:0,  max:10, step:0.1, desc:'×'},
+    {k:'bossKillMul', name:'Boss 触发阈值倍率', min:0.1, max:5, step:0.1, desc:'×需击杀数'},
+  ]},
+];
+let consoleActiveTab = 'player';
+const consolePanelEl = document.getElementById('console-panel');
+const consoleTabsEl  = document.getElementById('console-tabs');
+const consoleBodyEl  = document.getElementById('console-body');
+
+function renderConsole() {
+  // Tabs
+  consoleTabsEl.innerHTML = '';
+  for (const t of CONSOLE_TABS) {
+    const el = document.createElement('div');
+    el.className = 'tab' + (t.id===consoleActiveTab?' active':'');
+    el.textContent = t.label;
+    el.addEventListener('click', ()=>{ consoleActiveTab = t.id; renderConsole(); });
+    consoleTabsEl.appendChild(el);
+  }
+  // Fields
+  consoleBodyEl.innerHTML = '';
+  const tab = CONSOLE_TABS.find(t=>t.id===consoleActiveTab);
+  const C = save.console || (save.console = defaultConsole());
+  for (const f of tab.fields) {
+    const row = document.createElement('div'); row.className='row';
+    const lab = document.createElement('label'); lab.textContent = f.name;
+    if (f.desc) {
+      const d = document.createElement('span'); d.className='desc'; d.textContent = f.desc;
+      lab.appendChild(d);
+    }
+    const inp = document.createElement('input');
+    inp.type = 'number';
+    inp.min = f.min; inp.max = f.max; inp.step = f.step;
+    inp.value = C[f.k];
+    inp.addEventListener('change', ()=>{
+      let v = parseFloat(inp.value);
+      if (isNaN(v)) v = defaultConsole()[f.k];
+      v = Math.max(f.min, Math.min(f.max, v));
+      C[f.k] = v;
+      inp.value = v;
+      writeSave();
+    });
+    row.appendChild(lab); row.appendChild(inp);
+    consoleBodyEl.appendChild(row);
+  }
+}
+function showConsolePanel(show) {
+  consolePanelEl.classList.toggle('show', !!show);
+  if (show) renderConsole();
+}
+document.getElementById('console-back').addEventListener('click', ()=>{
+  showConsolePanel(false);
+  screen = 'leaderboard';
+});
+document.getElementById('console-reset').addEventListener('click', ()=>{
+  if (confirm('重置所有控制台数据为默认?')) {
+    save.console = defaultConsole();
+    writeSave();
+    renderConsole();
+  }
+});
 
 // ─── PIXEL RESOLUTION ────────────────────────────────────────────────────────
 const PIXEL_SCALE_MIN = 0.5, PIXEL_SCALE_MAX = 3.0;
