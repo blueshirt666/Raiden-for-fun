@@ -157,15 +157,24 @@ const BG_SKINS = [
 const ANIME_BG_TYPES = ['animeSakura','animeStar','animeMoon','animeSnow','animeFlame','animeOcean','animeNeon','animeDusk','animeRainbow','animeGoddess'];
 
 // ─── SAVE DATA ───────────────────────────────────────────────────────────────
+// Tier multipliers for stage difficulty (must be defined before loadSave runs)
+const TIER_MUL = { novice:1.0, veteran:1.55, hell:2.4 };
+function currentTier() {
+  return (save && save.tier && TIER_MUL[save.tier]) ? save.tier : 'novice';
+}
 function defaultSave() {
   return {
     coins: 500, diamonds: 2,
     planes: Array(20).fill(false).map((_,i)=>i===0),
     bgs: Array(BG_SKINS.length).fill(false).map((_,i)=>i===0),
     selP1: 0, selP2: 1, selBG: 0,
-    stageProgress: 1,
+    // Per-tier stage progress (novice unlocked by default)
+    stageProgress: { novice:1, veteran:0, hell:0 },
+    medals: { novice:false, veteran:false, hell:false },
+    tier: 'novice',
     moveSensX: 1.0, moveSensY: 1.0,
-    endlessState: null,   // {level,score,killCount,sessionCoins,sessionDiamonds,p,wingmen}
+    endlessState: null,
+    endlessLeaderboard: [],   // [{score, level, durationSec, dateMs}]
   };
 }
 let save = defaultSave();
@@ -184,10 +193,28 @@ function loadSave() {
       if (typeof d.selP1 === 'number') save.selP1 = d.selP1;
       if (typeof d.selP2 === 'number') save.selP2 = d.selP2;
       if (typeof d.selBG === 'number' && d.selBG < BG_SKINS.length) save.selBG = d.selBG;
-      if (typeof d.stageProgress === 'number') save.stageProgress = d.stageProgress;
+      // stageProgress: migrate legacy number → {novice,veteran,hell}
+      if (typeof d.stageProgress === 'number') {
+        save.stageProgress = { novice: Math.max(1, d.stageProgress), veteran:0, hell:0 };
+      } else if (d.stageProgress && typeof d.stageProgress === 'object') {
+        save.stageProgress = {
+          novice: d.stageProgress.novice || 1,
+          veteran: d.stageProgress.veteran || 0,
+          hell: d.stageProgress.hell || 0,
+        };
+      }
+      if (d.medals && typeof d.medals === 'object') {
+        save.medals = {
+          novice: !!d.medals.novice,
+          veteran: !!d.medals.veteran,
+          hell: !!d.medals.hell,
+        };
+      }
+      if (typeof d.tier === 'string' && TIER_MUL[d.tier]) save.tier = d.tier;
       if (typeof d.moveSensX === 'number') save.moveSensX = d.moveSensX;
       if (typeof d.moveSensY === 'number') save.moveSensY = d.moveSensY;
       if (d.endlessState && typeof d.endlessState === 'object') save.endlessState = d.endlessState;
+      if (Array.isArray(d.endlessLeaderboard)) save.endlessLeaderboard = d.endlessLeaderboard.slice(0,10);
     }
   } catch(e) {}
 }
@@ -743,8 +770,8 @@ function triggerShake(mag, frames) {
 }
 let gameSpeed = 1; // 0.5 / 1 / 2 / 3
 let speedAccum = 0;
-// Stage mode beatable thresholds (10 levels). Endless reuses last value.
-const BOSS_KILL_THRESHOLD = [12, 16, 22, 28, 34, 40, 46, 52, 58, 65];
+// Stage mode beatable thresholds (12 levels). Endless reuses last value.
+const BOSS_KILL_THRESHOLD = [10, 14, 18, 22, 26, 30, 34, 38, 42, 46, 52, 60];
 
 // ─── UTILITY ─────────────────────────────────────────────────────────────────
 function rnd(min, max) { return Math.random()*(max-min)+min; }
@@ -1627,6 +1654,19 @@ function drawEnemyBullets() {
     rg.addColorStop(0,'#ffaa44'); rg.addColorStop(.4,b.color||'#ff4400'); rg.addColorStop(1,(b.color||'#ff4400')+'00');
     cx.fillStyle=rg; cx.beginPath(); cx.arc(b.px,b.py,7,0,Math.PI*2); cx.fill();
     cx.fillStyle='#ffeeaa'; cx.beginPath(); cx.arc(b.px,b.py,2,0,Math.PI*2); cx.fill();
+    if (b.cancelable) {
+      // Pulsing white outline marks "shootable" hazard
+      cx.strokeStyle = `rgba(255,255,255,${0.45+Math.sin(frame*0.2)*0.35})`;
+      cx.lineWidth = 1.5;
+      cx.beginPath(); cx.arc(b.px, b.py, 9, 0, Math.PI*2); cx.stroke();
+      if (b.kind === 'mine') {
+        cx.strokeStyle = '#ffffff'; cx.lineWidth = 1;
+        cx.beginPath();
+        cx.moveTo(b.px-3, b.py); cx.lineTo(b.px+3, b.py);
+        cx.moveTo(b.px, b.py-3); cx.lineTo(b.px, b.py+3);
+        cx.stroke();
+      }
+    }
   }
 }
 
@@ -1742,14 +1782,14 @@ function updateEnemy(e) {
       if(e.moveTimer%((140*fireMul)|0)===90) fireEB(e,0,4.5);
       break;
     case 'mortar':
-      // Lobs slow arcing shells
+      // Lobs slow arcing shells — can be shot down (cancelable)
       e.y+=e.speed*0.6;
       if(e.moveTimer%((90*fireMul)|0)===0)
         for(let i=-1;i<=1;i++) {
           const t=players.find(p=>!p.dead);
           const tx=t?t.x:W/2;
           const dx=(tx-e.x)/60;
-          enemyBullets.push({x:e.x,y:e.y,px:e.x|0,py:e.y|0,vx:dx+i*0.6,vy:1.5,alive:true,color:'#cc8855'});
+          enemyBullets.push(mkEBSpecial(e.x, e.y, dx+i*0.6, 1.5, '#cc8855', 2, 'shell'));
         }
       break;
     case 'swarmlet':
@@ -1784,8 +1824,8 @@ function updateEnemy(e) {
     case 'minelayer':
       e.y+=e.speed*0.6;
       if(e.moveTimer%((70*fireMul)|0)===0) {
-        // Drop "mine" bullets that fall slowly
-        enemyBullets.push({x:e.x,y:e.y+10,px:e.x|0,py:(e.y+10)|0,vx:rnd(-.5,.5),vy:0.9,alive:true,color:'#ffff66'});
+        // Drop slow-falling MINES — can be shot down by player
+        enemyBullets.push(mkEBSpecial(e.x, e.y+10, rnd(-.5,.5), 0.9, '#ffff66', 4, 'mine'));
       }
       break;
     case 'jet':
@@ -1814,6 +1854,11 @@ function fireEB(e, dvx, dvy) {
   let vx=dvx*sm, vy=dvy*sm;
   if(t){const dx=t.x-e.x,dy=t.y-e.y,d=Math.sqrt(dx*dx+dy*dy)||1;vx+=dx/d*(1+sm*0.8);vy+=dy/d*(1+sm*0.8);}
   enemyBullets.push({x:e.x,y:e.y+e.h/2,px:e.x|0,py:(e.y+e.h/2)|0,vx,vy,alive:true,color:'#ff4400'});
+}
+// Cancelable enemy bullet (mines / homing missiles): can be shot down by player
+function mkEBSpecial(x, y, vx, vy, color, hp, kind) {
+  return {x, y, px:x|0, py:y|0, vx, vy, alive:true,
+          color: color || '#ffff66', cancelable:true, hp: hp||3, kind: kind||'mine'};
 }
 
 function drawEnemy(e) {
@@ -2110,18 +2155,20 @@ function drawEnemy(e) {
   }
 }
 
-// ─── BOSS (10 unique designs + attack patterns) ──────────────────────────────
+// ─── BOSS (12 zodiac constellations) ─────────────────────────────────────────
 const BOSS_DEFS = [
-  {name:'凤凰女王',  color:'#ff4422', acc:'#ffcc00', hp:1300},
-  {name:'漩涡之主',  color:'#aa44ff', acc:'#ff88ff', hp:1500},
-  {name:'狙击霸主',  color:'#ff66ff', acc:'#ffffff', hp:1700},
-  {name:'蜂群母舰',  color:'#cc44ff', acc:'#ffaaff', hp:1900},
-  {name:'镜像幽魂',  color:'#88ddff', acc:'#ffffff', hp:2100},
-  {name:'雷霆君王',  color:'#ffff44', acc:'#ffffff', hp:2300},
-  {name:'冰之女皇',  color:'#aaeeff', acc:'#ffffff', hp:2500},
-  {name:'等离子领主',color:'#ff00cc', acc:'#ffff00', hp:2700},
-  {name:'龙卷魔王',  color:'#ff8800', acc:'#ffff00', hp:2900},
-  {name:'终极要塞',  color:'#ff2244', acc:'#ffaa44', hp:3500},
+  {name:'白羊·阿瑞斯',  color:'#ff8844', acc:'#ffeecc', hp:1100},
+  {name:'金牛·陶罗斯',  color:'#aa6633', acc:'#ffcc88', hp:1300},
+  {name:'双子·杰米尼',  color:'#88ccff', acc:'#ffff88', hp:1500},
+  {name:'巨蟹·坎瑟尔',  color:'#ff66cc', acc:'#ffccff', hp:1700},
+  {name:'狮子·利奥',    color:'#ffcc44', acc:'#ff8800', hp:1900},
+  {name:'处女·维戈',    color:'#aaffaa', acc:'#ffffff', hp:2100},
+  {name:'天秤·利布拉',  color:'#ddaaff', acc:'#ffeeff', hp:2300},
+  {name:'天蝎·斯科皮奥',color:'#cc2244', acc:'#ff4488', hp:2500},
+  {name:'射手·萨吉塔',  color:'#ff8866', acc:'#ffcc44', hp:2700},
+  {name:'摩羯·卡普',    color:'#446688', acc:'#88ccff', hp:2900},
+  {name:'水瓶·阿夸',    color:'#44ccff', acc:'#aaffff', hp:3100},
+  {name:'双鱼·皮西斯',  color:'#ff66aa', acc:'#aaffff', hp:3500},
 ];
 
 function bossIndex() {
@@ -2154,10 +2201,17 @@ function updateBoss() {
   if(!boss||!boss.alive) return;
   boss.moveTimer++;
   if(!boss.entryDone){boss.y+=2;if(boss.y>=80){boss.entryDone=true;boss.y=80;}boss.px=boss.x|0;boss.py=boss.y|0;return;}
-  // Phase tracking
+  // Phase tracking — 70% / 40% / 10% (rage)
   const hr=boss.hp/boss.maxHp;
-  if(hr<0.5&&boss.phase===0)boss.phase=1;
-  if(hr<0.25&&boss.phase===1)boss.phase=2;
+  if(hr<0.7&&boss.phase===0){boss.phase=1; addFT('PHASE 2', boss.x, boss.y-30, '#ffaa00'); triggerShake(8,20);}
+  if(hr<0.4&&boss.phase===1){boss.phase=2; addFT('PHASE 3', boss.x, boss.y-30, '#ff4400'); triggerShake(12,24);}
+  if(hr<0.1&&boss.phase===2){
+    boss.phase=3;
+    addFT('★  狂  怒  ★', W/2, H/2-40, '#ff0000');
+    addFT(boss.name + ' 进入狂怒形态!', W/2, H/2-15, '#ffff44');
+    triggerShake(22, 60);
+    bombFlash = 14;
+  }
   // Per-boss movement + attacks
   bossLogic(boss);
   // Clamp
@@ -2168,7 +2222,17 @@ function updateBoss() {
 // Boss-specific behavior table
 function bossLogic(b) {
   const phase=b.phase, mt=b.moveTimer;
-  const fireMul = endlessMode ? 1.4 : 1.0;
+  // Rage (phase>=3) → fire 2.5× faster, plus periodic radial burst
+  const rageMul = phase>=3 ? 0.4 : 1.0;
+  const fireMul = (endlessMode ? 1.4 : 1.0) * rageMul;
+  // Rage radial burst — every 35 frames in rage mode
+  if (phase >= 3 && mt % 35 === 0) {
+    for (let a=0;a<18;a++) {
+      const ag = (a/18)*Math.PI*2;
+      enemyBullets.push({x:b.x,y:b.y,px:b.x|0,py:b.y|0,
+        vx:Math.cos(ag)*3.4, vy:Math.sin(ag)*3.4, alive:true, color:'#ff0033'});
+    }
+  }
   switch(b.bossType) {
     case 0: { // 凤凰: 7-spread + bursts that intensify
       b.x += b.vx; if(b.x<70||b.x>W-70) b.vx*=-1;
@@ -2356,147 +2420,309 @@ function drawBossShape(b) {
   const og=cx.createRadialGradient(0,0,20,0,0,70);
   og.addColorStop(0,b.color+'88'); og.addColorStop(1,b.color+'00');
   cx.fillStyle=og; cx.beginPath(); cx.arc(0,0,70,0,Math.PI*2); cx.fill();
+  // Rage red aura
+  if (b.phase>=3) {
+    const rg=cx.createRadialGradient(0,0,30,0,0,100);
+    rg.addColorStop(0,'rgba(255,0,0,0.4)'); rg.addColorStop(1,'rgba(255,0,0,0)');
+    cx.fillStyle=rg; cx.beginPath(); cx.arc(0,0,100,0,Math.PI*2); cx.fill();
+  }
   switch(b.bossType) {
-    case 0: { // Phoenix wings
-      // Flaming wings
-      cx.fillStyle = b.color+'aa';
-      cx.beginPath();
-      cx.moveTo(-10,-10); cx.lineTo(-90,-30+Math.sin(t*0.1)*8); cx.lineTo(-70,15); cx.lineTo(-20,5); cx.closePath();
-      cx.fill();
-      cx.beginPath();
-      cx.moveTo(10,-10); cx.lineTo(90,-30+Math.sin(t*0.1+1)*8); cx.lineTo(70,15); cx.lineTo(20,5); cx.closePath();
-      cx.fill();
+    case 0: { // 白羊·Aries — ram with curling horns
       cx.fillStyle=b.color;
-      cx.beginPath(); cx.ellipse(0,0,28,42,0,0,Math.PI*2); cx.fill();
-      cx.fillStyle=b.acc;
-      cx.beginPath(); cx.moveTo(0,-46); cx.lineTo(-10,-30); cx.lineTo(10,-30); cx.closePath(); cx.fill();
-      cx.fillStyle='rgba(255,255,200,.7)'; cx.beginPath(); cx.arc(0,-10,8,0,Math.PI*2); cx.fill();
-      break;
-    }
-    case 1: { // Vortex (spinning core)
-      cx.save(); cx.rotate(t*0.04);
-      for(let i=0;i<6;i++) {
-        cx.fillStyle = i%2===0?b.color:b.acc;
-        cx.beginPath();
-        const a1=(i/6)*Math.PI*2, a2=((i+0.7)/6)*Math.PI*2;
-        cx.moveTo(0,0); cx.arc(0,0,46,a1,a2); cx.closePath(); cx.fill();
-      }
-      cx.restore();
-      cx.fillStyle='#000022'; cx.beginPath(); cx.arc(0,0,16,0,Math.PI*2); cx.fill();
-      cx.fillStyle=b.acc; cx.beginPath(); cx.arc(0,0,8,0,Math.PI*2); cx.fill();
-      break;
-    }
-    case 2: { // Sniper turret
-      cx.fillStyle = b.color;
+      cx.beginPath(); cx.ellipse(0,5,32,38,0,0,Math.PI*2); cx.fill();
+      // Curling horns (spirals)
+      cx.strokeStyle=b.acc; cx.lineWidth=4;
       cx.beginPath();
-      for(let i=0;i<8;i++){const ag=i/8*Math.PI*2;cx.lineTo(Math.cos(ag)*44,Math.sin(ag)*44);}
-      cx.closePath(); cx.fill();
-      cx.fillStyle='#220022';
-      // Barrel pointing toward target angle
-      const ang=b.extra2||Math.PI/2;
-      cx.save(); cx.rotate(ang);
-      cx.fillRect(0,-4,55,8);
-      cx.restore();
-      cx.fillStyle=b.acc; cx.beginPath(); cx.arc(0,0,10,0,Math.PI*2); cx.fill();
-      // Warning ray
-      if (t - (b.extra||-99) < 15) {
-        cx.strokeStyle='rgba(255,80,255,.6)';
-        cx.lineWidth=1;
-        cx.save(); cx.rotate(ang);
-        cx.beginPath(); cx.moveTo(0,0); cx.lineTo(800,0); cx.stroke();
+      cx.arc(-22,-30,12,Math.PI*0.2,Math.PI*1.4); cx.stroke();
+      cx.beginPath();
+      cx.arc( 22,-30,12,-Math.PI*0.4,Math.PI*0.8); cx.stroke();
+      // Eyes
+      cx.fillStyle='#fff';
+      cx.beginPath(); cx.arc(-9,-2,3,0,Math.PI*2); cx.fill();
+      cx.beginPath(); cx.arc( 9,-2,3,0,Math.PI*2); cx.fill();
+      cx.fillStyle='#000'; cx.beginPath(); cx.arc(-9,-2,1.5,0,Math.PI*2); cx.fill();
+      cx.beginPath(); cx.arc( 9,-2,1.5,0,Math.PI*2); cx.fill();
+      // Snout
+      cx.fillStyle='#553311';
+      cx.beginPath(); cx.ellipse(0,18,8,6,0,0,Math.PI*2); cx.fill();
+      break;
+    }
+    case 1: { // 金牛·Taurus — bull head + sharp horns
+      cx.fillStyle=b.color;
+      cx.beginPath(); cx.ellipse(0,5,38,34,0,0,Math.PI*2); cx.fill();
+      // Two big curving horns
+      cx.fillStyle=b.acc;
+      cx.beginPath(); cx.moveTo(-30,-12); cx.lineTo(-58,-32); cx.lineTo(-22,-22); cx.closePath(); cx.fill();
+      cx.beginPath(); cx.moveTo( 30,-12); cx.lineTo( 58,-32); cx.lineTo( 22,-22); cx.closePath(); cx.fill();
+      // Glowing red eyes
+      cx.fillStyle='#ff2222';
+      cx.beginPath(); cx.arc(-12,0,4,0,Math.PI*2); cx.fill();
+      cx.beginPath(); cx.arc( 12,0,4,0,Math.PI*2); cx.fill();
+      // Nose ring
+      cx.strokeStyle='#ffcc44'; cx.lineWidth=2;
+      cx.beginPath(); cx.arc(0,22,5,0,Math.PI*2); cx.stroke();
+      break;
+    }
+    case 2: { // 双子·Gemini — twin silhouettes
+      const sway = Math.sin(t*0.06)*4;
+      for (const sx of [-1,1]) {
+        cx.save(); cx.translate(sx*22 + sx*sway, 0);
+        cx.fillStyle=b.color;
+        cx.beginPath(); cx.ellipse(0,-22,12,14,0,0,Math.PI*2); cx.fill();   // head
+        cx.beginPath(); cx.moveTo(0,-10); cx.lineTo(-14,30); cx.lineTo(14,30); cx.closePath(); cx.fill(); // body
+        cx.fillStyle=b.acc;
+        cx.beginPath(); cx.arc(0,-22,5,0,Math.PI*2); cx.fill();   // face glow
         cx.restore();
       }
-      break;
-    }
-    case 3: { // Hive mother
-      cx.fillStyle = b.color;
-      cx.beginPath();
-      for(let i=0;i<6;i++){const ag=i/6*Math.PI*2-Math.PI/2;cx.lineTo(Math.cos(ag)*54,Math.sin(ag)*54);}
-      cx.closePath(); cx.fill();
-      cx.strokeStyle = b.acc; cx.lineWidth=2;
-      for(let r=0;r<6;r++){
-        const ag=r/6*Math.PI*2;
-        cx.beginPath();
-        for(let i=0;i<6;i++){const a2=i/6*Math.PI*2; cx.lineTo(Math.cos(ag)*22+Math.cos(a2)*12, Math.sin(ag)*22+Math.sin(a2)*12);}
-        cx.closePath(); cx.stroke();
-      }
-      cx.fillStyle='rgba(255,200,255,.8)';
-      cx.beginPath(); cx.arc(0,0,8,0,Math.PI*2); cx.fill();
-      break;
-    }
-    case 4: { // Mirror — two halves drift
-      const split = Math.sin(t*0.05)*6;
-      cx.fillStyle = b.color;
-      cx.beginPath(); cx.moveTo(-50-split,-30); cx.lineTo(-5-split,-30); cx.lineTo(-5-split,30); cx.lineTo(-50-split,30); cx.closePath(); cx.fill();
-      cx.beginPath(); cx.moveTo(5+split,-30); cx.lineTo(50+split,-30); cx.lineTo(50+split,30); cx.lineTo(5+split,30); cx.closePath(); cx.fill();
-      cx.fillStyle = b.acc;
-      cx.fillRect(-30-split,-2,8,4); cx.fillRect(22+split,-2,8,4);
-      cx.fillStyle='#fff'; cx.beginPath(); cx.arc(-25-split,0,4,0,Math.PI*2); cx.fill(); cx.beginPath(); cx.arc(25+split,0,4,0,Math.PI*2); cx.fill();
-      break;
-    }
-    case 5: { // Thunder king
-      cx.fillStyle = b.color;
-      cx.beginPath();
-      cx.moveTo(0,-50); cx.lineTo(-30,-10); cx.lineTo(-50,30); cx.lineTo(0,20); cx.lineTo(50,30); cx.lineTo(30,-10); cx.closePath();
-      cx.fill();
+      // Linking energy beam between twins
       cx.strokeStyle=b.acc; cx.lineWidth=2;
-      cx.beginPath(); cx.moveTo(-15,-30); cx.lineTo(0,-5); cx.lineTo(-8,5); cx.lineTo(15,30); cx.stroke();
-      cx.fillStyle='#fff';
-      cx.beginPath(); cx.arc(0,0,8,0,Math.PI*2); cx.fill();
+      cx.beginPath(); cx.moveTo(-20,0); cx.lineTo(20,0); cx.stroke();
       break;
     }
-    case 6: { // Ice queen — crown
+    case 3: { // 巨蟹·Cancer — body with two giant pincers
       cx.fillStyle=b.color;
-      cx.beginPath(); cx.moveTo(-50,30); cx.lineTo(-50,-10); cx.lineTo(-35,10); cx.lineTo(-20,-20); cx.lineTo(0,5); cx.lineTo(20,-20); cx.lineTo(35,10); cx.lineTo(50,-10); cx.lineTo(50,30); cx.closePath(); cx.fill();
+      cx.beginPath(); cx.ellipse(0,8,42,28,0,0,Math.PI*2); cx.fill();
+      // Pincers on each side (open/close animation)
+      const pinch = Math.abs(Math.sin(t*0.07))*8;
+      for (const sx of [-1,1]) {
+        cx.save(); cx.translate(sx*46, -10);
+        cx.fillStyle=b.color;
+        // upper claw
+        cx.beginPath(); cx.moveTo(0,0); cx.lineTo(sx*22,-pinch); cx.lineTo(sx*32,-3); cx.lineTo(sx*16,8); cx.closePath(); cx.fill();
+        // lower claw
+        cx.beginPath(); cx.moveTo(0,4); cx.lineTo(sx*22, pinch+10); cx.lineTo(sx*32, 12); cx.lineTo(sx*16,12); cx.closePath(); cx.fill();
+        cx.restore();
+      }
+      // Eye stalks
       cx.fillStyle=b.acc;
-      cx.beginPath(); cx.arc(0,15,12,0,Math.PI*2); cx.fill();
-      cx.strokeStyle='#fff';
-      cx.lineWidth=1.5;
-      cx.beginPath(); cx.moveTo(0,5); cx.lineTo(0,-25); cx.stroke();
+      cx.beginPath(); cx.arc(-10,-12,4,0,Math.PI*2); cx.fill();
+      cx.beginPath(); cx.arc( 10,-12,4,0,Math.PI*2); cx.fill();
+      cx.strokeStyle=b.color; cx.lineWidth=2;
+      cx.beginPath(); cx.moveTo(-10,-12); cx.lineTo(-12,-2); cx.stroke();
+      cx.beginPath(); cx.moveTo( 10,-12); cx.lineTo( 12,-2); cx.stroke();
       break;
     }
-    case 7: { // Plasma warlord
-      cx.fillStyle = b.color;
-      cx.beginPath();
-      cx.moveTo(0,-50); cx.lineTo(45,0); cx.lineTo(20,40); cx.lineTo(-20,40); cx.lineTo(-45,0); cx.closePath();
-      cx.fill();
-      cx.fillStyle = b.acc;
-      cx.beginPath(); cx.arc(0,0,16+Math.sin(t*0.2)*4,0,Math.PI*2); cx.fill();
-      cx.fillStyle='#fff';
-      cx.beginPath(); cx.arc(0,0,7,0,Math.PI*2); cx.fill();
-      break;
-    }
-    case 8: { // Tornado king — rotating arms
-      cx.save(); cx.rotate(t*0.06);
+    case 4: { // 狮子·Leo — lion head with mane
+      // Mane
+      cx.fillStyle=b.acc;
+      for (let i=0;i<14;i++) {
+        const ang = (i/14)*Math.PI*2;
+        const r = 44 + Math.sin(t*0.1+i)*4;
+        cx.beginPath();
+        cx.moveTo(Math.cos(ang)*22, Math.sin(ang)*22);
+        cx.lineTo(Math.cos(ang+0.1)*r, Math.sin(ang+0.1)*r);
+        cx.lineTo(Math.cos(ang-0.1)*r, Math.sin(ang-0.1)*r);
+        cx.closePath(); cx.fill();
+      }
+      // Face
       cx.fillStyle=b.color;
-      for(let a=0;a<3;a++) {
-        cx.save(); cx.rotate((a/3)*Math.PI*2);
-        cx.beginPath(); cx.moveTo(0,0); cx.lineTo(60,-12); cx.lineTo(50,12); cx.closePath(); cx.fill();
+      cx.beginPath(); cx.arc(0,0,28,0,Math.PI*2); cx.fill();
+      // Eyes
+      cx.fillStyle='#fff';
+      cx.beginPath(); cx.arc(-9,-5,4,0,Math.PI*2); cx.fill();
+      cx.beginPath(); cx.arc( 9,-5,4,0,Math.PI*2); cx.fill();
+      cx.fillStyle='#000';
+      cx.beginPath(); cx.arc(-9,-5,2,0,Math.PI*2); cx.fill();
+      cx.beginPath(); cx.arc( 9,-5,2,0,Math.PI*2); cx.fill();
+      // Snarling mouth
+      cx.fillStyle='#220011';
+      cx.beginPath(); cx.ellipse(0,12,10,6,0,0,Math.PI); cx.fill();
+      // Fangs
+      cx.fillStyle='#fff';
+      cx.beginPath(); cx.moveTo(-6,12); cx.lineTo(-4,18); cx.lineTo(-2,12); cx.closePath(); cx.fill();
+      cx.beginPath(); cx.moveTo( 6,12); cx.lineTo( 4,18); cx.lineTo( 2,12); cx.closePath(); cx.fill();
+      break;
+    }
+    case 5: { // 处女·Virgo — maiden silhouette holding a star
+      cx.fillStyle=b.color;
+      // Robe
+      cx.beginPath(); cx.moveTo(-30,40); cx.lineTo(-12,0); cx.lineTo(12,0); cx.lineTo(30,40); cx.closePath(); cx.fill();
+      // Head
+      cx.fillStyle=b.acc;
+      cx.beginPath(); cx.arc(0,-18,15,0,Math.PI*2); cx.fill();
+      // Halo
+      cx.strokeStyle=b.acc; cx.lineWidth=2;
+      cx.beginPath(); cx.ellipse(0,-22,22,8,0,0,Math.PI*2); cx.stroke();
+      // Star in hand
+      cx.fillStyle='#ffff66';
+      const hx = -22+Math.sin(t*0.08)*2, hy = 8;
+      cx.beginPath();
+      for (let i=0;i<10;i++) {
+        const a = (i/10)*Math.PI*2 - Math.PI/2;
+        const r = i%2===0 ? 8 : 3.5;
+        const px = hx+Math.cos(a)*r, py = hy+Math.sin(a)*r;
+        i===0?cx.moveTo(px,py):cx.lineTo(px,py);
+      }
+      cx.closePath(); cx.fill();
+      // Eyes
+      cx.fillStyle='#000';
+      cx.beginPath(); cx.arc(-5,-18,1.5,0,Math.PI*2); cx.fill();
+      cx.beginPath(); cx.arc( 5,-18,1.5,0,Math.PI*2); cx.fill();
+      break;
+    }
+    case 6: { // 天秤·Libra — beam scales
+      // Vertical pillar
+      cx.fillStyle=b.color;
+      cx.fillRect(-3,-20,6,55);
+      // Horizontal beam (tilts based on phase)
+      const tilt = Math.sin(t*0.05)*0.15 + (b.phase*0.05);
+      cx.save(); cx.rotate(tilt);
+      cx.fillRect(-58,-22,116,5);
+      // Two pans
+      for (const sx of [-50,50]) {
+        cx.fillStyle=b.acc;
+        cx.beginPath(); cx.arc(sx,-12,4,0,Math.PI*2); cx.fill();
+        cx.strokeStyle=b.color; cx.lineWidth=2;
+        cx.beginPath(); cx.moveTo(sx,-12); cx.lineTo(sx-12,8); cx.lineTo(sx+12,8); cx.closePath(); cx.stroke();
+        cx.fillStyle=b.color+'66';
+        cx.fillRect(sx-12,8,24,3);
+      }
+      cx.restore();
+      // Pivot gem
+      cx.fillStyle='#fff';
+      cx.beginPath(); cx.arc(0,-20,5,0,Math.PI*2); cx.fill();
+      break;
+    }
+    case 7: { // 天蝎·Scorpio — segmented body + curling tail with stinger
+      cx.fillStyle=b.color;
+      // Body segments
+      for (let i=0;i<5;i++) {
+        cx.beginPath();
+        cx.arc(-30+i*15, 8, 12-i*0.5, 0, Math.PI*2);
+        cx.fill();
+      }
+      // Pincers in front
+      for (const sx of [-1,1]) {
+        cx.save(); cx.translate(sx*-44, 8);
+        cx.fillStyle=b.color;
+        cx.beginPath(); cx.moveTo(0,0); cx.lineTo(sx*-12,-8); cx.lineTo(sx*-18,0); cx.lineTo(sx*-10,6); cx.closePath(); cx.fill();
+        cx.beginPath(); cx.moveTo(0,4); cx.lineTo(sx*-12, 12); cx.lineTo(sx*-18, 4); cx.closePath(); cx.fill();
+        cx.restore();
+      }
+      // Curling tail (multiple segments)
+      const wig = Math.sin(t*0.1)*8;
+      const segs = [
+        [40, 0], [56, -10], [62, -28], [54, -44], [38, -52]
+      ];
+      cx.fillStyle=b.color;
+      for (let i=0;i<segs.length;i++) {
+        const [sx,sy] = segs[i];
+        cx.beginPath(); cx.arc(sx + (i*wig*0.05), sy, 8-i*1, 0, Math.PI*2); cx.fill();
+      }
+      // Stinger
+      cx.fillStyle=b.acc;
+      cx.beginPath();
+      cx.moveTo(38, -52); cx.lineTo(28, -68); cx.lineTo(46, -56); cx.closePath(); cx.fill();
+      // Eyes
+      cx.fillStyle='#fff';
+      cx.beginPath(); cx.arc(-32,2,2,0,Math.PI*2); cx.fill();
+      cx.beginPath(); cx.arc(-26,2,2,0,Math.PI*2); cx.fill();
+      break;
+    }
+    case 8: { // 射手·Sagittarius — centaur with bow
+      cx.fillStyle=b.color;
+      // Horse body (lower)
+      cx.beginPath(); cx.ellipse(0,18,40,18,0,0,Math.PI*2); cx.fill();
+      // Legs
+      for (const lx of [-26,-10,10,26]) {
+        cx.fillRect(lx-2, 30, 4, 14);
+      }
+      // Human torso (upper)
+      cx.fillStyle=b.acc;
+      cx.beginPath(); cx.moveTo(-10,8); cx.lineTo(-8,-12); cx.lineTo(8,-12); cx.lineTo(10,8); cx.closePath(); cx.fill();
+      // Head
+      cx.beginPath(); cx.arc(0,-20,9,0,Math.PI*2); cx.fill();
+      // Bow
+      cx.strokeStyle=b.acc; cx.lineWidth=2;
+      cx.beginPath();
+      cx.arc(20,-8, 16, -Math.PI/2-0.6, Math.PI/2+0.6);
+      cx.stroke();
+      // Arrow
+      const aimY = Math.sin(t*0.05)*4;
+      cx.strokeStyle='#ffff66'; cx.lineWidth=2;
+      cx.beginPath(); cx.moveTo(20,-8+aimY); cx.lineTo(60,-8+aimY); cx.stroke();
+      cx.fillStyle='#ffff66';
+      cx.beginPath(); cx.moveTo(60,-8+aimY); cx.lineTo(56,-12+aimY); cx.lineTo(56,-4+aimY); cx.closePath(); cx.fill();
+      break;
+    }
+    case 9: { // 摩羯·Capricorn — goat head + fish tail
+      cx.fillStyle=b.color;
+      // Goat head
+      cx.beginPath(); cx.ellipse(-10,-10,22,20,0,0,Math.PI*2); cx.fill();
+      // Horns curling back
+      cx.strokeStyle=b.acc; cx.lineWidth=4;
+      cx.beginPath(); cx.arc(-22,-30,10,Math.PI*0.3,Math.PI*1.3); cx.stroke();
+      cx.beginPath(); cx.arc(  4,-30,10,-Math.PI*0.3,Math.PI*0.7); cx.stroke();
+      // Fish tail (right side)
+      cx.fillStyle=b.acc;
+      cx.beginPath(); cx.moveTo(8, 0); cx.bezierCurveTo(40, 5, 50, 30, 30, 38);
+      cx.bezierCurveTo(50, 30, 60, 25, 56, 0);
+      cx.bezierCurveTo(50, 16, 30, 12, 8, 0);
+      cx.closePath(); cx.fill();
+      // Tail fin
+      cx.beginPath(); cx.moveTo(56, 0); cx.lineTo(70, -10); cx.lineTo(64, 8); cx.closePath(); cx.fill();
+      cx.beginPath(); cx.moveTo(30, 38); cx.lineTo(20, 50); cx.lineTo(40, 44); cx.closePath(); cx.fill();
+      // Eye
+      cx.fillStyle='#fff';
+      cx.beginPath(); cx.arc(-14,-12,3,0,Math.PI*2); cx.fill();
+      cx.fillStyle='#000';
+      cx.beginPath(); cx.arc(-14,-12,1.4,0,Math.PI*2); cx.fill();
+      break;
+    }
+    case 10: { // 水瓶·Aquarius — humanoid with jar pouring water
+      cx.fillStyle=b.color;
+      // Robe
+      cx.beginPath(); cx.moveTo(-26,38); cx.lineTo(-10,-4); cx.lineTo(10,-4); cx.lineTo(26,38); cx.closePath(); cx.fill();
+      // Head
+      cx.fillStyle=b.acc;
+      cx.beginPath(); cx.arc(0,-20,12,0,Math.PI*2); cx.fill();
+      // Jar (right side)
+      cx.fillStyle=b.color;
+      cx.beginPath(); cx.roundRect(20,-5,18,22,4); cx.fill();
+      cx.fillStyle=b.acc;
+      cx.fillRect(22,-9,14,4);
+      // Pouring water (animated streams)
+      cx.strokeStyle='#88ccff';
+      cx.lineWidth=2;
+      for (let i=0;i<3;i++) {
+        const off = (t*4 + i*30) % 60;
+        cx.beginPath();
+        cx.moveTo(38, 17 + off*0.4);
+        cx.lineTo(45, 17 + off*0.45);
+        cx.stroke();
+      }
+      // Wave drops
+      cx.fillStyle='#aaeeff';
+      for (let i=0;i<4;i++) {
+        const wy = 30 + ((t*3 + i*20) % 50);
+        cx.beginPath(); cx.arc(40+i*4, wy, 2, 0, Math.PI*2); cx.fill();
+      }
+      break;
+    }
+    case 11: { // 双鱼·Pisces — two fish in yin-yang
+      cx.save(); cx.rotate(t*0.03);
+      // Fish 1
+      for (const dir of [1,-1]) {
+        cx.save(); cx.rotate(dir>0?0:Math.PI);
+        cx.fillStyle = dir>0 ? b.color : b.acc;
+        cx.beginPath();
+        cx.ellipse(20, 0, 22, 10, 0, 0, Math.PI*2);
+        cx.fill();
+        // Tail
+        cx.beginPath();
+        cx.moveTo(40, 0); cx.lineTo(52, -10); cx.lineTo(52, 10); cx.closePath();
+        cx.fill();
+        // Eye
+        cx.fillStyle='#fff';
+        cx.beginPath(); cx.arc(8, -2, 2.5, 0, Math.PI*2); cx.fill();
+        cx.fillStyle='#000';
+        cx.beginPath(); cx.arc(8, -2, 1, 0, Math.PI*2); cx.fill();
         cx.restore();
       }
       cx.restore();
-      cx.fillStyle=b.acc; cx.beginPath(); cx.arc(0,0,18,0,Math.PI*2); cx.fill();
-      cx.fillStyle='#fff'; cx.beginPath(); cx.arc(0,0,8,0,Math.PI*2); cx.fill();
-      break;
-    }
-    case 9: { // Mega fortress — heavy multi-segment
-      // Hull
-      cx.fillStyle=b.color;
-      cx.beginPath(); cx.roundRect(-60,-40,120,75,8); cx.fill();
-      cx.strokeStyle='#330011'; cx.lineWidth=2; cx.stroke();
-      // Turrets
-      cx.fillStyle='#330000';
-      cx.fillRect(-46,-50,8,16); cx.fillRect(-12,-55,8,18); cx.fillRect(36,-50,8,16);
-      cx.fillStyle=b.acc;
-      cx.beginPath(); cx.arc(-42,-32,5,0,Math.PI*2); cx.fill();
-      cx.beginPath(); cx.arc(0,-30,8,0,Math.PI*2); cx.fill();
-      cx.beginPath(); cx.arc(42,-32,5,0,Math.PI*2); cx.fill();
-      cx.fillStyle='#fff'; cx.beginPath(); cx.arc(0,-30,3,0,Math.PI*2); cx.fill();
-      // Bottom panels
-      cx.fillStyle='#440011';
-      cx.fillRect(-50,20,30,18); cx.fillRect(20,20,30,18);
-      cx.fillStyle='#ff8844';
-      cx.fillRect(-44,28,18,4); cx.fillRect(26,28,18,4);
+      // Connecting binding line
+      cx.strokeStyle=b.acc; cx.lineWidth=1.5;
+      cx.beginPath(); cx.arc(0,0,30,0,Math.PI*2); cx.stroke();
       break;
     }
   }
@@ -2804,6 +3030,14 @@ function checkCollisions() {
           e.hp-=b.dmg; if(Math.random()<0.25)SFX.hitEnemy(); if(e.hp<=0)killEnemy(e);
         }
       }
+      // Lasers also burn through cancelable enemy bullets
+      for(const eb of enemyBullets) {
+        if(!eb.alive || !eb.cancelable) continue;
+        if(Math.abs(eb.x-b.x)<b.w/2+6 && eb.y<b.h) {
+          eb.hp = (eb.hp||1) - b.dmg;
+          if (eb.hp<=0) { eb.alive=false; spawnExplosion(eb.x, eb.y, 'small'); }
+        }
+      }
       if(boss&&boss.alive&&Math.abs(boss.x-b.x)<b.w/2+44&&boss.y<b.h) {
         boss.hp-=b.dmg; if(boss.hp<=0)killBoss();
       }
@@ -2814,6 +3048,17 @@ function checkCollisions() {
       if(Math.abs(b.x-e.x)<(b.w/2+e.w/2)&&Math.abs(b.y-e.y)<(b.h/2+e.h/2)) {
         e.hp-=b.dmg; b.alive=false; SFX.hitEnemy();
         if(e.hp<=0) killEnemy(e);
+        break;
+      }
+    }
+    if(!b.alive) continue;
+    // Player bullets can shoot down cancelable enemy bullets (mines, shells)
+    for(const eb of enemyBullets) {
+      if(!eb.alive || !eb.cancelable) continue;
+      if(Math.abs(b.x-eb.x)<8 && Math.abs(b.y-eb.y)<8) {
+        eb.hp = (eb.hp||1) - b.dmg;
+        b.alive = false;
+        if (eb.hp<=0) { eb.alive = false; spawnExplosion(eb.x, eb.y, 'small'); SFX.hitEnemy(); }
         break;
       }
     }
@@ -2957,21 +3202,41 @@ function killBoss() {
   for(const e of enemies){if(e.alive)spawnExplosion(e.x,e.y,'small');e.alive=false;}
   for(const eb of enemyBullets) eb.alive=false;
   boss=null;
-  // Stage mode lvl10 boss → victory; otherwise advance
-  if (!endlessMode && wasLvl >= 10) {
+  // Stage mode lvl 12 boss → tier victory + medal; otherwise advance
+  if (!endlessMode && wasLvl >= 12) {
     setTimeout(()=>{
       finalScore = score;
       save.coins += sessionCoins;
       save.diamonds += sessionDiamonds;
-      if (!save.stageProgress || save.stageProgress < 11) save.stageProgress = 11;
+      const tier = currentTier();
+      if (!save.stageProgress) save.stageProgress = {novice:1, veteran:0, hell:0};
+      save.stageProgress[tier] = 13;   // marks "complete"
+      save.medals[tier] = true;
+      // Unlock next tier
+      if (tier === 'novice' && (save.stageProgress.veteran||0) < 1) save.stageProgress.veteran = 1;
+      if (tier === 'veteran' && (save.stageProgress.hell||0) < 1) save.stageProgress.hell = 1;
+      writeSave(); stopBGM(); screen='victory';
+    }, 1400);
+    return;
+  }
+  // Endless mode: cap at 100 → final victory
+  if (endlessMode && wasLvl >= 100) {
+    setTimeout(()=>{
+      finalScore = score;
+      save.coins += sessionCoins;
+      save.diamonds += sessionDiamonds;
+      submitEndlessScore(score, wasLvl);
+      clearEndlessSnapshot();
       writeSave(); stopBGM(); screen='victory';
     }, 1400);
     return;
   }
   level++; killCount=0; waveTimer=0;
-  if (!endlessMode && level <= 10) {
-    if (!save.stageProgress || save.stageProgress < level) {
-      save.stageProgress = level;
+  if (!endlessMode && level <= 12) {
+    const tier = currentTier();
+    if (!save.stageProgress) save.stageProgress = {novice:1, veteran:0, hell:0};
+    if ((save.stageProgress[tier]||0) < level) {
+      save.stageProgress[tier] = level;
       writeSave();
     }
   }
@@ -3015,53 +3280,45 @@ function drawFTs() {
 // ─── WAVE SPAWNING ───────────────────────────────────────────────────────────
 // Per-level enemy pool (stage 1 easiest → stage 10 hardest). Endless reuses cycling.
 const WAVE_POOLS = [
-  // stage 1: only the gentlest types
   ['basic','basic','speeder','scout'],
-  // stage 2
   ['basic','zigzag','speeder','scout','dart'],
-  // stage 3
   ['basic','zigzag','dart','jet','saucer'],
-  // stage 4
   ['zigzag','dart','jet','saucer','bomber','splitter'],
-  // stage 5
   ['zigzag','bomber','splitter','gunship','minelayer','stealth'],
-  // stage 6
   ['bomber','gunship','minelayer','stealth','sniper','mortar'],
-  // stage 7
   ['gunship','minelayer','sniper','mortar','tank','hive','swarmlet'],
-  // stage 8
   ['gunship','tank','hive','swarmlet','sniper','elite','turret'],
-  // stage 9
   ['tank','elite','turret','sniper','mortar','carrier','splitter'],
-  // stage 10
   ['elite','tank','carrier','turret','sniper','minelayer','hive','jet'],
+  ['elite','tank','carrier','turret','sniper','mortar','minelayer','hive','stealth'],
+  ['elite','tank','carrier','turret','sniper','mortar','minelayer','hive','stealth','splitter','dart','jet'],
 ];
 
 function poolForLevel(lv) {
   return WAVE_POOLS[clamp(lv-1, 0, WAVE_POOLS.length-1)];
 }
 
-// Difficulty scales gently. Endless: cap at moderate; Stage: still gentle.
+// Difficulty scales gently. Endless: caps at lv 100; Stage: 12 levels x tier.
 function getDiff() {
-  const lv = Math.min(level, 10);
-  const endlessLv = endlessMode ? Math.min(level, 30) : lv;
+  const lv = Math.min(level, 12);
+  const endlessLv = endlessMode ? Math.min(level, 100) : lv;
   if (endlessMode) {
-    // Endless: very slow ramp, low bullet density
     return {
-      spawnRate: Math.max(170 - endlessLv*3, 90),
-      formRate:  Math.max(460 - endlessLv*6, 240),
-      enemyCount: 1 + Math.floor(endlessLv/4),
-      bulletSpd:  Math.min(0.55 + endlessLv*0.025, 1.2),
-      hpMult:     Math.min(1 + endlessLv*0.06, 3),
+      spawnRate: Math.max(170 - endlessLv*1.4, 60),
+      formRate:  Math.max(460 - endlessLv*3, 180),
+      enemyCount: 1 + Math.floor(endlessLv/6),
+      bulletSpd:  Math.min(0.55 + endlessLv*0.018, 1.6),
+      hpMult:     Math.min(1 + endlessLv*0.045, 5),
     };
   }
-  // Stage: friendly curve, beatable
+  // Stage: tier-multiplied
+  const m = TIER_MUL[currentTier()];
   return {
-    spawnRate: Math.max(150 - lv*7, 75),
-    formRate:  Math.max(380 - lv*15, 180),
+    spawnRate: Math.max(150 - lv*7, 70),
+    formRate:  Math.max(380 - lv*15, 170),
     enemyCount: 1 + Math.floor(lv/3),
-    bulletSpd:  0.5 + lv*0.06,
-    hpMult:     1 + lv*0.12,
+    bulletSpd:  (0.5 + lv*0.06) * m,
+    hpMult:     (1 + lv*0.12) * m,
   };
 }
 
@@ -3186,15 +3443,55 @@ function drawTitle() {
     cx.fillText('🗑', 360, 412);
   }
 
-  cx.fillStyle='#ffcc00';cx.font="16px 'Courier New', monospace";cx.fillText('🪙 '+save.coins,W/2-90,585);
-  cx.fillStyle='#44aaff';cx.fillText('💎 '+save.diamonds,W/2+20,585);
-  cx.fillStyle='#446688';cx.font="11px 'Courier New', monospace";cx.fillText('RAIDEN v3.0  © 2025',W/2,625);
-  cx.fillStyle='#446688';cx.font="10px 'Courier New', monospace";cx.fillText('♬ '+BGM_TRACK_NAMES[bgmTrack]+'  [T键切换]',W/2,645);
+  // ─ Medals row ─
+  const medals = save.medals || {};
+  const tiers = [{key:'novice', col:'#cd7f32', label:'新手'},
+                 {key:'veteran', col:'#c0c0c0', label:'老手'},
+                 {key:'hell',    col:'#ffd700', label:'地狱'}];
+  cx.fillStyle='#88ccee'; cx.font="11px 'Courier New', monospace"; cx.textAlign='center';
+  cx.fillText('通关勋章', W/2, 498);
+  for (let i=0;i<3;i++) {
+    const cxX = W/2 + (i-1)*60, cxY = 520;
+    if (medals[tiers[i].key]) {
+      const g = cx.createRadialGradient(cxX-3, cxY-3, 1, cxX, cxY, 18);
+      g.addColorStop(0,'#fff'); g.addColorStop(0.4, tiers[i].col); g.addColorStop(1,'#000');
+      cx.fillStyle = g;
+      cx.beginPath(); cx.arc(cxX, cxY, 16, 0, Math.PI*2); cx.fill();
+      cx.strokeStyle = '#ffeeaa'; cx.lineWidth=1; cx.stroke();
+      cx.fillStyle='#000'; cx.font="bold 11px 'Courier New'";
+      cx.fillText('★', cxX, cxY+4);
+    } else {
+      cx.strokeStyle = '#334466'; cx.lineWidth=1.5;
+      cx.beginPath(); cx.arc(cxX, cxY, 16, 0, Math.PI*2); cx.stroke();
+    }
+    cx.fillStyle='#88aacc'; cx.font="10px 'Courier New'";
+    cx.fillText(tiers[i].label, cxX, cxY+30);
+  }
+
+  // ─ Endless leaderboard (top 3) ─
+  const lb = save.endlessLeaderboard || [];
+  cx.fillStyle='#ff88aa'; cx.font="11px 'Courier New', monospace";
+  cx.fillText('🏆 无尽榜 TOP 3', W/2, 570);
+  if (lb.length === 0) {
+    cx.fillStyle='#445566'; cx.font="10px 'Courier New', monospace";
+    cx.fillText('暂无记录', W/2, 590);
+  } else {
+    cx.font="10px 'Courier New', monospace";
+    for (let i=0;i<Math.min(3, lb.length);i++) {
+      const e = lb[i];
+      cx.fillStyle = ['#ffcc44','#bbbbbb','#cc8844'][i] || '#888';
+      const line = '#'+(i+1)+' Lv'+e.level+' · '+String(e.score).padStart(7,' ')+' · '+fmtDate(e.dateMs);
+      cx.fillText(line, W/2, 588 + i*14);
+    }
+  }
+
+  // Footer
+  cx.fillStyle='#ffcc00';cx.font="13px 'Courier New', monospace";cx.fillText('🪙 '+save.coins+'   💎 '+save.diamonds, W/2, 644);
+  cx.fillStyle='#446688';cx.font="9px 'Courier New', monospace";cx.fillText('RAIDEN v3.0  ♬ '+BGM_TRACK_NAMES[bgmTrack],W/2,664);
   cx.textAlign='left';
 }
 
 function clickTitle(mx,my) {
-  // Reset endless progress button
   if (save.endlessState && mx>=346 && mx<=374 && my>=388 && my<=424) {
     clearEndlessSnapshot();
     SFX.buyFail();
@@ -3202,7 +3499,7 @@ function clickTitle(mx,my) {
   }
   for(const btn of titleBtns)
     if(mx>=btn.x&&mx<=btn.x+btn.w&&my>=btn.y&&my<=btn.y+btn.h){
-      if(btn.act==='solo') screen='stageSelect';
+      if(btn.act==='solo') screen='tierSelect';
       else if(btn.act==='endless') startGame(false,true);
       else if(btn.act==='shop') screen='shop';
     }
@@ -3417,9 +3714,12 @@ function clickDeath(mx,my) {
         if (sessionDiamonds + save.diamonds >= deathReviveCost) doRevive();
         else SFX.buyFail();
       } else {
-        // Save & home
+        // Save & home — endless: submit score to leaderboard
+        if (endlessMode) {
+          submitEndlessScore(score, level);
+          clearEndlessSnapshot();
+        }
         save.coins += sessionCoins; save.diamonds += sessionDiamonds;
-        if (endlessMode) clearEndlessSnapshot();
         writeSave(); screen='title';
       }
       return;
@@ -3596,32 +3896,129 @@ function clickPause(mx,my) {
   }
 }
 
-// ─── STAGE SELECT ────────────────────────────────────────────────────────────
-function drawStageSelect() {
+// ─── TIER SELECT ─────────────────────────────────────────────────────────────
+const TIER_INFO = [
+  { key:'novice',  name:'新 手',  medalColor:'#cd7f32', desc:'入门难度', unlock:()=>true },
+  { key:'veteran', name:'老 手',  medalColor:'#c0c0c0', desc:'中级难度·伤害提升',  unlock:()=>save.medals && save.medals.novice },
+  { key:'hell',    name:'地 狱',  medalColor:'#ffd700', desc:'噩梦难度·全面强化',  unlock:()=>save.medals && save.medals.veteran },
+];
+function drawTierSelect() {
   fillPx('#000818',0,0,W,H);
   cx.textAlign='center';
   cx.fillStyle='#00ffff';
-  cx.font="bold 28px 'Courier New', monospace";
-  cx.fillText('选 择 关 卡', W/2, 60);
+  cx.font="bold 26px 'Courier New', monospace";
+  cx.fillText('关 卡 模 式', W/2, 56);
   cx.fillStyle='#88ccee';
-  cx.font="12px 'Courier New', monospace";
-  cx.fillText('已通关: 第 '+Math.max(1,(save.stageProgress||1)-1)+' 关', W/2, 88);
+  cx.font="11px 'Courier New', monospace";
+  cx.fillText('选择难度 · 通关解锁下一难度', W/2, 80);
 
-  const cols=4, cw=100, ch=100, sx=40, sy=120;
-  for (let i=0;i<10;i++) {
+  for (let i=0;i<TIER_INFO.length;i++) {
+    const ti = TIER_INFO[i];
+    const x = 40, y = 110 + i*155, w = 400, h = 140;
+    const unlocked = ti.unlock();
+    const earned = save.medals && save.medals[ti.key];
+    const stage = (save.stageProgress && save.stageProgress[ti.key]) || (i===0?1:0);
+
+    fillPx(unlocked?'#062035':'#150a10', x, y, w, h);
+    cx.strokeStyle = earned?'#ffcc44':(unlocked?'#3377aa':'#332233');
+    cx.lineWidth = earned?3:2;
+    cx.strokeRect(x+0.5, y+0.5, w-1, h-1);
+
+    // Tier name
+    cx.fillStyle = unlocked?'#fff':'#666';
+    cx.font="bold 32px 'Courier New', monospace";
+    cx.textAlign='left';
+    cx.fillText(ti.name, x+24, y+56);
+
+    // Medal disc
+    const mx2 = x+w-50, my2 = y+50;
+    if (earned) {
+      const g = cx.createRadialGradient(mx2-4, my2-4, 1, mx2, my2, 24);
+      g.addColorStop(0,'#fff'); g.addColorStop(0.4, ti.medalColor); g.addColorStop(1, '#000');
+      cx.fillStyle = g;
+      cx.beginPath(); cx.arc(mx2, my2, 22, 0, Math.PI*2); cx.fill();
+      cx.strokeStyle='#ffeeaa'; cx.lineWidth=1.5; cx.stroke();
+      cx.fillStyle='#000'; cx.font="bold 14px 'Courier New'"; cx.textAlign='center';
+      cx.fillText('★', mx2, my2+5);
+    } else {
+      cx.strokeStyle = unlocked?'#557799':'#333';
+      cx.lineWidth = 2;
+      cx.beginPath(); cx.arc(mx2, my2, 22, 0, Math.PI*2); cx.stroke();
+    }
+
+    // Description + progress
+    cx.fillStyle = unlocked?'#aaccee':'#555';
+    cx.font="13px 'Courier New', monospace";
+    cx.textAlign='left';
+    cx.fillText(ti.desc, x+24, y+82);
+    if (unlocked) {
+      cx.fillStyle = earned ? '#ffcc44' : '#88ccee';
+      cx.fillText(earned ? '✓ 已通关 · 获得'+(i===0?'铜':i===1?'银':'金')+'牌'
+                         : '进度 '+Math.max(1,stage)+' / 12',
+                   x+24, y+108);
+    } else {
+      cx.fillStyle='#664444';
+      cx.fillText('🔒 通关 '+TIER_INFO[i-1].name+' 解锁', x+24, y+108);
+    }
+    cx.textAlign='left';
+  }
+
+  drawButton(20, 655, 110, 36, '← 返回', false);
+  cx.textAlign='left';
+}
+function clickTierSelect(mx,my) {
+  if (mx>=20 && mx<=130 && my>=655 && my<=691) { screen='title'; return; }
+  for (let i=0;i<TIER_INFO.length;i++) {
+    const x = 40, y = 110 + i*155, w = 400, h = 140;
+    if (mx>=x && mx<=x+w && my>=y && my<=y+h) {
+      const ti = TIER_INFO[i];
+      if (ti.unlock()) {
+        save.tier = ti.key;
+        writeSave();
+        screen='stageSelect';
+      } else {
+        SFX.buyFail();
+      }
+      return;
+    }
+  }
+}
+
+// ─── STAGE SELECT (per tier, 12 zodiac levels) ───────────────────────────────
+function drawStageSelect() {
+  fillPx('#000818',0,0,W,H);
+  cx.textAlign='center';
+  const tier = currentTier();
+  const tierInfo = TIER_INFO.find(t=>t.key===tier);
+  const stagePr = (save.stageProgress && save.stageProgress[tier]) || 1;
+
+  cx.fillStyle='#00ffff';
+  cx.font="bold 24px 'Courier New', monospace";
+  cx.fillText('选择关卡 · '+tierInfo.name, W/2, 50);
+  cx.fillStyle='#88ccee';
+  cx.font="11px 'Courier New', monospace";
+  cx.fillText('已解锁: 第 '+Math.min(12, Math.max(1, stagePr))+' 关', W/2, 72);
+
+  const cols=4, cw=110, ch=104, sx=20, sy=88;
+  for (let i=0;i<12;i++) {
     const col=i%cols, row=(i/cols)|0;
     const bx = sx + col*cw, by = sy + row*ch;
-    const unlocked = (save.stageProgress||1) >= (i+1);
+    const unlocked = stagePr >= (i+1);
     fillPx(unlocked?'#082030':'#100a10', bx+2, by+2, cw-12, ch-12);
     cx.strokeStyle = unlocked?'#44aaff':'#444';
     cx.lineWidth = 2;
     cx.strokeRect(bx+1, by+1, cw-13, ch-13);
-    cx.fillStyle = unlocked?'#fff':'#666';
-    cx.font="bold 22px 'Courier New', monospace";
-    cx.fillText(String(i+1).padStart(2,'0'), bx+(cw-10)/2, by+45);
+    // Number
+    cx.fillStyle = unlocked?'#fff':'#555';
+    cx.font="bold 18px 'Courier New', monospace";
+    cx.fillText(String(i+1).padStart(2,'0'), bx+(cw-10)/2, by+34);
+    // Boss name (zodiac)
     cx.fillStyle = unlocked?'#88ccee':'#444';
     cx.font="11px 'Courier New', monospace";
-    cx.fillText(unlocked?BOSS_DEFS[i].name:'🔒锁定', bx+(cw-10)/2, by+72);
+    cx.fillText(unlocked?BOSS_DEFS[i].name.split('·')[0]:'🔒', bx+(cw-10)/2, by+58);
+    cx.fillStyle = unlocked?'#aacccc':'#444';
+    cx.font="9px 'Courier New', monospace";
+    cx.fillText(unlocked?BOSS_DEFS[i].name.split('·')[1]||'':'', bx+(cw-10)/2, by+74);
   }
   drawButton(20, 655, 110, 36, '← 返回', false);
   drawButton(330, 655, 130, 36, '从第1关', false);
@@ -3629,14 +4026,16 @@ function drawStageSelect() {
 }
 
 function clickStageSelect(mx,my) {
-  if (mx>=20 && mx<=130 && my>=655 && my<=691) { screen='title'; return; }
+  if (mx>=20 && mx<=130 && my>=655 && my<=691) { screen='tierSelect'; return; }
   if (mx>=330 && mx<=460 && my>=655 && my<=691) { startGame(false,false,1); return; }
-  const cols=4, cw=100, ch=100, sx=40, sy=120;
-  for (let i=0;i<10;i++) {
+  const tier = currentTier();
+  const stagePr = (save.stageProgress && save.stageProgress[tier]) || 1;
+  const cols=4, cw=110, ch=104, sx=20, sy=88;
+  for (let i=0;i<12;i++) {
     const col=i%cols, row=(i/cols)|0;
     const bx = sx + col*cw, by = sy + row*ch;
     if (mx>=bx && mx<=bx+cw-10 && my>=by && my<=by+ch-10) {
-      if ((save.stageProgress||1) >= (i+1)) {
+      if (stagePr >= (i+1)) {
         startGame(false,false,i+1);
       } else {
         SFX.buyFail();
@@ -3728,6 +4127,28 @@ function clickGameOver(mx,my) {
     }
 }
 
+// ─── ENDLESS LEADERBOARD ─────────────────────────────────────────────────────
+let endlessStartTime = 0;   // ms when current endless run started
+function submitEndlessScore(scoreVal, lvVal) {
+  if (!Array.isArray(save.endlessLeaderboard)) save.endlessLeaderboard = [];
+  const durationSec = endlessStartTime ? Math.max(1, Math.round((Date.now()-endlessStartTime)/1000)) : 0;
+  save.endlessLeaderboard.push({
+    score: scoreVal|0, level: lvVal|0,
+    durationSec, dateMs: Date.now(),
+  });
+  save.endlessLeaderboard.sort((a,b)=>b.score-a.score);
+  save.endlessLeaderboard = save.endlessLeaderboard.slice(0, 10);
+  writeSave();
+}
+function fmtDuration(s) {
+  const m = (s/60)|0, sec = s%60;
+  return m+'分'+String(sec).padStart(2,'0')+'秒';
+}
+function fmtDate(ms) {
+  const d = new Date(ms);
+  return (d.getMonth()+1)+'/'+d.getDate()+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
+}
+
 // ─── ENDLESS SAVE/RESUME ─────────────────────────────────────────────────────
 function snapshotEndless() {
   if (!endlessMode) return null;
@@ -3761,6 +4182,7 @@ function startGame(two, endless, startLv) {
   players.push(createPlayer(1,save.selP1));
   if(two) players.push(createPlayer(2,save.selP2));
   initBGStars(BG_SKINS[save.selBG][3]);
+  if (endlessMode) endlessStartTime = Date.now();
   // Restore endless snapshot if present
   if (endlessMode && save.endlessState) {
     const s = save.endlessState;
@@ -3847,6 +4269,7 @@ function handleTouchStart(e) {
       try{getAudio();if(audioCtx&&audioCtx.state==='suspended')audioCtx.resume();}catch(_){}
       if (screen==='title') clickTitle(p.x, p.y);
       else if (screen==='shop') clickShop(p.x, p.y);
+      else if (screen==='tierSelect') clickTierSelect(p.x, p.y);
       else if (screen==='stageSelect') clickStageSelect(p.x, p.y);
       else if (screen==='gameover') clickGameOver(p.x, p.y);
       else if (screen==='victory') clickVictory(p.x, p.y);
@@ -3918,10 +4341,13 @@ document.addEventListener('keydown',e=>{
       screen='game'; if(bgmEnabled) startBGM();
       document.getElementById('btn-pause').classList.remove('active');
     } else if (screen==='death') {
+      if (endlessMode) {
+        submitEndlessScore(score, level);
+        clearEndlessSnapshot();
+      }
       save.coins += sessionCoins; save.diamonds += sessionDiamonds;
-      if (endlessMode) clearEndlessSnapshot();
       writeSave(); screen='title';
-    } else if (screen==='shop' || screen==='stageSelect') {
+    } else if (screen==='shop' || screen==='stageSelect' || screen==='tierSelect') {
       screen='title';
     }
   }
@@ -3936,6 +4362,7 @@ canvas.addEventListener('click',e=>{
   try{getAudio();if(audioCtx&&audioCtx.state==='suspended')audioCtx.resume();}catch(er){}
   if(screen==='title') clickTitle(mx,my);
   else if(screen==='shop') clickShop(mx,my);
+  else if(screen==='tierSelect') clickTierSelect(mx,my);
   else if(screen==='stageSelect') clickStageSelect(mx,my);
   else if(screen==='gameover') clickGameOver(mx,my);
   else if(screen==='victory') clickVictory(mx,my);
@@ -4056,6 +4483,9 @@ function draw() {
     drawTitle();
   } else if(screen==='shop') {
     drawShop();
+  } else if(screen==='tierSelect') {
+    frame++;
+    drawTierSelect();
   } else if(screen==='stageSelect') {
     frame++;
     drawStageSelect();
