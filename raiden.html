@@ -46,6 +46,27 @@ canvas { display:block; width:100%; height:100%; image-rendering:auto; }
 }
 #btn-bomb:active { transform:scale(0.92); background:radial-gradient(circle at 30% 30%, #aabbff, #4477ff 60%, #002288); }
 #btn-bomb .count { position:absolute; top:-4px; right:-4px; background:#ff4422; border-radius:50%; min-width:18px; height:18px; font-size:10px; display:flex; align-items:center; justify-content:center; padding:0 3px; font-weight:bold; }
+#audio-unlock {
+  position:absolute; left:0; top:0; right:0; bottom:0;
+  background:rgba(0,0,15,0.92);
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  color:#fff; z-index:50; cursor:pointer;
+  font-family:'Courier New', monospace;
+}
+#audio-unlock .title { font-size:32px; color:#00ffff; letter-spacing:4px; margin-bottom:18px; text-shadow:0 0 10px #00ffff80; }
+#audio-unlock .sub { font-size:14px; color:#aaccee; margin-bottom:28px; }
+#audio-unlock .pulse {
+  width:90px; height:90px; border-radius:50%;
+  border:3px solid #00ffff; display:flex; align-items:center; justify-content:center;
+  font-size:30px;
+  animation: pulse 1.4s ease-in-out infinite;
+  background:radial-gradient(circle, rgba(0,80,120,0.6), rgba(0,0,30,0));
+}
+@keyframes pulse {
+  0%,100% { transform:scale(1); box-shadow:0 0 0 0 rgba(0,255,255,0.6); }
+  50%     { transform:scale(1.08); box-shadow:0 0 0 22px rgba(0,255,255,0); }
+}
+#audio-unlock .hint { font-size:12px; color:#557; margin-top:24px; }
 </style>
 </head>
 <body>
@@ -56,6 +77,12 @@ canvas { display:block; width:100%; height:100%; image-rendering:auto; }
   <button class="side-btn" id="btn-bgm" title="BGM (M)">🎵</button>
   <button class="side-btn" id="btn-track" title="Switch Track (T)" style="top:172px;font-size:11px;">♬</button>
   <button class="touch-only" id="btn-bomb" aria-label="导弹">🚀<span class="count" id="bomb-count">3</span></button>
+  <div id="audio-unlock">
+    <div class="title">RAIDEN 雷电</div>
+    <div class="sub">点击屏幕开始游戏</div>
+    <div class="pulse">▶</div>
+    <div class="hint">TAP TO START · 启用音效</div>
+  </div>
 </div>
 <script>
 'use strict';
@@ -723,6 +750,85 @@ function fillPx(color, x, y, w, h) {
   cx.fillRect(x|0, y|0, w|0, h|0);
 }
 
+// ─── PERF: cached glow sprites + offscreen bg ────────────────────────────────
+// Pre-rendered radial glow sprite per color — replaces per-frame createRadialGradient
+const glowSprites = {};
+function getGlowSprite(color) {
+  if (glowSprites[color]) return glowSprites[color];
+  const c = document.createElement('canvas');
+  c.width = 64; c.height = 64;
+  const g = c.getContext('2d');
+  const rg = g.createRadialGradient(32,32,1,32,32,32);
+  rg.addColorStop(0, '#ffffff');
+  rg.addColorStop(0.35, color);
+  rg.addColorStop(1, color + '00');
+  g.fillStyle = rg;
+  g.fillRect(0,0,64,64);
+  glowSprites[color] = c;
+  return c;
+}
+// Enemy-bullet sprite (orange/red core stays consistent enough to bake one)
+const enemyBulletSpriteCache = {};
+function getEnemyBulletSprite(color) {
+  const key = color || '#ff4400';
+  if (enemyBulletSpriteCache[key]) return enemyBulletSpriteCache[key];
+  const c = document.createElement('canvas');
+  c.width = 24; c.height = 24;
+  const g = c.getContext('2d');
+  const rg = g.createRadialGradient(12,12,0,12,12,12);
+  rg.addColorStop(0,'#ffaa44');
+  rg.addColorStop(0.4, key);
+  rg.addColorStop(1, key + '00');
+  g.fillStyle = rg;
+  g.fillRect(0,0,24,24);
+  // Hot core
+  g.fillStyle = '#ffeeaa';
+  g.beginPath(); g.arc(12,12,3.5,0,Math.PI*2); g.fill();
+  enemyBulletSpriteCache[key] = c;
+  return c;
+}
+
+// Pre-rendered per-type background static layer (halo + vignette)
+const bgStaticCache = {};
+function getBgStatic(type) {
+  if (bgStaticCache[type]) return bgStaticCache[type];
+  const colors = getBGColors(type);
+  const pal = ANIME_PALETTES[type] || null;
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const g = c.getContext('2d');
+  // Sky base
+  g.fillStyle = colors.sky;
+  g.fillRect(0,0,W,H);
+  if (type.startsWith('anime')) {
+    if (colors.atmos) {
+      const sg = g.createLinearGradient(0,0,0,H);
+      sg.addColorStop(0, colors.sky);
+      sg.addColorStop(0.6, colors.atmos + '40');
+      sg.addColorStop(1, colors.terrain);
+      g.fillStyle = sg;
+      g.fillRect(0,0,W,H);
+    }
+    if (pal) {
+      // Soft halo
+      const halo = g.createRadialGradient(W/2, H*0.55, 40, W/2, H*0.55, 380);
+      halo.addColorStop(0, pal.glow + '70');
+      halo.addColorStop(0.45, pal.glow + '20');
+      halo.addColorStop(1, 'transparent');
+      g.fillStyle = halo;
+      g.fillRect(0,0,W,H);
+    }
+    // Vignette
+    const vg = g.createRadialGradient(W/2,H/2,220,W/2,H/2,460);
+    vg.addColorStop(0,'rgba(0,0,0,0)');
+    vg.addColorStop(1,'rgba(0,0,0,0.55)');
+    g.fillStyle = vg;
+    g.fillRect(0,0,W,H);
+  }
+  bgStaticCache[type] = c;
+  return c;
+}
+
 // Draw a smooth vector plane. shapeIdx 0-3 = different silhouettes.
 // colors = [body, cockpit, wing, engine_glow]
 // cx must be in identity transform when called.
@@ -891,14 +997,9 @@ function drawAnimeWaifu(type) {
   const pal = ANIME_PALETTES[type] || ANIME_PALETTES.animeSakura;
   const t = frame * 0.02;
 
-  // ── Stage-1: distant aura / godrays ───────────────────────────────────────
-  const halo = cx.createRadialGradient(W/2, H*0.55, 40, W/2, H*0.55, 380);
-  halo.addColorStop(0, pal.glow + '70');
-  halo.addColorStop(0.45, pal.glow + '20');
-  halo.addColorStop(1, 'transparent');
-  cx.fillStyle = halo;
-  cx.fillRect(0, 0, W, H);
-
+  // ── Stage-1: cached static halo (skip per-frame gradient) ────────────────
+  // halo + vignette pre-baked to offscreen; just blit it
+  // (sky was already drawn by drawBackground)
   // Volumetric god-rays (radial streaks)
   cx.save();
   cx.globalAlpha = 0.18;
@@ -1218,12 +1319,8 @@ function drawAnimeWaifu(type) {
 
   cx.restore();
 
-  // ── Stage-4: subtle vignette to push focus center ──────────────────────
-  const vg = cx.createRadialGradient(W/2, H/2, 220, W/2, H/2, 460);
-  vg.addColorStop(0, 'rgba(0,0,0,0)');
-  vg.addColorStop(1, 'rgba(0,0,0,0.55)');
-  cx.fillStyle = vg;
-  cx.fillRect(0, 0, W, H);
+  // Vignette is baked into bgStaticCache and was drawn before god-rays;
+  // re-applying a faint vignette on top keeps focus.
 }
 
 function drawBackground() {
@@ -1232,15 +1329,8 @@ function drawBackground() {
   fillPx(colors.sky, 0, 0, W, H);
 
   if (bgType.startsWith('anime')) {
-    // Subtle gradient sky
-    if (colors.atmos) {
-      const sg = cx.createLinearGradient(0, 0, 0, H);
-      sg.addColorStop(0, colors.sky);
-      sg.addColorStop(0.6, colors.atmos + '40');
-      sg.addColorStop(1, colors.terrain);
-      cx.fillStyle = sg;
-      cx.fillRect(0, 0, W, H);
-    }
+    // Cached sky + halo + vignette in one blit
+    cx.drawImage(getBgStatic(bgType), 0, 0);
     for (const star of bgStars) fillPx(star.color, star.x | 0, star.y | 0, star.size, star.size);
     drawAnimeWaifu(bgType);
     return;
@@ -1566,9 +1656,9 @@ function drawBullets() {
       continue;
     }
     if(b.wave||b.crystal||b.homing) {
-      const rg=cx.createRadialGradient(b.px,b.py,0,b.px,b.py,b.w*1.8);
-      rg.addColorStop(0,'#ffffffcc'); rg.addColorStop(.4,b.color); rg.addColorStop(1,b.color+'00');
-      cx.fillStyle=rg; cx.beginPath(); cx.arc(b.px,b.py,b.w*1.8,0,Math.PI*2); cx.fill();
+      const sp = getGlowSprite(b.color);
+      const r = b.w * 1.8;
+      cx.drawImage(sp, b.px - r, b.py - r, r*2, r*2);
       continue;
     }
     if(b.lightning) {
@@ -1587,10 +1677,8 @@ function drawBullets() {
 
 function drawEnemyBullets() {
   for(const b of enemyBullets) {
-    const rg=cx.createRadialGradient(b.px,b.py,0,b.px,b.py,7);
-    rg.addColorStop(0,'#ffaa44'); rg.addColorStop(.4,b.color||'#ff4400'); rg.addColorStop(1,(b.color||'#ff4400')+'00');
-    cx.fillStyle=rg; cx.beginPath(); cx.arc(b.px,b.py,7,0,Math.PI*2); cx.fill();
-    cx.fillStyle='#ffeeaa'; cx.beginPath(); cx.arc(b.px,b.py,2,0,Math.PI*2); cx.fill();
+    const sp = getEnemyBulletSprite(b.color || '#ff4400');
+    cx.drawImage(sp, b.px - 12, b.py - 12, 24, 24);
   }
 }
 
@@ -3081,6 +3169,7 @@ function clickTitle(mx,my) {
 }
 
 // ─── SHOP SCREEN ─────────────────────────────────────────────────────────────
+let shopSubTab = 0; // planes: 0=全部 1=金币 2=钻石  bgs: 0=传统 1=福利姬
 function drawShop() {
   fillPx('#000818',0,0,W,H);
   cx.fillStyle='#00ffff';cx.font="bold 20px 'Courier New', monospace";cx.textAlign='center';
@@ -3088,8 +3177,18 @@ function drawShop() {
   cx.fillStyle='#ffcc00';cx.font="14px 'Courier New', monospace";cx.textAlign='center';
   cx.fillText('🪙 '+save.coins+'   💎 '+save.diamonds,W/2,54);cx.textAlign='left';
 
-  drawButton(20,68,210,34,'飞机皮肤',shopTab===0);
-  drawButton(250,68,210,34,'背景皮肤',shopTab===1);
+  drawButton(20,68,210,30,'飞机皮肤',shopTab===0);
+  drawButton(250,68,210,30,'背景皮肤',shopTab===1);
+
+  // Sub tabs
+  if (shopTab===0) {
+    drawSubTab( 20, 100, 145, 24, '全 部', shopSubTab===0);
+    drawSubTab(170, 100, 145, 24, '🪙 金币',shopSubTab===1);
+    drawSubTab(320, 100, 140, 24, '💎 钻石',shopSubTab===2);
+  } else {
+    drawSubTab( 20, 100, 220, 24, '传统地图', shopSubTab===0);
+    drawSubTab(245, 100, 215, 24, '✨ 福利姬', shopSubTab===1);
+  }
 
   if(shopTab===0) drawShopPlanes();
   else drawShopBGs();
@@ -3102,13 +3201,34 @@ function drawShop() {
   cx.fillStyle='#aa6600'; cx.font="12px 'Courier New'"; cx.textAlign='center';
   cx.fillText('🪙+9999  💎+99',245,677); cx.textAlign='left';
 }
+function drawSubTab(x,y,w,h,label,active) {
+  cx.fillStyle = active ? '#114466' : '#0a1828';
+  cx.fillRect(x,y,w,h);
+  cx.strokeStyle = active ? '#00ffff' : '#244466';
+  cx.lineWidth = 1;
+  cx.strokeRect(x+0.5,y+0.5,w-1,h-1);
+  cx.fillStyle = active ? '#aaffff' : '#7799bb';
+  cx.font="bold 11px 'Courier New', monospace";
+  cx.textAlign='center';
+  cx.fillText(label, x+w/2, y+16);
+  cx.textAlign='left';
+}
 
+function planeMatchesSubTab(skin) {
+  if (shopSubTab===0) return true;
+  if (shopSubTab===1) return skin[2]==='free' || skin[2]==='g';
+  if (shopSubTab===2) return skin[2]==='d';
+  return true;
+}
 function drawShopPlanes() {
-  const cols=4,cw=110,ch=110,sx=10,sy=115;
+  const cols=4,cw=110,ch=110,sx=10,sy=132;
+  let cell = 0;
   for(let i=0;i<PLANE_SKINS.length;i++){
-    const col=i%cols, row=Math.floor(i/cols);
-    const bx=sx+col*cw, by=sy+row*ch;
     const skin=PLANE_SKINS[i];
+    if (!planeMatchesSubTab(skin)) continue;
+    const col=cell%cols, row=Math.floor(cell/cols);
+    cell++;
+    const bx=sx+col*cw, by=sy+row*ch;
     const owned=save.planes[i];
     const isP1=save.selP1===i, isP2=save.selP2===i, isHL=shopSelectedPlane===i;
     fillPx(isHL?'#113355':'#081828',bx+2,by+2,cw-4,ch-4);
@@ -3131,16 +3251,23 @@ function drawShopPlanes() {
 }
 
 let shopBGScroll = 0;
+function bgMatchesSubTab(bg) {
+  const isAnime = bg[3].startsWith('anime');
+  return shopSubTab===0 ? !isAnime : isAnime;
+}
 function drawShopBGs() {
-  const cols=2,cw=220,ch=72,sx=15,sy=115;
+  const cols=2,cw=220,ch=72,sx=15,sy=132;
   // clip to scroll area
   cx.save();
-  cx.beginPath(); cx.rect(0,sy-2,W,540); cx.clip();
+  cx.beginPath(); cx.rect(0,sy-2,W,520); cx.clip();
+  let cell = 0;
   for(let i=0;i<BG_SKINS.length;i++){
-    const col=i%cols, row=Math.floor(i/cols);
-    const bx=sx+col*cw, by=sy+row*ch - shopBGScroll;
-    if (by + ch < sy - 5 || by > sy + 540) continue;
     const bg=BG_SKINS[i];
+    if (!bgMatchesSubTab(bg)) continue;
+    const col=cell%cols, row=Math.floor(cell/cols);
+    cell++;
+    const bx=sx+col*cw, by=sy+row*ch - shopBGScroll;
+    if (by + ch < sy - 5 || by > sy + 520) continue;
     const owned=save.bgs[i], isSel=save.selBG===i, isHL=shopSelectedBG===i;
     const bgc=getBGColors(bg[3]);
     fillPx(bgc.sky,bx+2,by+2,cw-4,42);
@@ -3190,11 +3317,33 @@ function clickShop(mx,my) {
   if(mx>=20&&mx<=130&&my>=655&&my<=691){screen='title';shopSelectedPlane=-1;shopSelectedBG=-1;return;}
   if(mx>=350&&mx<=460&&my>=655&&my<=691){equipSelected();return;}
   if(mx>=160&&mx<=330&&my>=655&&my<=691){save.coins+=9999;save.diamonds+=99;writeSave();SFX.buySuccess();return;}
-  if(my>=68&&my<=102){if(mx>=20&&mx<=230){shopTab=0;shopSelectedPlane=-1;}else if(mx>=250&&mx<=460){shopTab=1;shopSelectedBG=-1;}return;}
+  // Main tabs row
+  if(my>=68&&my<=98){
+    if(mx>=20&&mx<=230){shopTab=0;shopSelectedPlane=-1;shopSubTab=0;}
+    else if(mx>=250&&mx<=460){shopTab=1;shopSelectedBG=-1;shopSubTab=0;shopBGScroll=0;}
+    return;
+  }
+  // Sub tabs row
+  if(my>=100&&my<=124){
+    if(shopTab===0){
+      if(mx>=20&&mx<=165) shopSubTab=0;
+      else if(mx>=170&&mx<=315) shopSubTab=1;
+      else if(mx>=320&&mx<=460) shopSubTab=2;
+    } else {
+      if(mx>=20&&mx<=240) shopSubTab=0;
+      else if(mx>=245&&mx<=460) shopSubTab=1;
+      shopBGScroll = 0;
+    }
+    return;
+  }
   if(shopTab===0){
-    const cols=4,cw=110,ch=110,sx=10,sy=115;
+    const cols=4,cw=110,ch=110,sx=10,sy=132;
+    let cell = 0;
     for(let i=0;i<PLANE_SKINS.length;i++){
-      const bx=sx+(i%cols)*cw, by=sy+Math.floor(i/cols)*ch;
+      if (!planeMatchesSubTab(PLANE_SKINS[i])) continue;
+      const col=cell%cols, row=Math.floor(cell/cols);
+      cell++;
+      const bx=sx+col*cw, by=sy+row*ch;
       if(mx>=bx&&mx<=bx+cw&&my>=by&&my<=by+ch){
         if(!save.planes[i]){
           const sk=PLANE_SKINS[i];
@@ -3206,13 +3355,17 @@ function clickShop(mx,my) {
       }
     }
   } else {
-    const cols=2,cw=220,ch=72,sx=15,sy=115;
+    const cols=2,cw=220,ch=72,sx=15,sy=132;
+    let cell = 0;
     for(let i=0;i<BG_SKINS.length;i++){
-      const bx=sx+(i%cols)*cw, by=sy+Math.floor(i/cols)*ch - shopBGScroll;
-      if(my < sy-2 || my > sy+540) break;
+      const bg=BG_SKINS[i];
+      if (!bgMatchesSubTab(bg)) continue;
+      const col=cell%cols, row=Math.floor(cell/cols);
+      cell++;
+      const bx=sx+col*cw, by=sy+row*ch - shopBGScroll;
+      if(my < sy-2 || my > sy+520) continue;
       if(mx>=bx&&mx<=bx+cw&&my>=by&&my<=by+ch){
         if(!save.bgs[i]){
-          const bg=BG_SKINS[i];
           if(bg[2]==='free'){save.bgs[i]=true;writeSave();SFX.buySuccess();shopSelectedBG=i;}
           else if(bg[2]==='g'){if(save.coins>=bg[1]){save.coins-=bg[1];save.bgs[i]=true;writeSave();SFX.buySuccess();shopSelectedBG=i;}else SFX.buyFail();}
           else if(bg[2]==='d'){if(save.diamonds>=bg[1]){save.diamonds-=bg[1];save.bgs[i]=true;writeSave();SFX.buySuccess();shopSelectedBG=i;}else SFX.buyFail();}
@@ -3698,8 +3851,9 @@ canvas.addEventListener('click',e=>{
 canvas.addEventListener('wheel', e=>{
   if (screen === 'shop' && shopTab === 1) {
     e.preventDefault();
-    const totalH = Math.ceil(BG_SKINS.length/2) * 72;
-    const maxScroll = Math.max(0, totalH - 540);
+    const filtered = BG_SKINS.filter(bgMatchesSubTab).length;
+    const totalH = Math.ceil(filtered/2) * 72;
+    const maxScroll = Math.max(0, totalH - 520);
     shopBGScroll = clamp(shopBGScroll + (e.deltaY>0?40:-40), 0, maxScroll);
   }
 }, {passive:false});
@@ -3802,6 +3956,26 @@ function loop() {
 }
 
 initBGStars('space');
+
+// First-tap audio unlock overlay (resumes AudioContext + warms BGM)
+const audioUnlockEl = document.getElementById('audio-unlock');
+let audioUnlocked = false;
+function unlockAudio() {
+  if (audioUnlocked) return;
+  audioUnlocked = true;
+  try {
+    getAudio();
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+    // Warm up BGM scheduler so first track plays immediately
+    if (bgmEnabled) startBGM();
+  } catch(_) {}
+  audioUnlockEl.style.transition = 'opacity .3s';
+  audioUnlockEl.style.opacity = '0';
+  setTimeout(()=>{ audioUnlockEl.style.display = 'none'; }, 320);
+}
+audioUnlockEl.addEventListener('click', unlockAudio);
+audioUnlockEl.addEventListener('touchstart', e=>{ e.preventDefault(); unlockAudio(); }, {passive:false});
+
 loop();
 </script>
 </body>
