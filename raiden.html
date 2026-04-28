@@ -46,27 +46,6 @@ canvas { display:block; width:100%; height:100%; image-rendering:auto; }
 }
 #btn-bomb:active { transform:scale(0.92); background:radial-gradient(circle at 30% 30%, #aabbff, #4477ff 60%, #002288); }
 #btn-bomb .count { position:absolute; top:-4px; right:-4px; background:#ff4422; border-radius:50%; min-width:18px; height:18px; font-size:10px; display:flex; align-items:center; justify-content:center; padding:0 3px; font-weight:bold; }
-#audio-unlock {
-  position:absolute; left:0; top:0; right:0; bottom:0;
-  background:rgba(0,0,15,0.92);
-  display:flex; flex-direction:column; align-items:center; justify-content:center;
-  color:#fff; z-index:50; cursor:pointer;
-  font-family:'Courier New', monospace;
-}
-#audio-unlock .title { font-size:32px; color:#00ffff; letter-spacing:4px; margin-bottom:18px; text-shadow:0 0 10px #00ffff80; }
-#audio-unlock .sub { font-size:14px; color:#aaccee; margin-bottom:28px; }
-#audio-unlock .pulse {
-  width:90px; height:90px; border-radius:50%;
-  border:3px solid #00ffff; display:flex; align-items:center; justify-content:center;
-  font-size:30px;
-  animation: pulse 1.4s ease-in-out infinite;
-  background:radial-gradient(circle, rgba(0,80,120,0.6), rgba(0,0,30,0));
-}
-@keyframes pulse {
-  0%,100% { transform:scale(1); box-shadow:0 0 0 0 rgba(0,255,255,0.6); }
-  50%     { transform:scale(1.08); box-shadow:0 0 0 22px rgba(0,255,255,0); }
-}
-#audio-unlock .hint { font-size:12px; color:#557; margin-top:24px; }
 </style>
 </head>
 <body>
@@ -76,13 +55,7 @@ canvas { display:block; width:100%; height:100%; image-rendering:auto; }
   <button class="side-btn" id="btn-invincible" title="Invincible (G)">💀</button>
   <button class="side-btn" id="btn-bgm" title="BGM (M)">🎵</button>
   <button class="side-btn" id="btn-track" title="Switch Track (T)" style="top:172px;font-size:11px;">♬</button>
-  <!-- Bomb is hidden — triggered via double-tap on mobile, X on desktop -->
-  <div id="audio-unlock">
-    <div class="title">RAIDEN 雷电</div>
-    <div class="sub">点击屏幕开始游戏</div>
-    <div class="pulse">▶</div>
-    <div class="hint">TAP TO START · 启用音效</div>
-  </div>
+  <button class="touch-only" id="btn-bomb" aria-label="导弹">🚀<span class="count" id="bomb-count">3</span></button>
 </div>
 <script>
 'use strict';
@@ -148,16 +121,16 @@ const BG_SKINS = [
   ['远古遗迹',8,'d','ruins'],
   ['次元裂隙',12,'d','rift'],
   // 二次元美少女动态背景 (10)
-  ['鬼刀·樱',3000,'g','animeSakura'],
-  ['鬼刀·星',3500,'g','animeStar'],
-  ['鬼刀·月',4000,'g','animeMoon'],
-  ['鬼刀·雪',4500,'g','animeSnow'],
-  ['鬼刀·焰',5000,'g','animeFlame'],
-  ['鬼刀·海',10,'d','animeOcean'],
-  ['鬼刀·霓',12,'d','animeNeon'],
-  ['鬼刀·暮',15,'d','animeDusk'],
-  ['鬼刀·幻',20,'d','animeRainbow'],
-  ['鬼刀·神',30,'d','animeGoddess'],
+  ['福利姬·樱花',3000,'g','animeSakura'],
+  ['福利姬·星海',3500,'g','animeStar'],
+  ['福利姬·月神',4000,'g','animeMoon'],
+  ['福利姬·雪国',4500,'g','animeSnow'],
+  ['福利姬·炎之',5000,'g','animeFlame'],
+  ['福利姬·碧海',10,'d','animeOcean'],
+  ['福利姬·霓虹',12,'d','animeNeon'],
+  ['福利姬·黄昏',15,'d','animeDusk'],
+  ['福利姬·幻彩',20,'d','animeRainbow'],
+  ['福利姬·女神',30,'d','animeGoddess'],
 ];
 const ANIME_BG_TYPES = ['animeSakura','animeStar','animeMoon','animeSnow','animeFlame','animeOcean','animeNeon','animeDusk','animeRainbow','animeGoddess'];
 
@@ -750,85 +723,6 @@ function fillPx(color, x, y, w, h) {
   cx.fillRect(x|0, y|0, w|0, h|0);
 }
 
-// ─── PERF: cached glow sprites + offscreen bg ────────────────────────────────
-// Pre-rendered radial glow sprite per color — replaces per-frame createRadialGradient
-const glowSprites = {};
-function getGlowSprite(color) {
-  if (glowSprites[color]) return glowSprites[color];
-  const c = document.createElement('canvas');
-  c.width = 64; c.height = 64;
-  const g = c.getContext('2d');
-  const rg = g.createRadialGradient(32,32,1,32,32,32);
-  rg.addColorStop(0, '#ffffff');
-  rg.addColorStop(0.35, color);
-  rg.addColorStop(1, color + '00');
-  g.fillStyle = rg;
-  g.fillRect(0,0,64,64);
-  glowSprites[color] = c;
-  return c;
-}
-// Enemy-bullet sprite (orange/red core stays consistent enough to bake one)
-const enemyBulletSpriteCache = {};
-function getEnemyBulletSprite(color) {
-  const key = color || '#ff4400';
-  if (enemyBulletSpriteCache[key]) return enemyBulletSpriteCache[key];
-  const c = document.createElement('canvas');
-  c.width = 24; c.height = 24;
-  const g = c.getContext('2d');
-  const rg = g.createRadialGradient(12,12,0,12,12,12);
-  rg.addColorStop(0,'#ffaa44');
-  rg.addColorStop(0.4, key);
-  rg.addColorStop(1, key + '00');
-  g.fillStyle = rg;
-  g.fillRect(0,0,24,24);
-  // Hot core
-  g.fillStyle = '#ffeeaa';
-  g.beginPath(); g.arc(12,12,3.5,0,Math.PI*2); g.fill();
-  enemyBulletSpriteCache[key] = c;
-  return c;
-}
-
-// Pre-rendered per-type background static layer (halo + vignette)
-const bgStaticCache = {};
-function getBgStatic(type) {
-  if (bgStaticCache[type]) return bgStaticCache[type];
-  const colors = getBGColors(type);
-  const pal = ANIME_PALETTES[type] || null;
-  const c = document.createElement('canvas');
-  c.width = W; c.height = H;
-  const g = c.getContext('2d');
-  // Sky base
-  g.fillStyle = colors.sky;
-  g.fillRect(0,0,W,H);
-  if (type.startsWith('anime')) {
-    if (colors.atmos) {
-      const sg = g.createLinearGradient(0,0,0,H);
-      sg.addColorStop(0, colors.sky);
-      sg.addColorStop(0.6, colors.atmos + '40');
-      sg.addColorStop(1, colors.terrain);
-      g.fillStyle = sg;
-      g.fillRect(0,0,W,H);
-    }
-    if (pal) {
-      // Soft halo
-      const halo = g.createRadialGradient(W/2, H*0.55, 40, W/2, H*0.55, 380);
-      halo.addColorStop(0, pal.glow + '70');
-      halo.addColorStop(0.45, pal.glow + '20');
-      halo.addColorStop(1, 'transparent');
-      g.fillStyle = halo;
-      g.fillRect(0,0,W,H);
-    }
-    // Vignette
-    const vg = g.createRadialGradient(W/2,H/2,220,W/2,H/2,460);
-    vg.addColorStop(0,'rgba(0,0,0,0)');
-    vg.addColorStop(1,'rgba(0,0,0,0.55)');
-    g.fillStyle = vg;
-    g.fillRect(0,0,W,H);
-  }
-  bgStaticCache[type] = c;
-  return c;
-}
-
 // Draw a smooth vector plane. shapeIdx 0-3 = different silhouettes.
 // colors = [body, cockpit, wing, engine_glow]
 // cx must be in identity transform when called.
@@ -997,9 +891,14 @@ function drawAnimeWaifu(type) {
   const pal = ANIME_PALETTES[type] || ANIME_PALETTES.animeSakura;
   const t = frame * 0.02;
 
-  // ── Stage-1: cached static halo (skip per-frame gradient) ────────────────
-  // halo + vignette pre-baked to offscreen; just blit it
-  // (sky was already drawn by drawBackground)
+  // ── Stage-1: distant aura / godrays ───────────────────────────────────────
+  const halo = cx.createRadialGradient(W/2, H*0.55, 40, W/2, H*0.55, 380);
+  halo.addColorStop(0, pal.glow + '70');
+  halo.addColorStop(0.45, pal.glow + '20');
+  halo.addColorStop(1, 'transparent');
+  cx.fillStyle = halo;
+  cx.fillRect(0, 0, W, H);
+
   // Volumetric god-rays (radial streaks)
   cx.save();
   cx.globalAlpha = 0.18;
@@ -1319,8 +1218,12 @@ function drawAnimeWaifu(type) {
 
   cx.restore();
 
-  // Vignette is baked into bgStaticCache and was drawn before god-rays;
-  // re-applying a faint vignette on top keeps focus.
+  // ── Stage-4: subtle vignette to push focus center ──────────────────────
+  const vg = cx.createRadialGradient(W/2, H/2, 220, W/2, H/2, 460);
+  vg.addColorStop(0, 'rgba(0,0,0,0)');
+  vg.addColorStop(1, 'rgba(0,0,0,0.55)');
+  cx.fillStyle = vg;
+  cx.fillRect(0, 0, W, H);
 }
 
 function drawBackground() {
@@ -1329,8 +1232,15 @@ function drawBackground() {
   fillPx(colors.sky, 0, 0, W, H);
 
   if (bgType.startsWith('anime')) {
-    // Cached sky + halo + vignette in one blit
-    cx.drawImage(getBgStatic(bgType), 0, 0);
+    // Subtle gradient sky
+    if (colors.atmos) {
+      const sg = cx.createLinearGradient(0, 0, 0, H);
+      sg.addColorStop(0, colors.sky);
+      sg.addColorStop(0.6, colors.atmos + '40');
+      sg.addColorStop(1, colors.terrain);
+      cx.fillStyle = sg;
+      cx.fillRect(0, 0, W, H);
+    }
     for (const star of bgStars) fillPx(star.color, star.x | 0, star.y | 0, star.size, star.size);
     drawAnimeWaifu(bgType);
     return;
@@ -1656,9 +1566,9 @@ function drawBullets() {
       continue;
     }
     if(b.wave||b.crystal||b.homing) {
-      const sp = getGlowSprite(b.color);
-      const r = b.w * 1.8;
-      cx.drawImage(sp, b.px - r, b.py - r, r*2, r*2);
+      const rg=cx.createRadialGradient(b.px,b.py,0,b.px,b.py,b.w*1.8);
+      rg.addColorStop(0,'#ffffffcc'); rg.addColorStop(.4,b.color); rg.addColorStop(1,b.color+'00');
+      cx.fillStyle=rg; cx.beginPath(); cx.arc(b.px,b.py,b.w*1.8,0,Math.PI*2); cx.fill();
       continue;
     }
     if(b.lightning) {
@@ -1677,8 +1587,10 @@ function drawBullets() {
 
 function drawEnemyBullets() {
   for(const b of enemyBullets) {
-    const sp = getEnemyBulletSprite(b.color || '#ff4400');
-    cx.drawImage(sp, b.px - 12, b.py - 12, 24, 24);
+    const rg=cx.createRadialGradient(b.px,b.py,0,b.px,b.py,7);
+    rg.addColorStop(0,'#ffaa44'); rg.addColorStop(.4,b.color||'#ff4400'); rg.addColorStop(1,(b.color||'#ff4400')+'00');
+    cx.fillStyle=rg; cx.beginPath(); cx.arc(b.px,b.py,7,0,Math.PI*2); cx.fill();
+    cx.fillStyle='#ffeeaa'; cx.beginPath(); cx.arc(b.px,b.py,2,0,Math.PI*2); cx.fill();
   }
 }
 
@@ -3194,9 +3106,9 @@ function drawShop() {
 function drawShopPlanes() {
   const cols=4,cw=110,ch=110,sx=10,sy=115;
   for(let i=0;i<PLANE_SKINS.length;i++){
-    const skin=PLANE_SKINS[i];
     const col=i%cols, row=Math.floor(i/cols);
     const bx=sx+col*cw, by=sy+row*ch;
+    const skin=PLANE_SKINS[i];
     const owned=save.planes[i];
     const isP1=save.selP1===i, isP2=save.selP2===i, isHL=shopSelectedPlane===i;
     fillPx(isHL?'#113355':'#081828',bx+2,by+2,cw-4,ch-4);
@@ -3225,10 +3137,10 @@ function drawShopBGs() {
   cx.save();
   cx.beginPath(); cx.rect(0,sy-2,W,540); cx.clip();
   for(let i=0;i<BG_SKINS.length;i++){
-    const bg=BG_SKINS[i];
     const col=i%cols, row=Math.floor(i/cols);
     const bx=sx+col*cw, by=sy+row*ch - shopBGScroll;
     if (by + ch < sy - 5 || by > sy + 540) continue;
+    const bg=BG_SKINS[i];
     const owned=save.bgs[i], isSel=save.selBG===i, isHL=shopSelectedBG===i;
     const bgc=getBGColors(bg[3]);
     fillPx(bgc.sky,bx+2,by+2,cw-4,42);
@@ -3246,13 +3158,13 @@ function drawShopBGs() {
         cx.fillRect(bx+cw/2-3, by+24, 1.5, 1.5);
         cx.fillRect(bx+cw/2+1.5, by+24, 1.5, 1.5);
       }
-      // 鬼刀 tag
-      cx.fillStyle='#aa1144';
-      cx.fillRect(bx+4, by+4, 32, 12);
+      // 福利姬 tag
+      cx.fillStyle='#ff66aa';
+      cx.fillRect(bx+4, by+4, 38, 12);
       cx.fillStyle='#fff';
       cx.font="bold 9px sans-serif";
       cx.textAlign='left';
-      cx.fillText('鬼刀', bx+8, by+13);
+      cx.fillText('福利姬', bx+6, by+13);
     }
     cx.strokeStyle=isSel?'#00ffff':isHL?'#4488cc':'#334455';
     cx.lineWidth=isSel?2:1;
@@ -3278,12 +3190,7 @@ function clickShop(mx,my) {
   if(mx>=20&&mx<=130&&my>=655&&my<=691){screen='title';shopSelectedPlane=-1;shopSelectedBG=-1;return;}
   if(mx>=350&&mx<=460&&my>=655&&my<=691){equipSelected();return;}
   if(mx>=160&&mx<=330&&my>=655&&my<=691){save.coins+=9999;save.diamonds+=99;writeSave();SFX.buySuccess();return;}
-  // Main tabs row
-  if(my>=68&&my<=102){
-    if(mx>=20&&mx<=230){shopTab=0;shopSelectedPlane=-1;}
-    else if(mx>=250&&mx<=460){shopTab=1;shopSelectedBG=-1;shopBGScroll=0;}
-    return;
-  }
+  if(my>=68&&my<=102){if(mx>=20&&mx<=230){shopTab=0;shopSelectedPlane=-1;}else if(mx>=250&&mx<=460){shopTab=1;shopSelectedBG=-1;}return;}
   if(shopTab===0){
     const cols=4,cw=110,ch=110,sx=10,sy=115;
     for(let i=0;i<PLANE_SKINS.length;i++){
@@ -3301,11 +3208,11 @@ function clickShop(mx,my) {
   } else {
     const cols=2,cw=220,ch=72,sx=15,sy=115;
     for(let i=0;i<BG_SKINS.length;i++){
-      const bg=BG_SKINS[i];
       const bx=sx+(i%cols)*cw, by=sy+Math.floor(i/cols)*ch - shopBGScroll;
-      if(my < sy-2 || my > sy+540) continue;
+      if(my < sy-2 || my > sy+540) break;
       if(mx>=bx&&mx<=bx+cw&&my>=by&&my<=by+ch){
         if(!save.bgs[i]){
+          const bg=BG_SKINS[i];
           if(bg[2]==='free'){save.bgs[i]=true;writeSave();SFX.buySuccess();shopSelectedBG=i;}
           else if(bg[2]==='g'){if(save.coins>=bg[1]){save.coins-=bg[1];save.bgs[i]=true;writeSave();SFX.buySuccess();shopSelectedBG=i;}else SFX.buyFail();}
           else if(bg[2]==='d'){if(save.diamonds>=bg[1]){save.diamonds-=bg[1];save.bgs[i]=true;writeSave();SFX.buySuccess();shopSelectedBG=i;}else SFX.buyFail();}
@@ -3623,7 +3530,6 @@ function startGame(two, endless, startLv) {
   initBGStars(BG_SKINS[save.selBG][3]);
   screen='game';
   if(bgmEnabled) startBGM();
-  if (IS_MOBILE) addFT('滑动控制 · 双击发射导弹', W/2, H/2-30, '#88ccff');
 }
 
 // ─── INPUT ───────────────────────────────────────────────────────────────────
@@ -3666,11 +3572,27 @@ function endJoystick() {
   joy.active = false; joy.id = -1; joy.dx = 0; joy.dy = 0;
 }
 
-// Joystick visual hidden on mobile (touch-drag still controls direction)
-function drawJoystick() { /* no-op: joystick is invisible by design */ }
+function drawJoystick() {
+  if (!IS_MOBILE || !joy.active || screen !== 'game') return;
+  // Outer ring (joystick base)
+  cx.save();
+  cx.globalAlpha = 0.55;
+  cx.strokeStyle = '#88ccff';
+  cx.lineWidth = 3;
+  cx.beginPath(); cx.arc(joy.sx, joy.sy, joy.rad, 0, Math.PI*2); cx.stroke();
+  cx.fillStyle = 'rgba(0,40,80,0.35)';
+  cx.beginPath(); cx.arc(joy.sx, joy.sy, joy.rad, 0, Math.PI*2); cx.fill();
+  // Inner thumb
+  cx.globalAlpha = 0.85;
+  const tg = cx.createRadialGradient(joy.x-6, joy.y-6, 2, joy.x, joy.y, 26);
+  tg.addColorStop(0, '#aaccff'); tg.addColorStop(1, '#1144aa');
+  cx.fillStyle = tg;
+  cx.beginPath(); cx.arc(joy.x, joy.y, 26, 0, Math.PI*2); cx.fill();
+  cx.strokeStyle = '#ffffff'; cx.lineWidth = 2;
+  cx.beginPath(); cx.arc(joy.x, joy.y, 26, 0, Math.PI*2); cx.stroke();
+  cx.restore();
+}
 
-let lastTapTime = 0;
-const DOUBLE_TAP_MS = 280;
 function handleTouchStart(e) {
   if (screen !== 'game') {
     // Touch acts like a click for menu screens
@@ -3688,16 +3610,7 @@ function handleTouchStart(e) {
     e.preventDefault();
     return;
   }
-  // Double-tap fires bomb (mobile manual trigger)
-  const now = performance.now();
-  if (now - lastTapTime < DOUBLE_TAP_MS) {
-    triggerBomb();
-    lastTapTime = 0;
-    e.preventDefault();
-    return;
-  }
-  lastTapTime = now;
-  // Single tap → start invisible joystick (last finger wins)
+  // Game running: any new touch becomes joystick (last finger wins)
   for (const t of e.changedTouches) {
     startJoystick(t);
     break;
@@ -3722,14 +3635,23 @@ canvas.addEventListener('touchmove',  handleTouchMove,  {passive:false});
 canvas.addEventListener('touchend',   handleTouchEnd,   {passive:false});
 canvas.addEventListener('touchcancel',handleTouchEnd,   {passive:false});
 
-// Bomb trigger — desktop: X key; mobile: double-tap anywhere on canvas
+// On-screen mobile bomb button
+const bombBtn = document.getElementById('btn-bomb');
+const bombCountEl = document.getElementById('bomb-count');
 function triggerBomb() {
   if (screen !== 'game') return;
   const p = players[0];
   if (!p || p.dead || p.bombs <= 0) return;
   p.bombs--; doBomb(p); SFX.bomb();
 }
-function refreshBombCount() { /* on-screen button removed — kept as no-op */ }
+bombBtn.addEventListener('touchstart', e=>{ e.preventDefault(); triggerBomb(); }, {passive:false});
+bombBtn.addEventListener('click',     e=>{ e.preventDefault(); triggerBomb(); });
+function refreshBombCount() {
+  if (!IS_MOBILE) return;
+  const p = players[0];
+  bombCountEl.textContent = p ? p.bombs : 0;
+  bombBtn.style.display = (screen==='game') ? '' : 'none';
+}
 
 
 document.addEventListener('keydown',e=>{
@@ -3880,26 +3802,6 @@ function loop() {
 }
 
 initBGStars('space');
-
-// First-tap audio unlock overlay (resumes AudioContext + warms BGM)
-const audioUnlockEl = document.getElementById('audio-unlock');
-let audioUnlocked = false;
-function unlockAudio() {
-  if (audioUnlocked) return;
-  audioUnlocked = true;
-  try {
-    getAudio();
-    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
-    // Warm up BGM scheduler so first track plays immediately
-    if (bgmEnabled) startBGM();
-  } catch(_) {}
-  audioUnlockEl.style.transition = 'opacity .3s';
-  audioUnlockEl.style.opacity = '0';
-  setTimeout(()=>{ audioUnlockEl.style.display = 'none'; }, 320);
-}
-audioUnlockEl.addEventListener('click', unlockAudio);
-audioUnlockEl.addEventListener('touchstart', e=>{ e.preventDefault(); unlockAudio(); }, {passive:false});
-
 loop();
 </script>
 </body>
