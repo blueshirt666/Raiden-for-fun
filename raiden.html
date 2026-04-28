@@ -2269,8 +2269,25 @@ function updateBullets() {
     if(b.wave){b.wPhase+=0.2;b.x=b.baseX+Math.sin(b.wPhase)*b.wAmp;b.px=b.x|0;}
     if(b.crystal){b.vx*=b.slowF;b.vy*=b.slowF;if(Math.abs(b.vx)<0.15&&Math.abs(b.vy)<0.15){b.alive=false;continue;}}
     if(b.homing){
-      const tgt=enemies.find(e=>e.alive&&e.y>-20)||(boss&&boss.alive?boss:null);
-      if(tgt){const dx=tgt.x-b.x,dy=tgt.y-b.y,d=Math.sqrt(dx*dx+dy*dy)||1;b.vx+=dx/d*b.homingStr;b.vy+=dy/d*b.homingStr;const sp=Math.sqrt(b.vx*b.vx+b.vy*b.vy);if(sp>12){b.vx=b.vx/sp*12;b.vy=b.vy/sp*12;}}
+      // Pick the NEAREST visible enemy; fall back to boss
+      let tgt = null, bestD = Infinity;
+      for (const e of enemies) {
+        if (!e.alive || e.y < -10 || e.y > H+10) continue;
+        const dx = e.x - b.x, dy = e.y - b.y;
+        const d = dx*dx + dy*dy;
+        if (d < bestD) { bestD = d; tgt = e; }
+      }
+      if (!tgt && boss && boss.alive) tgt = boss;
+      if (tgt) {
+        const dx = tgt.x - b.x, dy = tgt.y - b.y;
+        const d = Math.sqrt(dx*dx + dy*dy) || 1;
+        // Boost steering strength so missiles can fully reverse direction
+        const str = (b.homingStr || 0.07) * 1.6;
+        b.vx += dx/d * str;
+        b.vy += dy/d * str;
+        const sp = Math.sqrt(b.vx*b.vx + b.vy*b.vy);
+        if (sp > 12) { b.vx = b.vx/sp*12; b.vy = b.vy/sp*12; }
+      }
     }
     if(b.boomerang){
       if (b.boomerangSticky) {
@@ -2986,6 +3003,7 @@ function spawnBoss() {
     pts: 5000 + cappedLv*500,
     extra:0, extra2:0,
     color: def.color, acc: def.acc, name: def.name,
+    bannerTime: 120, bannerLabel: 'WARNING · BOSS',  // 2s spawn banner
   };
 }
 
@@ -3012,22 +3030,16 @@ function updateBoss() {
   }
   if(hr<0.4&&boss.phase===1){
     boss.phase=2;
-    addFT('★  狂  怒  ★', W/2, H/2-40, '#ff0000');
+    boss.bannerTime = 60;                  // 1s rage banner
+    boss.bannerLabel = 'RAGE · 狂  怒';
     addFT(boss.name + ' 进入狂怒形态!', W/2, H/2-15, '#ffff44');
     triggerShake(22, 60);
     bombFlash = 14;
   }
-  // Per-boss movement + attacks (always run for firing patterns)
-  const prevX = boss.x, prevY = boss.y;
+  // Per-boss firing logic runs first (may mutate position; we override below)
   bossLogic(boss);
-  // Phase 0 (100%~70%): pure firing — pin to entry anchor
-  if (boss.phase === 0) {
-    boss.x = prevX;
-    boss.y = prevY;
-    // Slow drift toward anchor for stability
-    boss.x += (boss.anchorX - boss.x) * 0.04;
-    boss.y += (boss.anchorY - boss.y) * 0.04;
-  }
+  // Full-screen 4-mode movement — overrides bossLogic's positional drift
+  applyBossMovement(boss);
   // Phase 1 (70%~40%): can move + periodic dash toward player
   if (boss.phase === 1) {
     if (!boss.dashState) boss.dashState = {state:'idle', timer:0, tx:0};
@@ -3067,6 +3079,51 @@ function updateBoss() {
   boss.x=clamp(boss.x,60,W-60);
   boss.y=clamp(boss.y,40,H-100);
   boss.px=boss.x|0;boss.py=boss.y|0;
+}
+
+// Boss full-screen movement — 4 modes rotating every ~4s; each boss has unique
+// per-mode parameters so trajectories never feel identical between fights.
+function applyBossMovement(b) {
+  const t = b.moveTimer;
+  if (!b.movePhase) b.movePhase = 0;
+  // Mode rotates every 240 frames (~4s), seeded by bossType so order varies
+  const modeSeq = [
+    [0,1,2,3],[1,3,0,2],[2,0,3,1],[3,2,1,0],
+    [0,2,1,3],[1,0,3,2],[2,3,0,1],[3,1,2,0],
+    [0,3,2,1],[1,2,0,3],[2,1,3,0],[3,0,1,2],
+  ][b.bossType % 12];
+  const mode = modeSeq[Math.floor(t/240) % 4];
+  // Per-boss tunings — each boss gets a unique speed/amplitude profile
+  const SP = 0.025 + (b.bossType * 0.0042) % 0.04;
+  const AMP_X = 130 + (b.bossType * 17) % 60;     // 130~190
+  const AMP_Y = 70 + (b.bossType * 13) % 50;      // 70~120
+  const cy = 130 + (b.bossType * 11) % 60;        // 130~190 base center y
+  const tx = t * SP;
+  switch (mode) {
+    case 0: // Horizontal sine sweep
+      b.x = W/2 + Math.sin(tx) * AMP_X;
+      b.y = cy + Math.sin(tx*1.7) * AMP_Y * 0.4;
+      break;
+    case 1: // Figure-8 / lemniscate
+      b.x = W/2 + Math.sin(tx*1.5) * AMP_X;
+      b.y = cy + Math.sin(tx*3.0) * AMP_Y;
+      break;
+    case 2: // Wide circular orbit
+      b.x = W/2 + Math.cos(tx) * AMP_X;
+      b.y = cy + Math.sin(tx) * AMP_Y;
+      break;
+    case 3: { // Erratic dashes — short bursts toward random points
+      if (!b.dashTarget || (t - b.dashSetT|0) > 80) {
+        b.dashTarget = { x: rnd(80, W-80), y: rnd(60, H*0.55) };
+        b.dashSetT = t;
+      }
+      const dx = b.dashTarget.x - b.x, dy = b.dashTarget.y - b.y;
+      const d = Math.sqrt(dx*dx+dy*dy) || 1;
+      b.x += dx/d * 2.8;
+      b.y += dy/d * 2.0;
+      break;
+    }
+  }
 }
 
 // Boss-specific behavior table
@@ -3209,6 +3266,67 @@ function bossLogic(b) {
       }
       break;
     }
+    case 10: { // 水瓶·Aquarius — 倾倒水流弹 + 落雨周期
+      b.x += b.vx*0.7; if(b.x<70||b.x>W-70) b.vx*=-1;
+      // Pouring stream — frequent fast downward droplets
+      if (mt%((10*fireMul)|0)===0) {
+        for (let i=-1;i<=1;i++) {
+          enemyBullets.push({x:b.x+18+i*4, y:b.y+10, px:0,py:0,
+            vx: i*0.6+rnd(-0.3,0.3), vy: 4.2+rnd(0,1.2), alive:true, color:'#88ccff'});
+        }
+      }
+      // Periodic rain wall — wide spread of slow drops
+      if (mt%((90*fireMul)|0)===0) {
+        for (let i=0;i<9;i++) {
+          enemyBullets.push({x:rnd(20,W-20), y:b.y+30, px:0,py:0,
+            vx:0, vy:2.4+rnd(0,1), alive:true, color:'#aaeeff'});
+        }
+      }
+      if (phase>=1 && mt%80===0) {
+        for (let a=0;a<10;a++) {
+          const ag=(a/10)*Math.PI*2;
+          enemyBullets.push({x:b.x,y:b.y,px:0,py:0,
+            vx:Math.cos(ag)*2.6, vy:Math.sin(ag)*2.6, alive:true, color:'#44ccff'});
+        }
+      }
+      break;
+    }
+    case 11: { // 双鱼·Pisces — 阴阳追击 + 双向螺旋
+      b.x += b.vx*0.5; if(b.x<70||b.x>W-70) b.vx*=-1;
+      // Twin fish bullets that curve outward
+      const fr = phase>=2 ? 8 : phase>=1 ? 14 : 22;
+      if (mt%(fr|0)===0) {
+        const ang = mt*0.07;
+        for (let s=-1;s<=1;s+=2) {
+          const a = ang*s + (s>0?0:Math.PI);
+          enemyBullets.push({x:b.x, y:b.y+10, px:0,py:0,
+            vx:Math.cos(a)*2.2, vy:Math.sin(a)*2.2+1.6, alive:true,
+            color:s>0?'#ff66aa':'#aaffff'});
+        }
+      }
+      // Aimed twin homing-ish shots toward player
+      if (mt%((45*fireMul)|0)===0) {
+        const t = players.find(p=>!p.dead);
+        if (t) {
+          const dx = t.x - b.x, dy = t.y - b.y, d = Math.sqrt(dx*dx+dy*dy)||1;
+          for (let off=-1; off<=1; off+=2) {
+            enemyBullets.push({x:b.x+off*16, y:b.y+10, px:0,py:0,
+              vx:dx/d*3.4 + off*0.6, vy:dy/d*3.4, alive:true,
+              color: off<0?'#ff66aa':'#aaffff'});
+          }
+        }
+      }
+      // Phase 1: spinning yin-yang ring; phase 2: dense radial
+      if (phase>=1 && mt%70===0) {
+        for (let a=0;a<12;a++) {
+          const ag=(a/12)*Math.PI*2 + mt*0.04;
+          const col = a%2===0 ? '#ff66aa' : '#aaffff';
+          enemyBullets.push({x:b.x,y:b.y,px:0,py:0,
+            vx:Math.cos(ag)*2.4, vy:Math.sin(ag)*2.4, alive:true, color:col});
+        }
+      }
+      break;
+    }
     case 9: { // 终极要塞: alternating barrages + cross beams
       b.x += b.vx*0.7; if(b.x<70||b.x>W-70) b.vx*=-1;
       const segment = (mt/30|0)%4;
@@ -3238,6 +3356,49 @@ function drawBoss() {
   if(!boss||!boss.alive) return;
   const b=boss;
   const x=b.px, y=b.py;
+  // Boss banner (spawn 2s / rage 1s) — flashing semi-transparent strip across center
+  if (b.bannerTime > 0) {
+    const flash = Math.sin(b.bannerTime * 0.5) * 0.35 + 0.55;
+    const isRage = b.bannerLabel && b.bannerLabel.indexOf('狂') >= 0;
+    const baseCol = isRage ? '#ff0033' : '#ffaa00';
+    cx.save();
+    // Diagonal stripe pattern background
+    const bandY = H/2 - 36, bandH = 72;
+    cx.fillStyle = `rgba(20,0,0,${0.35*flash})`;
+    cx.fillRect(0, bandY, W, bandH);
+    // Glowing borders
+    cx.fillStyle = baseCol;
+    cx.globalAlpha = flash;
+    cx.fillRect(0, bandY-2, W, 3);
+    cx.fillRect(0, bandY+bandH-1, W, 3);
+    // Animated diagonal stripes
+    cx.globalAlpha = 0.25 * flash;
+    for (let i=-bandH; i<W+bandH; i+=20) {
+      cx.beginPath();
+      const off = (frame * 2) % 20;
+      cx.moveTo(i + off, bandY);
+      cx.lineTo(i + off + bandH, bandY + bandH);
+      cx.lineTo(i + off + bandH + 8, bandY + bandH);
+      cx.lineTo(i + off + 8, bandY);
+      cx.closePath();
+      cx.fillStyle = baseCol;
+      cx.fill();
+    }
+    // Banner text
+    cx.globalAlpha = flash;
+    cx.textAlign = 'center';
+    cx.fillStyle = '#000';
+    cx.font = "bold 26px 'Courier New', monospace";
+    cx.fillText(b.bannerLabel || 'BOSS', W/2 + 2, H/2 + 8);
+    cx.fillStyle = isRage ? '#ffeeaa' : '#ffffff';
+    cx.fillText(b.bannerLabel || 'BOSS', W/2, H/2 + 6);
+    cx.fillStyle = baseCol;
+    cx.font = "11px 'Courier New', monospace";
+    cx.fillText(b.name, W/2, H/2 + 26);
+    cx.restore();
+    cx.textAlign = 'left';
+    b.bannerTime--;
+  }
   // Wide ground-shadow blob
   cx.fillStyle = 'rgba(0,0,0,0.45)';
   cx.beginPath(); cx.ellipse(x + 6, y + 56, 70, 12, 0, 0, Math.PI*2); cx.fill();
@@ -3605,8 +3766,15 @@ function updatePickups() {
   pickups=pickups.filter(p=>p.alive);
 }
 
-const WINGMAN_NAMES=['激光僚机','导弹僚机','防盾僚机','散弹僚机','轰炸僚机'];
-const WINGMAN_COLORS=['#00ffff','#ffcc00','#00ff88','#ff8800','#ff4488'];
+// 10 wingmen — each with a distinct firing style.  (Index 2 'shield' removed; replaced by 散弹.)
+const WINGMAN_NAMES = [
+  '激光僚机','导弹僚机','散弹僚机','轰炸僚机','等离子僚机',
+  '闪电僚机','冰晶僚机','火焰僚机','双管僚机','轨道僚机',
+];
+const WINGMAN_COLORS = [
+  '#00ffff','#ffcc00','#ff8800','#ff4488','#aa44ff',
+  '#88ffff','#aaeeff','#ff5522','#dddddd','#ffdd44',
+];
 
 function drawPickupIcon(pk) {
   const x=pk.px, y=pk.py;
@@ -3810,6 +3978,24 @@ const WINGMAN_OFFSETS=[
 ];
 
 const WINGMAN_MAX = 2;
+// Pick a wingman type for drops; types the player already owns are 2× more likely
+function rollWingmanType() {
+  const p = players.find(p=>!p.dead) || players[0];
+  const owned = p ? wingmen.filter(w=>w.owner===p && w.alive).map(w=>w.wType) : [];
+  const total = WINGMAN_NAMES.length;
+  let sum = 0;
+  const w = [];
+  for (let i=0;i<total;i++) {
+    const wt = owned.includes(i) ? 2 : 1;
+    w.push(wt); sum += wt;
+  }
+  let r = Math.random() * sum;
+  for (let i=0;i<total;i++) {
+    r -= w[i];
+    if (r <= 0) return i;
+  }
+  return rndInt(0, total-1);
+}
 function spawnWingman(player, wType) {
   const owned = wingmen.filter(w=>w.owner===player&&w.alive);
   // Same color picked again → level up existing one (max 5)
@@ -3847,7 +4033,6 @@ function spawnWingman(player, wType) {
     owner:player, wType, alive:true, level: inheritedLevel,
     x:player.x, y:player.y, fireTimer:0,
     dx: slotDx, dy: slotDy,
-    shieldTimer: wType===2 ? 400 : 0,
   });
   if (inheritedLevel > 1) {
     addFT(WINGMAN_NAMES[wType]+' 继承 Lv'+inheritedLevel, player.x, player.y-30, WINGMAN_COLORS[wType]);
@@ -3869,19 +4054,14 @@ function updateWingmen() {
   for(const w of wingmen) {
     if(!w.alive) continue;
     if(w.owner.dead) { w.alive=false; continue; }
-    // Smoothly follow player with offset
     const tx=w.owner.x+w.dx, ty=w.owner.y+w.dy;
     w.x+=(tx-w.x)*0.12; w.y+=(ty-w.y)*0.12;
     w.fireTimer++;
     const lv = w.level||1;
-    const rates=[20,35,0,18,50]; // shield doesn't fire bullets
+    // Fire intervals per type (10 wingmen)
+    const rates=[20,35,11,50,28, 14,22,18,16,24];
     const fireRate = Math.max(4, rates[w.wType] - (lv-1)*3);
-    if(w.wType===2) {
-      // Shield wingman: gives player a shield that blocks (2+lv) hits
-      if(w.fireTimer>=60&&w.owner.shield<=0) {
-        w.owner.shield=300; w.owner.shieldHits = 2 + lv; w.fireTimer=0;
-      }
-    } else if(w.fireTimer>=fireRate) {
+    if(w.fireTimer>=fireRate) {
       w.fireTimer=0;
       fireWingmanBullet(w);
     }
@@ -3893,15 +4073,15 @@ function fireWingmanBullet(w) {
   const x=w.x, y=w.y, lv=w.level||1;
   const dmgMul = 1 + (lv-1) * 0.45;
   switch(w.wType) {
-    case 0: // laser
-      bullets.push(mkB(x,y,0,-14,'#00ffff',2 + Math.floor(lv/2),16,w.owner, Math.round(12*dmgMul),true));
+    case 0: // 激光
+      bullets.push(mkB(x,y,0,-14,'#00ffff',2+Math.floor(lv/2),16,w.owner, Math.round(12*dmgMul),true));
       break;
-    case 1: // missile
+    case 1: // 导弹
       bullets.push(mkB(x,y,0,-8,'#ffcc00',4,8,w.owner, Math.round(22*dmgMul)));
       if (lv>=3) bullets.push(mkB(x-6,y+4,-1,-8,'#ffaa00',3,7,w.owner, Math.round(14*dmgMul)));
       if (lv>=5) bullets.push(mkB(x+6,y+4, 1,-8,'#ffaa00',3,7,w.owner, Math.round(14*dmgMul)));
       break;
-    case 3: { // spread — extra pellets per level
+    case 2: { // 散弹 — multi-pellet
       const num = 3 + (lv-1);
       for (let i=0;i<num;i++) {
         const t = num>1 ? (i/(num-1)-0.5)*4 : 0;
@@ -3909,9 +4089,65 @@ function fireWingmanBullet(w) {
       }
       break;
     }
-    case 4: // bomber — heavy, scaling damage
-      bullets.push(mkB(x,y,0,-5,'#ff44aa',8 + lv,8 + lv,w.owner, Math.round(40*dmgMul)));
+    case 3: // 轰炸 — heavy slow shot
+      bullets.push(mkB(x,y,0,-5,'#ff44aa',8+lv,8+lv,w.owner, Math.round(40*dmgMul)));
       break;
+    case 4: { // 等离子 — large orb + side wave
+      const sz = 7 + lv;
+      bullets.push(mkB(x,y,0,-7,'#aa44ff',sz,sz,w.owner, Math.round(28*dmgMul)));
+      if (lv>=3) {
+        bullets.push(mkB(x-8,y+2,-0.6,-6,'#cc66ff',sz-2,sz-2,w.owner, Math.round(14*dmgMul)));
+        bullets.push(mkB(x+8,y+2, 0.6,-6,'#cc66ff',sz-2,sz-2,w.owner, Math.round(14*dmgMul)));
+      }
+      break;
+    }
+    case 5: { // 闪电 — chained jagged bolt
+      const lCount = 1 + Math.ceil(lv/2);
+      for (let i=0;i<lCount;i++) {
+        const ox = (i-(lCount-1)/2)*8;
+        const b = mkB(x+ox,y,ox*0.04,-13,'#88ffff',3,12,w.owner, Math.round(15*dmgMul));
+        b.lightning = true;
+        bullets.push(b);
+      }
+      break;
+    }
+    case 6: { // 冰晶 — slow piercing crystals
+      const cCount = 3 + lv;
+      for (let i=0;i<cCount;i++) {
+        const ag = (i/cCount)*Math.PI - Math.PI/2;
+        const b = mkB(x,y, Math.cos(ag)*2.4, Math.sin(ag)*2.4-7, '#aaeeff', 5+Math.floor(lv/2), 5+Math.floor(lv/2), w.owner, Math.round(16*dmgMul));
+        b.crystal = true; b.slowF = 0.97;
+        bullets.push(b);
+      }
+      break;
+    }
+    case 7: { // 火焰 — three forward fire pellets that flicker
+      for (let i=-1;i<=1;i++) {
+        bullets.push(mkB(x + i*4, y - i*1, i*0.6, -11, '#ff5522', 5, 7, w.owner, Math.round(14*dmgMul)));
+      }
+      if (lv>=4) bullets.push(mkB(x, y-6, 0, -13, '#ffaa00', 7, 9, w.owner, Math.round(22*dmgMul)));
+      break;
+    }
+    case 8: { // 双管 — parallel chrome rounds
+      bullets.push(mkB(x-4,y,0,-15,'#dddddd',3,8,w.owner, Math.round(13*dmgMul)));
+      bullets.push(mkB(x+4,y,0,-15,'#dddddd',3,8,w.owner, Math.round(13*dmgMul)));
+      if (lv>=3) bullets.push(mkB(x,y-2,0,-15,'#ffffff',2,7,w.owner, Math.round(10*dmgMul)));
+      if (lv>=5) {
+        bullets.push(mkB(x-9,y+2,-0.3,-14,'#cccccc',2,6,w.owner, Math.round(10*dmgMul)));
+        bullets.push(mkB(x+9,y+2, 0.3,-14,'#cccccc',2,6,w.owner, Math.round(10*dmgMul)));
+      }
+      break;
+    }
+    case 9: { // 轨道 — orbiting / homing rounds
+      const num = 1 + Math.ceil(lv/2);
+      for (let i=0;i<num;i++) {
+        const off = (i - (num-1)/2) * 6;
+        const b = mkB(x+off, y, off*0.05, -9, '#ffdd44', 4, 8, w.owner, Math.round(18*dmgMul));
+        b.homing = true; b.homingStr = 0.06 + lv*0.01;
+        bullets.push(b);
+      }
+      break;
+    }
   }
 }
 
@@ -4162,12 +4398,12 @@ function killEnemy(e) {
   }
   // Power-up drops (console-tunable multiplier)
   const dropMul = clamp(C.dropRateMul || 1, 0, 5);
-  const dr = Math.random() / dropMul;   // smaller dr → higher chance
+  const dr = Math.random() / dropMul;
   if(dr<0.10)       spawnPickup(e.x,e.y,'weapon',rndInt(0,9));
   else if(dr<0.22)  spawnPickup(e.x,e.y,'star',1);
   else if(dr<0.27)  spawnPickup(e.x,e.y,'life',1);
   else if(dr<0.32)  spawnPickup(e.x,e.y,'bomb',1);
-  else if(dr<0.40)  spawnPickup(e.x,e.y,'wingman',rndInt(0,4));
+  else if(dr<0.40)  spawnPickup(e.x,e.y,'wingman', rollWingmanType());
   else if(dr<0.45)  spawnPickup(e.x,e.y,'shield',1);
   SFX[e.type==='carrier'||e.type==='tank'||e.type==='elite'?'killBig':'killBasic']();
 }
@@ -4810,14 +5046,19 @@ function drawCodexBosses(startY) {
 }
 
 function drawCodexWingmen(startY) {
-  const rowH = 70;
+  const rowH = 64;
   cx.textAlign='left';
   const descs = [
     '持续直射激光, Lv 越高弹幅越宽, 攻速提升',
     '单发高伤导弹, Lv3+追加双侧, Lv5+大量齐射',
-    '不开火但自动给玩家 (2+lv) 次抗弹护盾',
     '三向散射, Lv 越高弹丸数 +1',
     '大体积重弹, Lv 越高伤害爆发显著',
+    '紫色等离子球, Lv3+追加左右副弹',
+    '蓝白闪电锯齿, Lv 越高弹道越宽',
+    '冰晶扇面发射, 弹丸缓速漂移',
+    '橘红火焰三连, Lv4+追加中央火炮',
+    '银白双管平行弹, Lv3+中弹, Lv5+外侧副弹',
+    '金色追踪弹, 自带追踪能力',
   ];
   for (let i=0;i<WINGMAN_NAMES.length;i++) {
     const ry = startY + i*rowH + 6;
