@@ -900,13 +900,19 @@ function shadeHex(hex, amt) {
   return '#'+[f(r),f(g),f(b)].map(v=>v.toString(16).padStart(2,'0')).join('');
 }
 
-function drawVectorPlane(shapeIdx, colors, cx2, px, py, sc, flip) {
+function drawVectorPlane(shapeIdx, colors, cx2, px, py, sc, flip, bank) {
   const [bc, cc, wc, gc] = colors;
   const s = sc || 1;
   const bcL = shadeHex(bc, 35), bcD = shadeHex(bc, -45);
   const wcD = shadeHex(wc, -35);
+  const bk = clamp(bank || 0, -1, 1);
   cx2.save();
   cx2.translate(px, py);
+  // Banking: rotate slightly + horizontal squash to fake wing-roll
+  if (bk !== 0) {
+    cx2.rotate(bk * 0.18);
+    cx2.scale(1 - 0.32 * Math.abs(bk), 1);
+  }
   cx2.scale(s, flip ? -s : s);
   cx2.lineCap = 'round'; cx2.lineJoin = 'round';
 
@@ -1834,6 +1840,8 @@ function createPlayer(pNum, skinIdx) {
     lives:3, bombs:3,
     skinIdx,
     weapon:0, weaponLevel:1,
+    weaponMax:0,            // frames remaining of LV MAX state
+    bank:0,                 // -1..1 banking factor (left/right roll)
     shield:0, invTimer:0, shootTimer:0,
     pNum, dead:false, respawnTimer:0,
     _bombHeld:false,
@@ -1846,8 +1854,25 @@ function drawPlayer(p) {
   const skin = PLANE_SKINS[p.skinIdx];
   const colors = [...skin[4]];
   if (p.pNum===2) colors[0]=shiftColor(colors[0],30);
-  drawVectorPlane(skin[3], colors, cx, p.px, p.py, 1, false);
-  // Vulnerability indicator: tiny red dot on cockpit head — only place that takes damage
+  // Ground shadow under plane
+  cx.fillStyle = 'rgba(0,0,0,0.32)';
+  cx.beginPath();
+  cx.ellipse(p.px + 6, p.py + 22, 18 * (1 - 0.3*Math.abs(p.bank||0)), 5, 0, 0, Math.PI*2);
+  cx.fill();
+  // LV MAX rainbow halo behind plane
+  if (p.weaponMax > 0) {
+    const t = frame * 0.3;
+    for (let i = 0; i < 3; i++) {
+      const ag = t + i * 2.094;
+      cx.strokeStyle = `hsl(${(t*40+i*120)%360}, 100%, 65%)`;
+      cx.lineWidth = 1.5;
+      cx.beginPath();
+      cx.ellipse(p.px, p.py, 24 + i*3, 30 + i*3, ag, 0, Math.PI * 1.4);
+      cx.stroke();
+    }
+  }
+  drawVectorPlane(skin[3], colors, cx, p.px, p.py, 1, false, p.bank || 0);
+  // Vulnerability indicator: tiny red dot on cockpit head
   cx.fillStyle = `rgba(255, 60, 60, ${0.7 + Math.sin(frame*0.4)*0.3})`;
   cx.beginPath(); cx.arc(p.px, p.py - 12, 2.4, 0, Math.PI*2); cx.fill();
   cx.fillStyle = 'rgba(255,200,200,0.9)';
@@ -1872,6 +1897,11 @@ function updatePlayer(p, keys) {
   if (p.invTimer>0) p.invTimer--;
   if (p.shootTimer>0) p.shootTimer--;
   if (p.shield>0) p.shield--;
+  // Lv MAX countdown — when it ends, weapon falls back to Lv5 (still maxed level)
+  if (p.weaponMax > 0) {
+    p.weaponMax--;
+    if (p.weaponMax === 0) addFT('LV MAX 已结束', p.x, p.y-22, '#ffaaaa');
+  }
 
   let dx=0,dy=0;
   if (p.pNum===1) {
@@ -1895,6 +1925,8 @@ function updatePlayer(p, keys) {
   p.x+=dx*p.speed*sX; p.y+=dy*p.speed*sY;
   p.x=clamp(p.x,12,W-12); p.y=clamp(p.y,12,H-12);
   p.px=p.x|0; p.py=p.y|0;
+  // Banking — eased toward current dx; gives wing-roll feel
+  p.bank = (p.bank||0)*0.82 + dx*0.18;
 
   // Fire: P1 auto-fires (mobile + desktop); P2 keeps manual key J
   let fireKey;
@@ -1924,10 +1956,122 @@ function mkLaser(x,playerY,wl,owner) {
           owner,dmg:(4+wl*3)*0.5,alive:true,isLaserBeam:true,life:4,wl};
 }
 
+// ─── LV MAX FIRE FORMS — flashy & overpowered (5s) ──────────────────────────
+function fireBulletMax(p) {
+  const x=p.x, y=p.y;
+  switch (p.weapon) {
+    case 0: { // 标准炮 MAX → 三排齐射 + 中央白色加农
+      for (let row=0; row<3; row++) {
+        const ry = y - 8 - row*6;
+        for (let i=-3;i<=3;i++) {
+          bullets.push(mkB(x + i*9, ry, i*0.4, -14, i===0?'#ffffff':'#aaffff', 4, 8, p, 28));
+        }
+      }
+      p.shootTimer = 2;
+      break;
+    }
+    case 1: { // 散弹枪 MAX → 全角度满屏散弹
+      const num = 17, spread = 1.5;
+      for (let i=0;i<num;i++) {
+        const t = (i/(num-1)-0.5)*2*spread;
+        bullets.push(mkB(x, y-6, t*4.5, -9 + Math.abs(t)*-1.2, '#ff8800', 5, 6, p, 18));
+      }
+      for (let i=-2;i<=2;i++) bullets.push(mkB(x, y-12, i*1.2, -12, '#ffffff', 6, 8, p, 30));
+      p.shootTimer = 5;
+      break;
+    }
+    case 2: { // 激光炮 MAX → 7 道大型彩虹光柱
+      for (let i=-3;i<=3;i++) {
+        const lb = mkLaser(x + i*42, y, 5, p);
+        lb.color = i===0 ? '#ffffff' : (i%2===0 ? '#ff44ff' : '#44ffff');
+        lb.w = i===0 ? 9 : 6;
+        lb.dmg = 12;
+        bullets.push(lb);
+      }
+      p.shootTimer = 2;
+      break;
+    }
+    case 3: { // 制导导弹 MAX → 7 枚紫色追踪弹
+      for (let i=0;i<7;i++) {
+        const off = (i-3)*10;
+        const b = mkB(x+off, y-10, off*0.04, -8-(i%2), '#ff44ff', 6, 12, p, 80);
+        b.homing = true; b.homingStr = 0.18; bullets.push(b);
+      }
+      p.shootTimer = 6;
+      break;
+    }
+    case 4: { // 等离子炮 MAX → 巨型核心 + 卫星轨道弹
+      bullets.push(mkB(x, y-12, 0, -6, '#ffffff', 26, 26, p, 220));
+      for (let i=0;i<10;i++) {
+        const ag = (i/10)*Math.PI*2 + frame*0.05;
+        bullets.push(mkB(x, y, Math.cos(ag)*5, Math.sin(ag)*5-3, '#ff00ff', 8, 8, p, 35));
+      }
+      p.shootTimer = 5;
+      break;
+    }
+    case 5: { // 闪电链 MAX → 5 道粗闪电
+      for (let i=-2;i<=2;i++) {
+        const b = mkB(x + i*12, y-10, i*0.18, -16, '#ffffff', 6, 18, p, 42);
+        b.lightning = true;
+        bullets.push(b);
+      }
+      p.shootTimer = 3;
+      break;
+    }
+    case 6: { // 回旋镖 MAX → 8 道环绕回旋镖（持续到下一关）
+      for (let i=0;i<8;i++) {
+        const ag = (i/8)*Math.PI*2;
+        const b = mkB(x, y, Math.cos(ag)*5, Math.sin(ag)*5-2, '#00ff88', 7, 7, p, 30);
+        b.boomerang = true; b.bTimer = 0; b.boomerangSticky = true;
+        bullets.push(b);
+      }
+      p.shootTimer = 8;
+      break;
+    }
+    case 7: { // 波动炮 MAX → 7 路相位错开的正弦波
+      for (let i=0;i<7;i++) {
+        const ph = (i/6)*Math.PI*2;
+        bullets.push({x,y,px:x|0,py:y|0,vx:0,vy:-12,color:'#ffffff',w:7,h:10,
+          owner:p,dmg:48,alive:true,wave:true,wPhase:ph,wAmp:32,baseX:x});
+      }
+      p.shootTimer = 4;
+      break;
+    }
+    case 8: { // 龙卷炮 MAX → 高密度旋风
+      const n=18, baseAng = frame*0.25;
+      for (let i=0;i<n;i++) {
+        const ag = (i/n)*Math.PI*2 + baseAng;
+        bullets.push(mkB(x, y, Math.cos(ag)*6, Math.sin(ag)*6-8, '#ff44ff', 6, 6, p, 26));
+      }
+      p.shootTimer = 3;
+      break;
+    }
+    case 9: { // 冰晶炮 MAX → 冰风暴 + 巨型核心
+      for (let i=0;i<14;i++) {
+        const ag = (i/14)*Math.PI*2-Math.PI/2;
+        const b = mkB(x, y, Math.cos(ag)*4.5, Math.sin(ag)*4.5-5, '#aaffff', 9, 9, p, 50);
+        b.crystal = true; b.slowF = 0.97;
+        bullets.push(b);
+      }
+      const big = mkB(x, y-12, 0, -3, '#ffffff', 22, 22, p, 220);
+      big.crystal = true; big.slowF = 0.985;
+      bullets.push(big);
+      p.shootTimer = 6;
+      break;
+    }
+  }
+}
+
 function fireBullet(p) {
   const x=p.x, y=p.y, wl=p.weaponLevel;
   const delays=[7,11,3,18,11,8,20,10,18,14];
   p.shootTimer=Math.max(1,(delays[p.weapon]-(wl-1)*1)|0);
+
+  // ─ LV MAX 超级形态 (5s) ─
+  if (p.weaponMax > 0) {
+    fireBulletMax(p);
+    return;
+  }
 
   switch(p.weapon) {
     case 0: { // 标准炮 - 5 levels, more barrels + speed
@@ -1980,15 +2124,20 @@ function fireBullet(p) {
       }
       break;
     }
-    case 6: { // 回旋镖 - boomerangs
+    case 6: { // 回旋镖 - 持续整关，下关清除
       const bCount=Math.ceil(wl/2);
       for(const s of[-1,1]){
         for(let i=0;i<bCount;i++){
           const b=mkB(x,y-8,s*(3+i*1.2),-9+i*.3,'#00ff88',5,5,p,13+wl*4);
-          b.boomerang=true;b.bTimer=0; bullets.push(b);
+          b.boomerang=true; b.bTimer=0; b.boomerangSticky=true;
+          bullets.push(b);
         }
       }
-      if(wl===5) bullets.push(mkB(x,y-14,0,-12,'#00ffaa',6,6,p,20));
+      if(wl===5) {
+        const bb = mkB(x,y-14,0,-12,'#00ffaa',6,6,p,20);
+        bb.boomerang=true; bb.bTimer=0; bb.boomerangSticky=true;
+        bullets.push(bb);
+      }
       break;
     }
     case 7: { // 波动炮 - sinusoidal wave shots [NEW]
@@ -2037,10 +2186,21 @@ function updateBullets() {
       const tgt=enemies.find(e=>e.alive&&e.y>-20)||(boss&&boss.alive?boss:null);
       if(tgt){const dx=tgt.x-b.x,dy=tgt.y-b.y,d=Math.sqrt(dx*dx+dy*dy)||1;b.vx+=dx/d*b.homingStr;b.vy+=dy/d*b.homingStr;const sp=Math.sqrt(b.vx*b.vx+b.vy*b.vy);if(sp>12){b.vx=b.vx/sp*12;b.vy=b.vy/sp*12;}}
     }
-    if(b.boomerang){b.bTimer++;if(b.bTimer>22)b.vx*=0.91;if(b.bTimer>32){b.vy=Math.abs(b.vy)*.25;}}
+    if(b.boomerang){
+      if (b.boomerangSticky) {
+        // Bounce off screen edges, never die — cleared at level change
+        if (b.x < 12 && b.vx < 0) b.vx = -b.vx;
+        if (b.x > W-12 && b.vx > 0) b.vx = -b.vx;
+        if (b.y < 12 && b.vy < 0) b.vy = -b.vy;
+        if (b.y > H-12 && b.vy > 0) b.vy = -b.vy;
+      } else {
+        b.bTimer++; if(b.bTimer>22) b.vx*=0.91;
+        if(b.bTimer>32){b.vy=Math.abs(b.vy)*.25;}
+      }
+    }
     b.x+=b.vx; b.y+=b.vy;
     b.px=b.x|0; b.py=b.y|0;
-    if(b.x<-40||b.x>W+40||b.y<-40||b.y>H+40) b.alive=false;
+    if (!b.boomerangSticky && (b.x<-40||b.x>W+40||b.y<-40||b.y>H+40)) b.alive=false;
   }
   bullets=bullets.filter(b=>b.alive);
 }
@@ -2301,7 +2461,22 @@ function drawEnemy(e) {
   const x=e.px, y=e.py;
   // Off-screen cull — skip work entirely
   if (x < -e.w || x > W + e.w || y < -e.h || y > H + e.h) return;
+  // Track horizontal velocity for banking
+  if (typeof e.lastX !== 'number') e.lastX = e.x;
+  const dxDelta = e.x - e.lastX;
+  e.lastX = e.x;
+  e.bank = clamp((e.bank||0)*0.7 + dxDelta*0.18, -1, 1);
+  // Ground shadow
+  cx.fillStyle = 'rgba(0,0,0,0.30)';
+  cx.beginPath();
+  cx.ellipse(x + 5, y + e.h*0.55, e.w*0.5*(1-0.25*Math.abs(e.bank)), 4, 0, 0, Math.PI*2);
+  cx.fill();
   cx.save(); cx.translate(x, y);
+  // Banking transform
+  if (e.bank) {
+    cx.rotate(e.bank * 0.15);
+    cx.scale(1 - 0.22*Math.abs(e.bank), 1);
+  }
   const rg=cx.createRadialGradient(0,-e.h*0.15,2,0,0,e.w*0.65);
   rg.addColorStop(0,'#ffffffaa'); rg.addColorStop(0.3,e.col); rg.addColorStop(1,e.col+'22');
 
@@ -2890,8 +3065,23 @@ function drawBoss() {
   if(!boss||!boss.alive) return;
   const b=boss;
   const x=b.px, y=b.py;
+  // Wide ground-shadow blob
+  cx.fillStyle = 'rgba(0,0,0,0.45)';
+  cx.beginPath(); cx.ellipse(x + 6, y + 56, 70, 12, 0, 0, Math.PI*2); cx.fill();
   cx.save(); cx.translate(x, y);
   drawBossShape(b);
+  // Top-edge specular highlight (universal — adds metallic realism)
+  const hg = cx.createLinearGradient(0,-50,0,-15);
+  hg.addColorStop(0, 'rgba(255,255,255,0.45)');
+  hg.addColorStop(1, 'rgba(255,255,255,0)');
+  cx.fillStyle = hg;
+  cx.beginPath(); cx.ellipse(0, -36, 35, 16, 0, 0, Math.PI*2); cx.fill();
+  // Bottom inner shadow for depth
+  const sg = cx.createLinearGradient(0, 20, 0, 55);
+  sg.addColorStop(0, 'rgba(0,0,0,0)');
+  sg.addColorStop(1, 'rgba(0,0,0,0.45)');
+  cx.fillStyle = sg;
+  cx.beginPath(); cx.ellipse(0, 38, 50, 12, 0, 0, Math.PI*2); cx.fill();
   cx.restore();
 
   // HP bar at TOP (under HUD); shows current segment + xN remaining
@@ -3411,8 +3601,18 @@ function collectPickups() {
             break;
           }
           case 'star':
-            if(p.weaponLevel<5){p.weaponLevel++;SFX.levelUp();}else SFX.pickupStar();
-            addFT('★UP',pk.x,pk.y,'#ffff00'); break;
+            if(p.weaponLevel<5){
+              p.weaponLevel++;
+              SFX.levelUp();
+              addFT('★UP',pk.x,pk.y,'#ffff00');
+            } else {
+              // Already Lv5 → grant 5 seconds of LV MAX (stacks)
+              p.weaponMax = (p.weaponMax || 0) + 300;
+              SFX.levelUp();
+              triggerShake(6, 12);
+              addFT('★ LV MAX ★', pk.x, pk.y, '#ff66ff');
+            }
+            break;
           case 'life':
             p.lives++; addFT('+1UP',pk.x,pk.y,'#ff4444'); SFX.pickupLife(); break;
           case 'bomb':
@@ -3766,6 +3966,8 @@ function killBoss() {
     }, 1400);
     return;
   }
+  // Clear sticky boomerangs at level transition
+  for (const bb of bullets) if (bb.boomerang) bb.alive = false;
   level++; killCount=0; waveTimer=0;
   if (!endlessMode && level <= 12) {
     const tier = currentTier();
@@ -3928,8 +4130,14 @@ function drawHUD() {
     cx.fillText('♥'.repeat(Math.max(0,p.lives)),px,yb);
     cx.fillStyle='#4444ff';
     cx.fillText('◆'.repeat(Math.max(0,p.bombs)),px,yb+13);
-    cx.fillStyle='#ffaa00';cx.font="9px 'Courier New', monospace";
-    cx.fillText(WEAPON_NAMES[p.weapon]+' Lv'+p.weaponLevel,px,yb+25);
+    cx.fillStyle = (p.weaponMax>0) ? '#ff66ff' : '#ffaa00';
+    cx.font="9px 'Courier New', monospace";
+    if (p.weaponMax > 0) {
+      const sec = Math.ceil(p.weaponMax/60);
+      cx.fillText(WEAPON_NAMES[p.weapon]+' ★MAX '+sec+'s', px, yb+25);
+    } else {
+      cx.fillText(WEAPON_NAMES[p.weapon]+' Lv'+p.weaponLevel, px, yb+25);
+    }
     // Wingman slots (up to 2): name + Lv per slot, color-coded
     const myWing=wingmen.filter(w=>w.owner===p&&w.alive);
     cx.font="9px 'Courier New', monospace";
