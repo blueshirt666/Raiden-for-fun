@@ -1051,13 +1051,20 @@ function shouldEnableScreenMissiles() {
     const tier = currentTier();
     return tier === 'veteran' || tier === 'hell';
   }
-  return level >= 30;
+  return level >= 10;
 }
 function maxConcurrentMissiles() {
   if (endlessMode) {
-    return clamp(1 + Math.floor((level - 30) / 15), 1, 4);
+    // Lv10 → 1, Lv25 → 2, Lv45 → 3, Lv70+ → 4
+    if (level < 25) return 1;
+    if (level < 45) return 2;
+    if (level < 70) return 3;
+    return 4;
   }
-  return currentTier() === 'hell' ? 3 : 2;
+  // Veteran starts gentle, hell ramps faster
+  const lvScale = Math.min(level / 12, 1);
+  if (currentTier() === 'hell') return clamp(1 + Math.floor(lvScale * 2.5), 1, 3);
+  return clamp(1 + Math.floor(lvScale * 1.5), 1, 2);
 }
 function trySpawnScreenMissile() {
   if (screenMissiles.length >= maxConcurrentMissiles()) return;
@@ -1091,21 +1098,65 @@ function updateScreenMissiles() {
       continue;
     }
     m.fireT++;
-    // Player damage when beam is bright (first half of fire)
-    if (m.fireT > 0 && m.fireT < 18) {
+    // Damage tracks the ICBM HEAD position across the screen, not the full line
+    if (m.fireT > 0 && m.fireT < MISSILE_FIRE_FRAMES) {
+      const t = m.fireT / MISSILE_FIRE_FRAMES;
+      const headX = m.axis === 'h' ? -40 + (W + 80) * t : m.pos;
+      const headY = m.axis === 'h' ? m.pos             : -40 + (H + 80) * t;
       for (const p of players) {
         if (p.dead || p.invTimer > 0 || invincible) continue;
         const hcx = p.x, hcy = p.y - 12;
-        const hit = m.axis === 'h' ? Math.abs(m.pos - hcy) < 8 : Math.abs(m.pos - hcx) < 8;
-        if (hit) hitPlayer(p);
+        // 18px ahead damage radius along axis, 8px lateral
+        const dx = hcx - headX, dy = hcy - headY;
+        const d2 = dx*dx + dy*dy;
+        if (d2 < 22*22) hitPlayer(p);
       }
     }
   }
   screenMissiles = screenMissiles.filter(m => m.fireT < MISSILE_FIRE_FRAMES);
 }
+// Render an ICBM body at the given location with rotation matching axis direction.
+function drawICBM(x, y, ang) {
+  cx.save();
+  cx.translate(x, y);
+  cx.rotate(ang);   // 0 = pointing right; missile is drawn nose-right
+  // Body
+  const bg = cx.createLinearGradient(0, -6, 0, 6);
+  bg.addColorStop(0, '#dddddd'); bg.addColorStop(0.5, '#888'); bg.addColorStop(1, '#444');
+  cx.fillStyle = bg;
+  cx.fillRect(-18, -5, 28, 10);
+  // Nose cone
+  cx.fillStyle = '#aa2222';
+  cx.beginPath();
+  cx.moveTo(10, -5); cx.lineTo(20, 0); cx.lineTo(10, 5); cx.closePath();
+  cx.fill();
+  // Black/yellow warning stripes
+  cx.fillStyle = '#ffcc00'; cx.fillRect(-10, -5, 4, 10);
+  cx.fillStyle = '#000';    cx.fillRect(-6,  -5, 2, 10);
+  cx.fillStyle = '#ffcc00'; cx.fillRect(-2,  -5, 2, 10);
+  // Tail fins
+  cx.fillStyle = '#666';
+  cx.beginPath(); cx.moveTo(-18, -5); cx.lineTo(-22, -10); cx.lineTo(-14, -5); cx.closePath(); cx.fill();
+  cx.beginPath(); cx.moveTo(-18,  5); cx.lineTo(-22,  10); cx.lineTo(-14,  5); cx.closePath(); cx.fill();
+  // Engine flame trail
+  cx.fillStyle = '#ffaa00';
+  cx.beginPath();
+  cx.moveTo(-18, -3);
+  cx.lineTo(-26 - rnd(0,4), 0);
+  cx.lineTo(-18, 3);
+  cx.closePath(); cx.fill();
+  cx.fillStyle = '#ffffff';
+  cx.beginPath();
+  cx.moveTo(-18, -1.5);
+  cx.lineTo(-22 - rnd(0,3), 0);
+  cx.lineTo(-18, 1.5);
+  cx.closePath(); cx.fill();
+  cx.restore();
+}
 function drawScreenMissiles() {
   for (const m of screenMissiles) {
     if (m.warnT > 0) {
+      // Red dashed warning line + ICBM glyph at edge showing where it'll launch from
       const flash = Math.sin(m.warnT * 0.4) > 0 ? 0.85 : 0.30;
       cx.save();
       cx.strokeStyle = `rgba(255,40,40,${flash})`;
@@ -1122,22 +1173,27 @@ function drawScreenMissiles() {
       cx.fillStyle = '#ff4444';
       cx.font = "bold 13px 'Courier New', monospace";
       cx.textAlign = 'center';
-      if (m.axis === 'h') cx.fillText('!' + sec + 's!', W - 28, m.pos + 4);
-      else                cx.fillText('!' + sec + 's!', m.pos, 50);
+      if (m.axis === 'h') cx.fillText('⚠ ICBM ' + sec + 's', W - 50, m.pos + 4);
+      else                cx.fillText('⚠ ICBM ' + sec + 's', m.pos, 50);
       cx.textAlign = 'left';
     } else if (m.fireT < MISSILE_FIRE_FRAMES) {
-      const fade = 1 - m.fireT / MISSILE_FIRE_FRAMES;
-      const w = 14;
-      const grad = cx.createLinearGradient(
-        m.axis === 'h' ? 0 : m.pos - w, m.axis === 'h' ? m.pos - w : 0,
-        m.axis === 'h' ? W : m.pos + w, m.axis === 'h' ? m.pos + w : H
-      );
-      grad.addColorStop(0,    `rgba(255,255,255,${fade * 0.95})`);
-      grad.addColorStop(0.5,  `rgba(255,80,80,${fade})`);
-      grad.addColorStop(1,    `rgba(255,255,255,${fade * 0.95})`);
-      cx.fillStyle = grad;
-      if (m.axis === 'h') cx.fillRect(0, m.pos - w, W, w * 2);
-      else                cx.fillRect(m.pos - w, 0, w * 2, H);
+      // Solid ICBM body sweeps along the axis at high speed.
+      const t = m.fireT / MISSILE_FIRE_FRAMES;        // 0 → 1
+      // Hot trail behind the missile (faded)
+      cx.save();
+      cx.globalAlpha = 0.35 + (1 - t) * 0.4;
+      cx.fillStyle = '#ffaa44';
+      if (m.axis === 'h') {
+        const headX = -40 + (W + 80) * t;
+        cx.fillRect(headX - 70, m.pos - 1.5, 60, 3);
+        cx.restore();
+        drawICBM(headX, m.pos, 0);   // pointing right, traveling right
+      } else {
+        const headY = -40 + (H + 80) * t;
+        cx.fillRect(m.pos - 1.5, headY - 70, 3, 60);
+        cx.restore();
+        drawICBM(m.pos, headY, Math.PI / 2);  // pointing down
+      }
     }
   }
 }
@@ -1213,11 +1269,38 @@ function ensureTrailHistory(p) {
   p._trail.push({x:p.x, y:p.y, frame});
   while (p._trail.length > 20) p._trail.shift();
 }
+// Afterimage clones — re-draw the actual plane silhouette with a tinted overlay
+// at past positions to give a "shadow-clone / afterimage" feel.
+function drawPlaneCloneTrail(p, col) {
+  if (!p._trail || p._trail.length < 2) return;
+  const skin = PLANE_SKINS[p.skinIdx];
+  const tierMap = { free:0, g:1, d:2 };
+  const tier = tierMap[skin[2]] || 0;
+  // Re-tint by trail color: keep silhouette geometry, override hues
+  const tcol = col || '#88ccff';
+  const cloneColors = [tcol, '#ffffff', shadeHex(tcol, -30), tcol];
+  // Sample 4 evenly-spaced past frames so we get distinct ghosts (not 20 stacked)
+  const samples = 4;
+  for (let s = 1; s <= samples; s++) {
+    const idx = Math.max(0, p._trail.length - 1 - Math.floor((p._trail.length - 1) * s / samples));
+    const past = p._trail[idx];
+    if (!past) continue;
+    const a = (samples - s + 1) / (samples + 1) * 0.55;   // older → fainter
+    cx.save();
+    cx.globalAlpha = a;
+    drawVectorPlane(skin[3], cloneColors, cx, past.x, past.y, 1, false, p.bank || 0, p.pitch || 0, tier);
+    cx.restore();
+  }
+}
 function drawPlaneTrail(p) {
   const idx = (p.pNum === 1) ? (save.selTrail || 0) : 0;
   const def = TRAIL_DEFS[idx] || TRAIL_DEFS[0];
   const style = def[3], col = def[4];
   if (style === 'none' || !p._trail) return;
+  // All non-'none' trails are now afterimage clones in the trail's color
+  drawPlaneCloneTrail(p, col);
+  return;
+  // Legacy particle styles kept for reference (unreachable)
   const hist = p._trail;
   cx.save();
   if (style === 'fade') {
@@ -1402,18 +1485,7 @@ function drawPlaneIdleFX(cx2, bc, gc, frame, tier) {
     }
     cx2.globalAlpha = 1;
   }
-  // Tier 2: extra orbiting glow particles for diamond planes
-  if (T >= 2) {
-    for (let i=0;i<5;i++) {
-      const a = t*0.8 + i*Math.PI*2/5;
-      cx2.fillStyle = gc;
-      cx2.globalAlpha = 0.7;
-      cx2.beginPath();
-      cx2.arc(Math.cos(a)*30, Math.sin(a)*30, 2, 0, Math.PI*2);
-      cx2.fill();
-    }
-    cx2.globalAlpha = 1;
-  }
+  // (Orbiting particle ring removed — keep the player silhouette clean)
   cx2.restore();
 }
 
@@ -4136,8 +4208,8 @@ function updateBoss() {
   bossLogic(boss);
   // Full-screen 4-mode movement — overrides bossLogic's positional drift
   applyBossMovement(boss);
-  // Phase 1 (70%~40%): can move + periodic dash toward player
-  if (boss.phase === 1) {
+  // Phase 2 ONLY (rage <40%): periodic dash toward player. Phase 1 stays calm.
+  if (boss.phase >= 2) {
     if (!boss.dashState) boss.dashState = {state:'idle', timer:0, tx:0};
     const ds = boss.dashState;
     ds.timer++;
@@ -4178,10 +4250,13 @@ function updateBoss() {
 }
 
 // Boss full-screen movement — 4 modes rotating every ~4s; each boss has unique
-// per-mode parameters so trajectories never feel identical between fights.
+// per-mode parameters. Pre-rage (phase 0/1) moves at 50% speed (calmer); rage (phase>=2)
+// runs at full speed for that "frenzied" feel.
 function applyBossMovement(b) {
   const t = b.moveTimer;
   if (!b.movePhase) b.movePhase = 0;
+  // Speed scaling: 0.45 calm → 1.0 rage
+  const moveSpeedMul = (b.phase >= 2) ? 1.0 : 0.45;
   // Mode rotates every 240 frames (~4s), seeded by bossType so order varies
   const modeSeq = [
     [0,1,2,3],[1,3,0,2],[2,0,3,1],[3,2,1,0],
@@ -4190,10 +4265,10 @@ function applyBossMovement(b) {
   ][b.bossType % 12];
   const mode = modeSeq[Math.floor(t/240) % 4];
   // Per-boss tunings — each boss gets a unique speed/amplitude profile
-  const SP = 0.025 + (b.bossType * 0.0042) % 0.04;
-  const AMP_X = 130 + (b.bossType * 17) % 60;     // 130~190
-  const AMP_Y = 70 + (b.bossType * 13) % 50;      // 70~120
-  const cy = 130 + (b.bossType * 11) % 60;        // 130~190 base center y
+  const SP = (0.025 + (b.bossType * 0.0042) % 0.04) * moveSpeedMul;
+  const AMP_X = (130 + (b.bossType * 17) % 60) * (b.phase >= 2 ? 1 : 0.7);
+  const AMP_Y = (70 + (b.bossType * 13) % 50)  * (b.phase >= 2 ? 1 : 0.7);
+  const cy = 130 + (b.bossType * 11) % 60;
   const tx = t * SP;
   switch (mode) {
     case 0: // Horizontal sine sweep
@@ -4209,14 +4284,16 @@ function applyBossMovement(b) {
       b.y = cy + Math.sin(tx) * AMP_Y;
       break;
     case 3: { // Erratic dashes — short bursts toward random points
-      if (!b.dashTarget || (t - b.dashSetT|0) > 80) {
+      // Pre-rage: slower, longer rest between dashes; rage: original speed
+      const dwell = b.phase >= 2 ? 80 : 160;
+      if (!b.dashTarget || (t - b.dashSetT|0) > dwell) {
         b.dashTarget = { x: rnd(80, W-80), y: rnd(60, H*0.55) };
         b.dashSetT = t;
       }
       const dx = b.dashTarget.x - b.x, dy = b.dashTarget.y - b.y;
       const d = Math.sqrt(dx*dx+dy*dy) || 1;
-      b.x += dx/d * 2.8;
-      b.y += dy/d * 2.0;
+      b.x += dx/d * 2.8 * moveSpeedMul;
+      b.y += dy/d * 2.0 * moveSpeedMul;
       break;
     }
   }
@@ -4467,10 +4544,10 @@ function drawBoss() {
   b.lastX = b.x; b.lastY = b.y;
   b.bank  = clamp((b.bank ||0) * 0.78 + dxB * 0.14, -0.7, 0.7);
   b.pitch = clamp((b.pitch||0) * 0.78 + dyB * 0.14, -0.5, 0.5);
-  // Boss banner (spawn 2s / rage 1s) — flashing semi-transparent strip across center
+  // Boss banner (spawn 2s / rage 3s). Rage stays SOLID (no flicker); spawn still pulses.
   if (b.bannerTime > 0) {
-    const flash = Math.sin(b.bannerTime * 0.5) * 0.35 + 0.55;
     const isRage = b.bannerLabel && b.bannerLabel.indexOf('狂') >= 0;
+    const flash = isRage ? 1.0 : (Math.sin(b.bannerTime * 0.5) * 0.35 + 0.55);
     const baseCol = isRage ? '#ff0033' : '#ffaa00';
     cx.save();
     // Diagonal stripe pattern background
@@ -6089,12 +6166,31 @@ function drawTitle() {
   cx.font = "11px 'Courier New', monospace";
   cx.fillText('★ 出战机 · '+(showcaseIdx+1)+' / '+owned.length+' ★', W/2, 380);
 
+  // ─── Quick trail switcher (under plane) ────────────────
+  const ownedTrails = TRAIL_DEFS.map((d, i) => save.trails && save.trails[i] ? i : -1).filter(x => x >= 0);
+  if (ownedTrails.length === 0) ownedTrails.push(0);
+  const trailIdx = save.selTrail || 0;
+  const trailDef = TRAIL_DEFS[trailIdx];
+  cx.fillStyle = '#88aacc';
+  cx.font = "10px 'Courier New', monospace";
+  cx.textAlign = 'center';
+  cx.fillText('残影', W/2 - 80, 396);
+  cx.fillStyle = trailDef[4];
+  cx.font = "bold 11px 'Courier New', monospace";
+  cx.fillText(trailDef[0], W/2 - 80, 410);
+  if (ownedTrails.length > 1) {
+    cx.fillStyle = '#aaffff';
+    cx.font = "bold 18px 'Courier New', monospace";
+    cx.fillText('‹', W/2 - 130, 408);
+    cx.fillText('›', W/2 - 30,  408);
+  }
   // ─── Quick rune equip slots (under plane) ──────────────
   cx.fillStyle = '#88aacc';
   cx.font = "10px 'Courier New', monospace";
-  cx.fillText('佩戴符文 (点击循环)', W/2, 408);
+  cx.textAlign = 'center';
+  cx.fillText('佩戴符文 (点击循环)', W/2 + 60, 396);
   for (let s = 0; s < 2; s++) {
-    const sx = W/2 - 60 + s * 60, sy = 416;
+    const sx = W/2 + 24 + s * 60, sy = 416;
     const eqKey = (save.equippedRunes || [])[s];
     const def = eqKey ? RUNE_DEFS.find(r => r.key === eqKey) : null;
     cx.fillStyle = def ? '#0a2a3a' : '#0a1828';
@@ -6232,9 +6328,23 @@ function clickTitle(mx,my) {
       return;
     }
   }
+  // Quick trail arrows (left/right of trail name on left half)
+  const ownedTrails = TRAIL_DEFS.map((d, i) => save.trails && save.trails[i] ? i : -1).filter(x => x >= 0);
+  if (ownedTrails.length > 1) {
+    if (mx >= W/2 - 145 && mx <= W/2 - 115 && my >= 392 && my <= 420) {
+      const cur = ownedTrails.indexOf(save.selTrail || 0);
+      const next = ownedTrails[(cur - 1 + ownedTrails.length) % ownedTrails.length];
+      save.selTrail = next; writeSave(); SFX.buySuccess(); return;
+    }
+    if (mx >= W/2 - 45 && mx <= W/2 - 15 && my >= 392 && my <= 420) {
+      const cur = ownedTrails.indexOf(save.selTrail || 0);
+      const next = ownedTrails[(cur + 1) % ownedTrails.length];
+      save.selTrail = next; writeSave(); SFX.buySuccess(); return;
+    }
+  }
   // Quick rune slots (cycle through owned & leveled runes)
   for (let s = 0; s < 2; s++) {
-    const sx = W/2 - 60 + s * 60, sy = 416;
+    const sx = W/2 + 24 + s * 60, sy = 416;
     if (mx >= sx && mx <= sx + 56 && my >= sy && my <= sy + 38) {
       const ownedRunes = RUNE_DEFS.filter(r => (save.runes[r.key] || 0) > 0).map(r => r.key);
       if (!ownedRunes.length) { SFX.buyFail(); return; }
