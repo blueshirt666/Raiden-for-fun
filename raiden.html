@@ -1283,10 +1283,10 @@ function updateScreenMissiles() {
       for (const p of players) {
         if (p.dead || p.invTimer > 0 || invincible) continue;
         const hcx = p.x, hcy = p.y - 12;
-        // 18px ahead damage radius along axis, 8px lateral
+        // Damage radius enlarged to match bigger ICBM body
         const dx = hcx - headX, dy = hcy - headY;
         const d2 = dx*dx + dy*dy;
-        if (d2 < 22*22) hitPlayer(p);
+        if (d2 < 30*30) hitPlayer(p);
       }
     }
   }
@@ -1297,36 +1297,36 @@ function drawICBM(x, y, ang) {
   cx.save();
   cx.translate(x, y);
   cx.rotate(ang);   // 0 = pointing right; missile is drawn nose-right
-  // Body
-  const bg = cx.createLinearGradient(0, -6, 0, 6);
+  // Larger body (1.5× previous size for more presence on screen)
+  const bg = cx.createLinearGradient(0, -9, 0, 9);
   bg.addColorStop(0, '#dddddd'); bg.addColorStop(0.5, '#888'); bg.addColorStop(1, '#444');
   cx.fillStyle = bg;
-  cx.fillRect(-18, -5, 28, 10);
+  cx.fillRect(-27, -8, 42, 16);
   // Nose cone
   cx.fillStyle = '#aa2222';
   cx.beginPath();
-  cx.moveTo(10, -5); cx.lineTo(20, 0); cx.lineTo(10, 5); cx.closePath();
+  cx.moveTo(15, -8); cx.lineTo(30, 0); cx.lineTo(15, 8); cx.closePath();
   cx.fill();
   // Black/yellow warning stripes
-  cx.fillStyle = '#ffcc00'; cx.fillRect(-10, -5, 4, 10);
-  cx.fillStyle = '#000';    cx.fillRect(-6,  -5, 2, 10);
-  cx.fillStyle = '#ffcc00'; cx.fillRect(-2,  -5, 2, 10);
+  cx.fillStyle = '#ffcc00'; cx.fillRect(-15, -8, 6, 16);
+  cx.fillStyle = '#000';    cx.fillRect( -9, -8, 3, 16);
+  cx.fillStyle = '#ffcc00'; cx.fillRect( -3, -8, 3, 16);
   // Tail fins
   cx.fillStyle = '#666';
-  cx.beginPath(); cx.moveTo(-18, -5); cx.lineTo(-22, -10); cx.lineTo(-14, -5); cx.closePath(); cx.fill();
-  cx.beginPath(); cx.moveTo(-18,  5); cx.lineTo(-22,  10); cx.lineTo(-14,  5); cx.closePath(); cx.fill();
+  cx.beginPath(); cx.moveTo(-27, -8); cx.lineTo(-33, -15); cx.lineTo(-21, -8); cx.closePath(); cx.fill();
+  cx.beginPath(); cx.moveTo(-27,  8); cx.lineTo(-33,  15); cx.lineTo(-21,  8); cx.closePath(); cx.fill();
   // Engine flame trail
   cx.fillStyle = '#ffaa00';
   cx.beginPath();
-  cx.moveTo(-18, -3);
-  cx.lineTo(-26 - rnd(0,4), 0);
-  cx.lineTo(-18, 3);
+  cx.moveTo(-27, -5);
+  cx.lineTo(-39 - rnd(0,6), 0);
+  cx.lineTo(-27, 5);
   cx.closePath(); cx.fill();
   cx.fillStyle = '#ffffff';
   cx.beginPath();
-  cx.moveTo(-18, -1.5);
-  cx.lineTo(-22 - rnd(0,3), 0);
-  cx.lineTo(-18, 1.5);
+  cx.moveTo(-27, -2.5);
+  cx.lineTo(-33 - rnd(0,4), 0);
+  cx.lineTo(-27, 2.5);
   cx.closePath(); cx.fill();
   cx.restore();
 }
@@ -1362,12 +1362,12 @@ function drawScreenMissiles() {
       cx.fillStyle = '#ffaa44';
       if (m.axis === 'h') {
         const headX = -40 + (W + 80) * t;
-        cx.fillRect(headX - 70, m.pos - 1.5, 60, 3);
+        cx.fillRect(headX - 90, m.pos - 3, 80, 6);
         cx.restore();
         drawICBM(headX, m.pos, 0);   // pointing right, traveling right
       } else {
         const headY = -40 + (H + 80) * t;
-        cx.fillRect(m.pos - 1.5, headY - 70, 3, 60);
+        cx.fillRect(m.pos - 3, headY - 90, 6, 80);
         cx.restore();
         drawICBM(m.pos, headY, Math.PI / 2);  // pointing down
       }
@@ -1637,11 +1637,12 @@ const TRAIL_DEFS = [
   ['虚空裂痕',    15,   'd',    'echo',     '#ff44ff'],
 ];
 
-// Tracks recent positions per plane id for trail rendering
+// Tracks recent positions per plane id for trail rendering. Shorter buffer →
+// shorter visual tail, less draggy feel.
 function ensureTrailHistory(p) {
   if (!p._trail) p._trail = [];
   p._trail.push({x:p.x, y:p.y, frame});
-  while (p._trail.length > 20) p._trail.shift();
+  while (p._trail.length > 8) p._trail.shift();
 }
 // Afterimage clones — re-draw the actual plane silhouette with a tinted overlay
 // at past positions to give a "shadow-clone / afterimage" feel.
@@ -1650,16 +1651,15 @@ function drawPlaneCloneTrail(p, col) {
   const skin = PLANE_SKINS[p.skinIdx];
   const tierMap = { free:0, g:1, d:2 };
   const tier = tierMap[skin[2]] || 0;
-  // Re-tint by trail color: keep silhouette geometry, override hues
   const tcol = col || '#88ccff';
   const cloneColors = [tcol, '#ffffff', shadeHex(tcol, -30), tcol];
-  // Sample 4 evenly-spaced past frames so we get distinct ghosts (not 20 stacked)
-  const samples = 4;
+  // Only 2 ghosts now (was 4) so the tail reads as a quick afterimage, not a streak.
+  const samples = 2;
   for (let s = 1; s <= samples; s++) {
     const idx = Math.max(0, p._trail.length - 1 - Math.floor((p._trail.length - 1) * s / samples));
     const past = p._trail[idx];
     if (!past) continue;
-    const a = (samples - s + 1) / (samples + 1) * 0.55;   // older → fainter
+    const a = (samples - s + 1) / (samples + 1) * 0.40;   // also fainter overall
     cx.save();
     cx.globalAlpha = a;
     drawVectorPlane(skin[3], cloneColors, cx, past.x, past.y, 1, false, p.bank || 0, p.pitch || 0, tier);
@@ -3094,82 +3094,179 @@ function drawBackground() {
       fillPx('#ff8800',(lx+10)|0,(H-12)|0,40,4);
     }
   } else {
-    // Distant planets — far-away feel: ~55% transparent overall, more
-    // micro-detail (terminator, atmosphere rim, polar caps, more craters,
-    // city lights on dark side, dual rings, multi-moon).
+    // Distant planets — realistic far-away celestial bodies with biome-style
+    // surface textures (Earth-blue / Mars-rust / Jupiter-bands / Moon-cratered).
+    // Heavier transparency so they recede into the background.
     cx.save();
-    cx.globalAlpha = 0.55;       // overall transparency for the whole planet layer
+    cx.globalAlpha = 0.40;       // more transparent overall (was 0.55)
     for (const t of bgTerrain) {
       if (!t.r) continue;
       const px = t.x|0, py = t.y|0, r = t.r;
+      // Pick a "biome" deterministically from the radius value so each planet
+      // keeps a stable look across recycles. 0=earth 1=mars 2=jupiter 3=moon 4=neptune
+      const biomeId = (r * 13) % 5;
       // Soft, larger atmospheric outer glow
-      const gg = cx.createRadialGradient(px, py, r*0.7, px, py, r*2.2);
-      gg.addColorStop(0, t.glow + '44');
-      gg.addColorStop(0.55, t.glow + '18');
+      const gg = cx.createRadialGradient(px, py, r*0.6, px, py, r*2.4);
+      gg.addColorStop(0, t.glow + '38');
+      gg.addColorStop(0.55, t.glow + '14');
       gg.addColorStop(1, t.glow + '00');
       cx.fillStyle = gg;
-      cx.beginPath(); cx.arc(px, py, r*2.2, 0, Math.PI*2); cx.fill();
+      cx.beginPath(); cx.arc(px, py, r*2.4, 0, Math.PI*2); cx.fill();
       // Planet base sphere (lit from upper-left)
       const bg = cx.createRadialGradient(px - r*0.4, py - r*0.45, r*0.05, px, py, r);
       bg.addColorStop(0, t.glow);
       bg.addColorStop(0.45, t.core);
-      bg.addColorStop(0.85, shadeHex(t.core, -30));
-      bg.addColorStop(1, '#040408');
+      bg.addColorStop(0.88, shadeHex(t.core, -35));
+      bg.addColorStop(1, '#020208');
       cx.fillStyle = bg;
       cx.beginPath(); cx.arc(px, py, r, 0, Math.PI*2); cx.fill();
-      // Surface bands & mottled details, all clipped to the sphere
+      // Surface texture — clipped to sphere, biome-specific
       cx.save();
       cx.beginPath(); cx.arc(px, py, r, 0, Math.PI*2); cx.clip();
       const bandSeed = (r * 7) | 0;
-      // Cloud bands
-      cx.globalAlpha = 0.18;
-      for (let bi = -4; bi <= 4; bi++) {
-        const bandY = py + bi * (r * 0.26) + ((bandSeed + bi*13) % 5);
-        cx.fillStyle = bi % 2 === 0 ? shadeHex(t.core, 22) : shadeHex(t.core, -22);
-        cx.fillRect(px - r, bandY - r*0.07, r*2, r*0.10);
-      }
-      // Wispy cloud streaks (subtle white)
-      cx.globalAlpha = 0.10;
-      cx.fillStyle = '#ffffff';
-      for (let ci = 0; ci < 5; ci++) {
-        const cy = py + ((bandSeed + ci*23) % 11 - 5) * (r * 0.13);
-        cx.fillRect(px - r, cy, r*2, 1.4);
-      }
-      // Continental mottling (more, smaller)
-      cx.globalAlpha = 0.32;
-      cx.fillStyle = shadeHex(t.core, -45);
-      for (let mi = 0; mi < 10; mi++) {
-        const ma = (bandSeed * 0.7 + mi * 0.83);
-        const md = r * 0.55;
+      if (biomeId === 0) {
+        // Earth-like: irregular green/blue continents with curved coastlines + clouds
+        cx.globalAlpha = 0.55;
+        cx.fillStyle = '#3b8855';   // forest green
+        const continents = [
+          {x:-0.15,y:-0.15, w:0.45, h:0.30, rot:0.3},
+          {x: 0.20,y: 0.25, w:0.35, h:0.22, rot:-0.4},
+          {x:-0.30,y: 0.40, w:0.20, h:0.15, rot:0.1},
+        ];
+        for (const c of continents) {
+          cx.save();
+          cx.translate(px + c.x*r, py + c.y*r);
+          cx.rotate(c.rot);
+          cx.beginPath();
+          cx.ellipse(0, 0, c.w*r, c.h*r, 0, 0, Math.PI*2);
+          cx.fill();
+          // Coastline shadow (deep green)
+          cx.globalAlpha = 0.25;
+          cx.fillStyle = '#1a4422';
+          cx.beginPath();
+          cx.ellipse(c.w*r*0.2, c.h*r*0.2, c.w*r*0.6, c.h*r*0.4, 0, 0, Math.PI*2);
+          cx.fill();
+          cx.globalAlpha = 0.55;
+          cx.fillStyle = '#3b8855';
+          cx.restore();
+        }
+        // Wispy cloud swirls (white)
+        cx.globalAlpha = 0.22;
+        cx.fillStyle = '#ffffff';
+        for (let ci = 0; ci < 4; ci++) {
+          const cy = py + ((bandSeed + ci*23) % 11 - 5) * (r * 0.18);
+          cx.beginPath();
+          cx.ellipse(px, cy, r * 0.85, r * 0.06, 0, 0, Math.PI*2);
+          cx.fill();
+        }
+        // Polar caps (small, irregular, NOT pure ellipses)
+        cx.globalAlpha = 0.7;
+        cx.fillStyle = '#e8f4ff';
         cx.beginPath();
-        cx.ellipse(
-          px + Math.cos(ma) * md * (((bandSeed + mi*5) % 7)/10 + 0.2),
-          py + Math.sin(ma) * md * (((bandSeed + mi*3) % 5)/10 + 0.2),
-          r * (0.10 + ((bandSeed + mi) % 5) * 0.025),
-          r * (0.06 + ((bandSeed + mi*2) % 4) * 0.02),
-          ma, 0, Math.PI*2
-        );
+        cx.ellipse(px - r*0.05, py - r*0.85, r*0.32, r*0.13, 0.1, 0, Math.PI*2);
         cx.fill();
-      }
-      // Polar caps (top + bottom dome of lighter color)
-      cx.globalAlpha = 0.55;
-      cx.fillStyle = '#ffffff';
-      cx.beginPath();
-      cx.ellipse(px, py - r*0.85, r*0.55, r*0.18, 0, 0, Math.PI*2);
-      cx.fill();
-      cx.beginPath();
-      cx.ellipse(px, py + r*0.85, r*0.50, r*0.16, 0, 0, Math.PI*2);
-      cx.fill();
-      // Tiny pixel city lights on dark hemisphere (sparse, golden)
-      cx.globalAlpha = 0.65;
-      for (let ni = 0; ni < 14; ni++) {
-        const a = (bandSeed * 0.31 + ni * 0.71);
-        const cd = r * (0.55 + ((bandSeed + ni) % 5) * 0.06);
-        const lx = px + Math.cos(a) * cd, ly = py + Math.sin(a) * cd;
-        // only on the right (dark) side
-        if (lx - px < r*0.05) continue;
-        cx.fillStyle = ni % 3 === 0 ? '#ffd066' : '#ffaa44';
-        cx.fillRect(lx|0, ly|0, 1, 1);
+        cx.beginPath();
+        cx.ellipse(px + r*0.04, py + r*0.85, r*0.30, r*0.12, -0.08, 0, Math.PI*2);
+        cx.fill();
+      } else if (biomeId === 1) {
+        // Mars-like: rust + canyons + dust storms; almost no clouds
+        cx.globalAlpha = 0.45;
+        cx.fillStyle = '#a04420';
+        for (let mi = 0; mi < 14; mi++) {
+          const ma = (bandSeed * 0.7 + mi * 0.71);
+          const md = r * 0.6;
+          cx.beginPath();
+          cx.ellipse(
+            px + Math.cos(ma) * md * (((bandSeed + mi*5) % 7)/10 + 0.15),
+            py + Math.sin(ma) * md * (((bandSeed + mi*3) % 5)/10 + 0.15),
+            r * (0.06 + ((bandSeed + mi) % 5) * 0.02),
+            r * (0.04 + ((bandSeed + mi*2) % 4) * 0.018),
+            ma, 0, Math.PI*2
+          );
+          cx.fill();
+        }
+        // Dust storm swirl
+        cx.globalAlpha = 0.18;
+        cx.fillStyle = '#dd8866';
+        cx.beginPath();
+        cx.ellipse(px - r*0.1, py + r*0.1, r * 0.7, r * 0.2, 0.4, 0, Math.PI*2);
+        cx.fill();
+        // Small dirty polar caps
+        cx.globalAlpha = 0.5;
+        cx.fillStyle = '#ddccaa';
+        cx.beginPath();
+        cx.ellipse(px, py - r*0.86, r*0.20, r*0.08, 0, 0, Math.PI*2);
+        cx.fill();
+      } else if (biomeId === 2) {
+        // Jupiter-like: prominent cloud bands + Great Red Spot
+        cx.globalAlpha = 0.30;
+        for (let bi = -4; bi <= 4; bi++) {
+          const bandY = py + bi * (r * 0.22) + ((bandSeed + bi*13) % 5);
+          cx.fillStyle = (bi & 1) ? shadeHex(t.core, 28) : shadeHex(t.core, -22);
+          // Bands taper to the poles (narrower toward edges of sphere)
+          const widthShrink = 1 - Math.abs(bi) * 0.08;
+          cx.fillRect(px - r * widthShrink, bandY - r*0.085, r*2 * widthShrink, r*0.13);
+        }
+        // Great Red Spot
+        cx.globalAlpha = 0.55;
+        cx.fillStyle = '#cc4422';
+        cx.beginPath();
+        cx.ellipse(px - r*0.15, py + r*0.25, r * 0.18, r * 0.10, -0.2, 0, Math.PI*2);
+        cx.fill();
+        cx.fillStyle = '#882211';
+        cx.beginPath();
+        cx.ellipse(px - r*0.15, py + r*0.25, r * 0.10, r * 0.05, -0.2, 0, Math.PI*2);
+        cx.fill();
+        // Wispy storm swirls along major bands
+        cx.globalAlpha = 0.15;
+        cx.fillStyle = '#ffffff';
+        for (let si = 0; si < 3; si++) {
+          const sy = py + ((bandSeed * 0.21 + si * 0.6) % 1 - 0.5) * r * 1.4;
+          cx.beginPath();
+          cx.ellipse(px + Math.sin(si)*r*0.3, sy, r * 0.25, r * 0.04, 0, 0, Math.PI*2);
+          cx.fill();
+        }
+      } else if (biomeId === 3) {
+        // Moon-like: heavy cratering, no atmosphere, dusty gray
+        cx.globalAlpha = 0.50;
+        cx.fillStyle = '#444444';
+        for (let mi = 0; mi < 18; mi++) {
+          const ma = (bandSeed * 0.31 + mi * 0.51);
+          const md = r * (0.15 + ((bandSeed + mi) % 7) * 0.08);
+          const cR = r * (0.05 + ((bandSeed + mi*3) % 5) * 0.02);
+          const cx0 = px + Math.cos(ma) * md;
+          const cy0 = py + Math.sin(ma) * md;
+          cx.beginPath();
+          cx.arc(cx0, cy0, cR, 0, Math.PI*2);
+          cx.fill();
+          // Crater highlight rim (upper-left of each crater)
+          cx.globalAlpha = 0.28;
+          cx.fillStyle = '#ddd8d0';
+          cx.beginPath();
+          cx.arc(cx0 - cR*0.2, cy0 - cR*0.2, cR * 0.7, 0, Math.PI*2);
+          cx.fill();
+          cx.globalAlpha = 0.50;
+          cx.fillStyle = '#444444';
+        }
+        // Dark mare patches
+        cx.globalAlpha = 0.30;
+        cx.fillStyle = '#222222';
+        cx.beginPath();
+        cx.ellipse(px + r*0.1, py - r*0.05, r * 0.30, r * 0.20, 0.3, 0, Math.PI*2);
+        cx.fill();
+      } else {
+        // Neptune / ice-giant: pale blue with subtle bands and a single deep storm
+        cx.globalAlpha = 0.20;
+        for (let bi = -3; bi <= 3; bi++) {
+          const bandY = py + bi * (r * 0.30) + ((bandSeed + bi*7) % 4);
+          cx.fillStyle = (bi & 1) ? shadeHex(t.core, 18) : shadeHex(t.core, -18);
+          cx.fillRect(px - r, bandY - r*0.06, r*2, r*0.09);
+        }
+        cx.globalAlpha = 0.55;
+        cx.fillStyle = '#1a4488';
+        cx.beginPath();
+        cx.ellipse(px + r*0.18, py - r*0.10, r * 0.12, r * 0.07, 0.1, 0, Math.PI*2);
+        cx.fill();
       }
       cx.restore();
       // Day/night terminator (right side darkens)
@@ -7158,6 +7255,8 @@ function updateWaves() {
   // Boss trigger: kill quota met → enter boss IMMEDIATELY (clear any stragglers)
   const C = save.console || defaultConsole();
   let baseThr = BOSS_KILL_THRESHOLD[Math.min(level-1, BOSS_KILL_THRESHOLD.length-1)];
+  // Endless mode: first 10 levels are easier — only 30 kills instead of 60.
+  if (endlessMode && level <= 10) baseThr = 30;
   // Endless 超过 12 关: 阈值在 ±20% 随机浮动, 让节奏不再固定
   if (endlessMode && level > BOSS_KILL_THRESHOLD.length) {
     if (boss === null && !boss && killCount === 0 && waveTimer < 30) {
