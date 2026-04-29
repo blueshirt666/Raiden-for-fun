@@ -1582,7 +1582,7 @@ function drawBlackHoles() {
 // Endless lv 10+: appears at a fixed point, builds up energy for 3s, then
 // detonates in a wide area-of-effect blast that damages anything caught in.
 const NEUTRON_FUSE_FRAMES = 180;       // 3s @ 60fps
-const NEUTRON_BLAST_RADIUS = 110;
+const NEUTRON_BLAST_RADIUS = 95;
 function shouldEnableNeutronStars() {
   return endlessMode && level >= 10;
 }
@@ -1611,28 +1611,38 @@ function updateNeutronStars() {
     n.fuse--;
     n.spinT++;
     if (n.fuse <= 0) {
-      // BOOM — wide AOE blast.
+      // BOOM — AOE blast (slightly tighter than the warning ring so the player
+      // has room to dodge to the very edge).
       const r = NEUTRON_BLAST_RADIUS;
-      // Damage player
+      // Damage player — costs a life on direct hit (fatal hazard).
       for (const p of players) {
         if (p.dead || p.invTimer > 0 || invincible) continue;
         const dx = p.x - n.x, dy = (p.y - 12) - n.y;
-        if (dx*dx + dy*dy < r*r) hitPlayer(p);
+        if (dx*dx + dy*dy < r*r) {
+          // Force-kill: bypass the dodge rune since this is the trap's payoff.
+          p.invTimer = 0;
+          hitPlayer(p);
+        }
       }
-      // Damage enemies
+      // Vaporize enemies in range (instant kill — true neutron star feel)
       for (const e of enemies) {
         if (!e.alive) continue;
         const dx = e.x - n.x, dy = e.y - n.y;
         if (dx*dx + dy*dy < r*r) {
-          e.hp -= e.maxHp * 0.6;
-          if (e.hp <= 0) killEnemy(e);
+          e.hp = 0;
+          killEnemy(e);
         }
       }
-      // Wipe all enemy bullets in radius
+      // Wipe all enemy AND player bullets in radius
       for (const eb of enemyBullets) {
         if (!eb.alive) continue;
         const dx = eb.x - n.x, dy = eb.y - n.y;
         if (dx*dx + dy*dy < r*r) eb.alive = false;
+      }
+      for (const pb of bullets) {
+        if (!pb.alive) continue;
+        const dx = pb.x - n.x, dy = pb.y - n.y;
+        if (dx*dx + dy*dy < r*r) pb.alive = false;
       }
       // Visuals — big radial burst
       for (let k = 0; k < 28; k++) {
