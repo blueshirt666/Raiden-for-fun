@@ -232,6 +232,8 @@ const RUNE_DEFS = [
     base:0.05, max:0.40, desc:'被子弹击中时有概率完全闪避' },
 ];
 function runeProb(key) {
+  // Boss debuff: 处女·维戈 → all rune procs disabled while alive
+  if (activeBossDebuff() === 'noRunes') return 0;
   const lv = (save.runes && save.runes[key]) || 0;
   if (lv <= 0) return 0;
   const def = RUNE_DEFS.find(r => r.key === key);
@@ -239,7 +241,6 @@ function runeProb(key) {
   const base = def.base + (def.max - def.base) * ((lv - 1) / 9);
   const C = save.console || defaultConsole();
   const mul = (typeof C.runeProcMul === 'number') ? C.runeProcMul : 1;
-  // Per-rune individual override (defaults to 1×)
   const each = (C.runeProcEach && typeof C.runeProcEach[key] === 'number') ? C.runeProcEach[key] : 1;
   return Math.min(1, base * mul * each);
 }
@@ -1170,6 +1171,8 @@ let screenMissiles = [];   // {axis:'h'|'v', pos, warnT, fireT}
 let lastMissileSpawn = 0;
 let blackHoles = [];       // {x, y, life, maxLife, r, spinT}
 let lastBlackHoleSpawn = 0;
+let neutronStars = [];     // {x, y, life, maxLife, spinT}
+let lastNeutronSpawn = 0;
 let enemies = [];
 let pickups = [];
 let explosions = [];
@@ -1571,6 +1574,125 @@ function drawBlackHoles() {
     cx.beginPath();
     cx.arc(h.x, h.y, h.r + 4, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * lifeT);
     cx.stroke();
+    cx.restore();
+  }
+}
+
+// ─── NEUTRON STARS (中微子星) ───────────────────────────────────────────────
+// Endless lv 10+: appears at a fixed point, builds up energy for 3s, then
+// detonates in a wide area-of-effect blast that damages anything caught in.
+const NEUTRON_FUSE_FRAMES = 180;       // 3s @ 60fps
+const NEUTRON_BLAST_RADIUS = 110;
+function shouldEnableNeutronStars() {
+  return endlessMode && level >= 10;
+}
+function trySpawnNeutronStar() {
+  if (neutronStars.length >= 2) return;
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const x = rnd(60, W - 60), y = rnd(80, H - 240);
+    const p = players[0];
+    if (p && Math.hypot(p.x - x, p.y - y) < 120) continue;
+    const tooClose = neutronStars.some(n => Math.hypot(n.x - x, n.y - y) < 160);
+    if (tooClose) continue;
+    neutronStars.push({ x, y, fuse: NEUTRON_FUSE_FRAMES, maxFuse: NEUTRON_FUSE_FRAMES, spinT: 0 });
+    addFT('⚠ 中微子星生成 ⚠', x, y - 40, '#aaccff');
+    return;
+  }
+}
+function updateNeutronStars() {
+  if (!shouldEnableNeutronStars() || screen !== 'game') return;
+  // Spawn every 12-18s, faster at higher endless levels
+  const interval = Math.max(420, 1100 - (level - 10) * 12);
+  if (frame - lastNeutronSpawn > interval) {
+    lastNeutronSpawn = frame;
+    trySpawnNeutronStar();
+  }
+  for (const n of neutronStars) {
+    n.fuse--;
+    n.spinT++;
+    if (n.fuse <= 0) {
+      // BOOM — wide AOE blast.
+      const r = NEUTRON_BLAST_RADIUS;
+      // Damage player
+      for (const p of players) {
+        if (p.dead || p.invTimer > 0 || invincible) continue;
+        const dx = p.x - n.x, dy = (p.y - 12) - n.y;
+        if (dx*dx + dy*dy < r*r) hitPlayer(p);
+      }
+      // Damage enemies
+      for (const e of enemies) {
+        if (!e.alive) continue;
+        const dx = e.x - n.x, dy = e.y - n.y;
+        if (dx*dx + dy*dy < r*r) {
+          e.hp -= e.maxHp * 0.6;
+          if (e.hp <= 0) killEnemy(e);
+        }
+      }
+      // Wipe all enemy bullets in radius
+      for (const eb of enemyBullets) {
+        if (!eb.alive) continue;
+        const dx = eb.x - n.x, dy = eb.y - n.y;
+        if (dx*dx + dy*dy < r*r) eb.alive = false;
+      }
+      // Visuals — big radial burst
+      for (let k = 0; k < 28; k++) {
+        const ag = (k/28) * Math.PI * 2;
+        explosions.push({
+          x: n.x, y: n.y, vx: Math.cos(ag) * 6, vy: Math.sin(ag) * 6,
+          life: 32, maxLife: 32, size: 5, color: k%2 ? '#88ccff' : '#ffffff'
+        });
+      }
+      spawnExplosion(n.x, n.y, 'huge');
+      triggerShake(14, 22);
+      bombFlash = 18;
+      n._dead = true;
+    }
+  }
+  neutronStars = neutronStars.filter(n => !n._dead);
+}
+function drawNeutronStars() {
+  for (const n of neutronStars) {
+    const t = n.fuse / n.maxFuse;     // 1 → 0 over the 3s fuse
+    const energy = 1 - t;             // 0 → 1, used for size/intensity
+    const r = NEUTRON_BLAST_RADIUS * (0.4 + energy * 0.55);
+    cx.save();
+    // Outer warning ring (pulses red as fuse runs out)
+    cx.strokeStyle = `rgba(255,${100 - energy*100|0},${100 - energy*100|0},${0.4 + Math.sin(n.spinT*0.4)*0.4})`;
+    cx.lineWidth = 2.2;
+    cx.beginPath(); cx.arc(n.x, n.y, NEUTRON_BLAST_RADIUS, 0, Math.PI*2); cx.stroke();
+    // Energy build-up halo
+    const halo = cx.createRadialGradient(n.x, n.y, 1, n.x, n.y, r);
+    halo.addColorStop(0, '#ffffff');
+    halo.addColorStop(0.45, `rgba(140,200,255,${0.7 * energy + 0.2})`);
+    halo.addColorStop(1, 'rgba(60,120,200,0)');
+    cx.fillStyle = halo;
+    cx.beginPath(); cx.arc(n.x, n.y, r, 0, Math.PI*2); cx.fill();
+    // Hot core
+    const cgr = 6 + energy * 14;
+    const cg = cx.createRadialGradient(n.x, n.y, 0, n.x, n.y, cgr);
+    cg.addColorStop(0, '#ffffff');
+    cg.addColorStop(0.5, '#aaeeff');
+    cg.addColorStop(1, '#3366aa');
+    cx.fillStyle = cg;
+    cx.beginPath(); cx.arc(n.x, n.y, cgr, 0, Math.PI*2); cx.fill();
+    // Spinning energy beams
+    for (let i = 0; i < 8; i++) {
+      const a = n.spinT * 0.10 + i * (Math.PI / 4);
+      const r1 = cgr + 4, r2 = cgr + 22 + energy * 14;
+      cx.strokeStyle = `rgba(180,220,255,${0.4 + 0.4 * Math.sin(n.spinT*0.2 + i)})`;
+      cx.lineWidth = 1.2;
+      cx.beginPath();
+      cx.moveTo(n.x + Math.cos(a) * r1, n.y + Math.sin(a) * r1);
+      cx.lineTo(n.x + Math.cos(a) * r2, n.y + Math.sin(a) * r2);
+      cx.stroke();
+    }
+    // Countdown number (large, centered above star)
+    const sec = Math.max(0, Math.ceil(n.fuse / 60));
+    cx.fillStyle = `rgba(255,${100 - energy*100|0},${100 - energy*100|0},1)`;
+    cx.font = "bold 22px 'Courier New', monospace";
+    cx.textAlign = 'center';
+    cx.fillText(sec + 's', n.x, n.y - NEUTRON_BLAST_RADIUS - 6);
+    cx.textAlign = 'left';
     cx.restore();
   }
 }
@@ -3748,10 +3870,15 @@ function updatePlayer(p, keys) {
   const sX = (typeof save.moveSensX === 'number') ? save.moveSensX : 1;
   const sY = (typeof save.moveSensY === 'number') ? save.moveSensY : 1;
   // Black hole gravity-well — closer to a hole's core = slower input response.
-  // _bhDamp is reset to 1 each frame after movement; updateBlackHoles writes a
-  // smaller value when the player is inside a hole's pull radius.
   const bhDamp = (typeof p._bhDamp === 'number') ? p._bhDamp : 1;
-  p.x+=dx*p.speed*sX*bhDamp; p.y+=dy*p.speed*sY*bhDamp;
+  // Per-boss debuffs that affect movement
+  const dbf = activeBossDebuff();
+  let speedMul = 1;
+  let invertX = 1;
+  if (dbf === 'speedSlow') speedMul = 0.6;
+  if (dbf === 'invertX')   invertX = -1;
+  p.x += dx*p.speed*sX*bhDamp*speedMul*invertX;
+  p.y += dy*p.speed*sY*bhDamp*speedMul;
   p._bhDamp = 1;  // reset for next frame
   p.x=clamp(p.x,12,W-12); p.y=clamp(p.y,12,H-12);
   p.px=p.x|0; p.py=p.y|0;
@@ -3790,7 +3917,9 @@ function mkB(x,y,vx,vy,color,w,h,owner,dmg) {
   // Per-weapon damage override
   const wIdx = isPlayer ? (owner.weapon || 0) : -1;
   const eachWpn = (isPlayer && C.weaponDmgEach && typeof C.weaponDmgEach[wIdx] === 'number') ? C.weaponDmgEach[wIdx] : 1;
-  let finalDmg = (dmg || 10) * (isPlayer ? C.weaponDmgMul : 1) * eachWpn;
+  // Boss debuff: 金牛·陶罗斯 → player bullet damage ×0.75
+  const _dbfDmg = (isPlayer && activeBossDebuff() === 'dmgDown') ? 0.75 : 1;
+  let finalDmg = (dmg || 10) * (isPlayer ? C.weaponDmgMul : 1) * eachWpn * _dbfDmg;
   let crit = false;
   // Crit rune: roll at bullet creation, doubles damage (×critDmgMul), gold tint
   if (isPlayer && isRuneEquipped('crit') && Math.random() < runeProb('crit')) {
@@ -4034,7 +4163,9 @@ function fireBullet(p) {
   const delays=[7,11,3,18,11,8,20,10,18,14];
   // Per-weapon fire-rate override (×interval; <1 = faster)
   const eachWpnFire = (C.weaponFireEach && typeof C.weaponFireEach[p.weapon] === 'number') ? C.weaponFireEach[p.weapon] : 1;
-  p.shootTimer=Math.max(1, Math.round((delays[p.weapon]-(wl-1)*1) * C.fireRateMul * eachWpnFire));
+  // Boss debuff: 狮子·利奥 → fire rate −33% (interval ×1.5)
+  const _dbfFire = activeBossDebuff() === 'fireSlow' ? 1.5 : 1;
+  p.shootTimer=Math.max(1, Math.round((delays[p.weapon]-(wl-1)*1) * C.fireRateMul * eachWpnFire * _dbfFire));
 
   // ─ LV MAX 超级形态 (5s) ─
   if (p.weaponMax > 0) {
@@ -4193,6 +4324,16 @@ function updateBullets() {
 
 // Global enemy bullet speed multiplier (slower = easier to dodge)
 const ENEMY_BULLET_SPD_GLOBAL = 0.7;
+// Boss debuff: 射手·萨吉塔 → light homing on enemy bullets (subtle aim-bot).
+function _aimEnemyBullet(b) {
+  const tgt = players.find(p => !p.dead);
+  if (!tgt) return;
+  const dx = tgt.x - b.x, dy = tgt.y - b.y;
+  const d = Math.hypot(dx, dy) || 1;
+  // Bend ~0.018 px/frame toward target — enough to "track" but easy to break LoS
+  b.vx = b.vx * 0.985 + (dx / d) * 0.045;
+  b.vy = b.vy * 0.985 + (dy / d) * 0.045;
+}
 function updateEnemyBullets() {
   for(const b of enemyBullets){
     // Homing missiles (eliteHomer) — keep orbiting / chasing the player.
@@ -4219,6 +4360,8 @@ function updateEnemyBullets() {
       if (b.x < -60 || b.x > W + 60 || b.y < -60 || b.y > H + 60) b.alive = false;
       continue;
     }
+    // Aim debuff (射手·萨吉塔): subtle homing on every non-cancelable bullet.
+    if (!b.cancelable && activeBossDebuff() === 'aim') _aimEnemyBullet(b);
     // 'fast' bullets (e.g. sniper rounds) skip the global slowdown so they
     // read as truly high-velocity projectiles.
     const sm = b.fast ? 1 : ENEMY_BULLET_SPD_GLOBAL;
@@ -4303,9 +4446,11 @@ function doBomb(p) {
     e.hp = 0;
     killEnemy(e);
   }
-  // Boss takes ~1/3 of MAX hp
+  // Boss debuff: 双鱼·皮西斯 → bomb damage halved
+  const _dbfBomb = activeBossDebuff() === 'noBomb' ? 0.5 : 1;
+  // Boss takes ~1/3 of MAX hp (×_dbfBomb if 双鱼 active)
   if(boss&&boss.alive){
-    const dmg = Math.ceil(boss.maxHp / 3);
+    const dmg = Math.ceil(boss.maxHp / 3 * _dbfBomb);
     boss.hp -= dmg;
     spawnExplosion(boss.x,boss.y,'huge');
     addFT('-'+dmg, boss.x, boss.y-30, '#ffff44');
@@ -5552,21 +5697,23 @@ function drawEnemy(e) {
 }
 
 // ─── BOSS (12 zodiac constellations) ─────────────────────────────────────────
+// Each boss carries a unique debuff that activates while it is alive.
+// The debuff key is read by hot-paths (player update / fireBullet / runeProb / etc).
 const BOSS_DEFS = [
-  {name:'白羊·阿瑞斯',  color:'#ff8844', acc:'#ffeecc', hp:1100},
-  {name:'金牛·陶罗斯',  color:'#aa6633', acc:'#ffcc88', hp:1300},
-  {name:'双子·杰米尼',  color:'#88ccff', acc:'#ffff88', hp:1500},
-  {name:'巨蟹·坎瑟尔',  color:'#ff66cc', acc:'#ffccff', hp:1700},
-  {name:'狮子·利奥',    color:'#ffcc44', acc:'#ff8800', hp:1900},
-  {name:'处女·维戈',    color:'#aaffaa', acc:'#ffffff', hp:2100},
-  {name:'天秤·利布拉',  color:'#ddaaff', acc:'#ffeeff', hp:2300},
-  {name:'天蝎·斯科皮奥',color:'#cc2244', acc:'#ff4488', hp:2500},
-  {name:'射手·萨吉塔',  color:'#ff8866', acc:'#ffcc44', hp:2700},
-  {name:'摩羯·卡普',    color:'#446688', acc:'#88ccff', hp:2900},
-  {name:'水瓶·阿夸',    color:'#44ccff', acc:'#aaffff', hp:3100},
-  {name:'双鱼·皮西斯',  color:'#ff66aa', acc:'#aaffff', hp:3500},
+  {name:'白羊·阿瑞斯',  color:'#ff8844', acc:'#ffeecc', hp:1100, debuff:'speedSlow',  debuffName:'减速力场'},
+  {name:'金牛·陶罗斯',  color:'#aa6633', acc:'#ffcc88', hp:1300, debuff:'dmgDown',    debuffName:'伤害削弱'},
+  {name:'双子·杰米尼',  color:'#88ccff', acc:'#ffff88', hp:1500, debuff:'twinSummon', debuffName:'双生援军'},
+  {name:'巨蟹·坎瑟尔',  color:'#ff66cc', acc:'#ffccff', hp:1700, debuff:'noShield',   debuffName:'护盾失效'},
+  {name:'狮子·利奥',    color:'#ffcc44', acc:'#ff8800', hp:1900, debuff:'fireSlow',   debuffName:'攻速降低'},
+  {name:'处女·维戈',    color:'#aaffaa', acc:'#ffffff', hp:2100, debuff:'noRunes',    debuffName:'符文封印'},
+  {name:'天秤·利布拉',  color:'#ddaaff', acc:'#ffeeff', hp:2300, debuff:'invertX',    debuffName:'左右镜像'},
+  {name:'天蝎·斯科皮奥',color:'#cc2244', acc:'#ff4488', hp:2500, debuff:'venom',      debuffName:'剧毒缠身'},
+  {name:'射手·萨吉塔',  color:'#ff8866', acc:'#ffcc44', hp:2700, debuff:'aim',        debuffName:'锁定射击'},
+  {name:'摩羯·卡普',    color:'#446688', acc:'#88ccff', hp:2900, debuff:'noWingmen',  debuffName:'僚机沉默'},
+  {name:'水瓶·阿夸',    color:'#44ccff', acc:'#aaffff', hp:3100, debuff:'darkVision', debuffName:'视野收窄'},
+  {name:'双鱼·皮西斯',  color:'#ff66aa', acc:'#aaffff', hp:3500, debuff:'noBomb',     debuffName:'核弹弱化'},
   // 13: clone boss — full mirror of player's plane at 90% strength
-  {name:'克隆战机·镜',  color:'#ff66aa', acc:'#ffaaff', hp:3300, clone:true},
+  {name:'克隆战机·镜',  color:'#ff66aa', acc:'#ffaaff', hp:3300, clone:true, debuff:'mirror', debuffName:'镜像之力'},
 ];
 
 // Endless 难度上限 (hell plateau) — 到此分以上难度不再升, 但内容随机化
@@ -5624,7 +5771,12 @@ function spawnBoss() {
     fireRateBoost: tierMul,   // higher tier = slightly more aggressive fire
     bannerTime: 120,
     bannerLabel: tier > 1 ? ('WARNING · ' + tierLabel + '阶 BOSS') : 'WARNING · BOSS',
+    debuff: def.debuff || null,
+    debuffName: def.debuffName || '',
   };
+  if (def.debuffName) {
+    addFT('⚠ ' + def.debuffName + ' ⚠', W/2, H/2 - 50, '#ff66ff');
+  }
   // Boss mode — keep first boss on the LEFT half so the second can join on the right.
   if (bossMode && bossModeCycle >= 1) {
     boss.x = W * 0.32;
@@ -5669,13 +5821,23 @@ function spawnSecondBoss() {
     bannerTime: 120,
     bannerLabel: '双 BOSS · ' + def.name,
     anchorX: W * 0.68,
+    debuff: def.debuff || null,
+    debuffName: def.debuffName || '',
   };
+}
+
+// Helper: returns active boss debuff key (from primary first, otherwise boss2).
+// Used by player movement / fire-rate / rune logic.
+function activeBossDebuff() {
+  if (boss && boss.alive && boss.debuff) return boss.debuff;
+  if (boss2 && boss2.alive && boss2.debuff) return boss2.debuff;
+  return null;
 }
 
 function startBossMode() {
   bossMode = true; endlessMode = false; twoPlayer = false;
   players=[]; wingmen=[]; bullets=[]; enemyBullets=[]; enemies=[]; pickups=[]; explosions=[]; floatingTexts=[];
-  screenMissiles=[]; lastMissileSpawn=0; blackHoles=[];
+  screenMissiles=[]; lastMissileSpawn=0; blackHoles=[]; neutronStars=[]; lastNeutronSpawn=0;
   score=0; level=1; waveTimer=0; killCount=0; bossActive=false; boss=null; boss2=null; bombFlash=0;
   sessionCoins=0; sessionDiamonds=0; finalScore=0; frame=0;
   bossModeCycle = 0;
@@ -5766,6 +5928,33 @@ function updateBoss() {
         }
       }
       addFT('召 唤 援 军', boss.x, boss.y - 30, '#ff6688');
+    }
+  }
+  // Boss debuff: 双子·杰米尼 — twinSummon → continuous mini reinforcement waves
+  // every ~3.5s regardless of phase (in addition to the rage summons above).
+  if (boss.debuff === 'twinSummon') {
+    boss._twinT = (boss._twinT | 0) + 1;
+    if (boss._twinT % 210 === 0 && enemies.length < MAX_ENEMIES - 4) {
+      const tt = (boss._twinT % 420 === 0) ? 'zigzag' : 'speeder';
+      for (let i = -1; i <= 1; i++) {
+        if (enemies.length < MAX_ENEMIES) {
+          enemies.push(mkEnemy(tt, clamp(boss.x + i * 36, 30, W - 30), boss.y + 60));
+        }
+      }
+      addFT('双 生 召 唤', boss.x, boss.y - 30, '#aaccff');
+    }
+  }
+  // Boss debuff: 天蝎·斯科皮奥 — venom → small constant HP drain on the player
+  if (boss.debuff === 'venom' && (boss.moveTimer % 90 === 0)) {
+    for (const p of players) {
+      if (p.dead || p.invTimer > 0 || invincible) continue;
+      // Tiny tick: degrade weapon level instead of full life hit, every 1.5s
+      if (p.weaponLevel > 1 && Math.random() < 0.35) {
+        p.weaponLevel--;
+        addFT('☠ 中毒 · 武器降级', p.x, p.y - 20, '#88ff44');
+      } else {
+        addFT('☠ 中毒', p.x, p.y - 20, '#88ff44');
+      }
     }
   }
   // Clamp
@@ -6863,6 +7052,12 @@ function collectPickups() {
             else { p.bombs++; addFT('+BOMB',pk.x,pk.y,'#4444ff'); }
             break;
           case 'shield':
+            // Boss debuff: 巨蟹·坎瑟尔 → shield pickups do nothing while alive
+            if (activeBossDebuff() === 'noShield') {
+              addFT('护盾失效', pk.x, pk.y, '#ff8888');
+              SFX.buyFail();
+              break;
+            }
             p.shield=420; p.shieldHits=3;
             addFT('SHIELD x3',pk.x,pk.y,'#00ffcc'); SFX.pickupShield(); break;
           case 'wingman':
@@ -6961,12 +7156,12 @@ function updateWingmen() {
     w.x+=(tx-w.x)*0.12; w.y+=(ty-w.y)*0.12;
     w.fireTimer++;
     const lv = w.level||1;
-    // Fire intervals per type (10 wingmen)
     const rates=[20,35,11,50,28, 14,22,18,16,24];
     const fireRate = Math.max(4, rates[w.wType] - (lv-1)*3);
     if(w.fireTimer>=fireRate) {
       w.fireTimer=0;
-      fireWingmanBullet(w);
+      // Boss debuff: 摩羯·卡普 → wingmen silenced (don't fire) while alive.
+      if (activeBossDebuff() !== 'noWingmen') fireWingmanBullet(w);
     }
   }
   wingmen=wingmen.filter(w=>w.alive);
@@ -7673,6 +7868,26 @@ function updateWaves() {
 
 // ─── HUD ─────────────────────────────────────────────────────────────────────
 function drawHUD() {
+  // Boss debuff: 水瓶·阿夸 — darkVision: vignette that narrows player vision.
+  if (activeBossDebuff() === 'darkVision' && players[0] && !players[0].dead) {
+    const p = players[0];
+    const vg = cx.createRadialGradient(p.x, p.y, 30, p.x, p.y, 240);
+    vg.addColorStop(0, 'rgba(0,0,0,0)');
+    vg.addColorStop(0.55, 'rgba(0,0,0,0.30)');
+    vg.addColorStop(1, 'rgba(0,0,0,0.85)');
+    cx.fillStyle = vg;
+    cx.fillRect(0, 0, W, H);
+  }
+  // Active boss debuff label (under the LV header)
+  const dbf = activeBossDebuff();
+  const dbfBoss = (boss && boss.alive && boss.debuff) ? boss : ((boss2 && boss2.alive && boss2.debuff) ? boss2 : null);
+  if (dbf && dbfBoss && dbfBoss.debuffName) {
+    cx.textAlign = 'center';
+    cx.fillStyle = '#ff66ff';
+    cx.font = "bold 11px 'Courier New', monospace";
+    cx.fillText('⚠ ' + dbfBoss.debuffName + ' ⚠', W/2, 50);
+    cx.textAlign = 'left';
+  }
   // Hidden-level entry banner — bold pink "隐藏关卡" overlay
   if (hiddenLevelBannerTime > 0) {
     const a = Math.min(1, hiddenLevelBannerTime / 60);
@@ -10021,7 +10236,7 @@ function startGame(_unused, endless, startLv) {
   twoPlayer=false; endlessMode=!!endless;
   bossMode=false; bossModeCycle=0; boss2=null; bossActive=false;
   players=[]; wingmen=[]; bullets=[]; enemyBullets=[]; enemies=[]; pickups=[]; explosions=[]; floatingTexts=[];
-  screenMissiles=[]; lastMissileSpawn=0; blackHoles=[];
+  screenMissiles=[]; lastMissileSpawn=0; blackHoles=[]; neutronStars=[]; lastNeutronSpawn=0;
   score=0; level=Math.max(1,(startLv|0)||1); waveTimer=0; killCount=0; bossActive=false; boss=null; bombFlash=0;
   sessionCoins=0; sessionDiamonds=0; finalScore=0; frame=0;
   // Boss tiers reset every fresh run so encounters scale with the boss-appearance count
@@ -10478,6 +10693,7 @@ function update() {
   }
   updateScreenMissiles();
   updateBlackHoles();
+  updateNeutronStars();
   updatePickups();
   collectPickups();
   checkCollisions();
@@ -10523,6 +10739,7 @@ function drawGameField() {
   for(const p of players) drawPlayer(p);
   drawScreenMissiles();
   drawBlackHoles();
+  drawNeutronStars();
   // Enemy bullets render LAST among gameplay layers so they always sit on top
   // and are never visually covered by enemies, the player, or pickups.
   drawEnemyBullets();
