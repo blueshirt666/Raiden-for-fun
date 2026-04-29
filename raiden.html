@@ -3835,6 +3835,34 @@ function applyRuneOnHit(e, b) {
         life:24, maxLife:24, size:3, color: i%2===0 ? '#ff8844' : '#ffcc44'
       });
     }
+    // Death-blast roll — 12% chance burn proc triggers a small AOE explosion
+    // that damages neighbouring enemies. Boss is excluded (already DoT'd).
+    if (!isBoss && Math.random() < 0.12) {
+      const blastR = 56;
+      addFT('💥 爆 燃!', e.x, e.y - 26, '#ffcc44');
+      // Visual: ring of flame particles
+      for (let k = 0; k < 14; k++) {
+        const ag = (k / 14) * Math.PI * 2;
+        explosions.push({
+          x: e.x, y: e.y, vx: Math.cos(ag) * 4, vy: Math.sin(ag) * 4,
+          life: 22, maxLife: 22, size: 4, color: k % 2 === 0 ? '#ff5522' : '#ffaa44'
+        });
+      }
+      spawnExplosion(e.x, e.y, 'medium');
+      triggerShake(4, 8);
+      // Damage other enemies within blast radius
+      const blastDmg = (b.dmg || 10) * 1.6;
+      for (const other of enemies) {
+        if (!other.alive || other === e) continue;
+        const dx2 = other.x - e.x, dy2 = other.y - e.y;
+        if (dx2*dx2 + dy2*dy2 < blastR * blastR) {
+          other.hp -= blastDmg;
+          // Light up affected enemies briefly with a burn tick too
+          other.burn = Math.max(other.burn || 0, 60);
+          if (other.hp <= 0) killEnemy(other);
+        }
+      }
+    }
   }
   // Poison
   if (isRuneEquipped('poison') && Math.random() < runeProb('poison')) {
@@ -3888,11 +3916,21 @@ function mkLaser(x,playerY,wl,owner) {
 function fireBulletMax(p) {
   const x=p.x, y=p.y;
   switch (p.weapon) {
-    case 0: { // 标准炮 MAX → 三排齐射 + 中央白色加农
-      for (let row=0; row<3; row++) {
-        const ry = y - 8 - row*6;
-        for (let i=-3;i<=3;i++) {
-          bullets.push(mkB(x + i*9, ry, i*0.4, -14, i===0?'#ffffff':'#aaffff', 4, 8, p, 28));
+    case 0: { // 标准炮 MAX → 全屏中央光束 + 两翼三排齐射
+      // Central full-screen laser beams (3 parallel) — instant top-of-screen reach.
+      for (let off = -1; off <= 1; off++) {
+        const lb = mkLaser(x + off * 6, y, 5, p);
+        lb.color = off === 0 ? '#ffffff' : '#aaffff';
+        lb.w = off === 0 ? 6 : 4;
+        lb.dmg = 18;
+        bullets.push(lb);
+      }
+      // Side bullet volleys (faster, fan slightly outward) — visual "full-screen" feel.
+      for (let row = 0; row < 3; row++) {
+        const ry = y - 8 - row * 6;
+        for (let i = -3; i <= 3; i++) {
+          if (i === 0) continue;   // center handled by laser above
+          bullets.push(mkB(x + i*9, ry, i*0.4, -22, '#aaffff', 4, 8, p, 24));
         }
       }
       p.shootTimer = 2;
