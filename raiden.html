@@ -1162,26 +1162,27 @@ function shouldEnableScreenMissiles() {
 }
 function maxConcurrentMissiles() {
   if (endlessMode) {
-    // Lv10 → 2, Lv20 → 3, Lv35 → 4, Lv55 → 5, Lv75+ → 6 (multi-row + multi-col warnings)
+    // Endless ramps to chaos territory — many sims simultaneous at high lv
     if (level < 10) return 1;
     if (level < 20) return 2;
-    if (level < 35) return 3;
-    if (level < 55) return 4;
-    if (level < 75) return 5;
-    return 6;
+    if (level < 35) return 4;
+    if (level < 55) return 6;
+    if (level < 75) return 8;
+    return 10;
   }
   const lvScale = Math.min(level / 12, 1);
-  if (currentTier() === 'hell')    return clamp(1 + Math.floor(lvScale * 4),   1, 5);
+  if (currentTier() === 'hell')    return clamp(1 + Math.floor(lvScale * 5),   1, 6);
   if (currentTier() === 'veteran') return clamp(1 + Math.floor(lvScale * 3),   1, 4);
   return clamp(1 + Math.floor(lvScale * 2), 1, 3);
 }
 function maxSameAxisMissiles() {
   // How many warnings can stack on the SAME row (or same column).
-  // Higher difficulty → multi-warnings on same axis.
+  // High endless levels can stack 3+ on the same axis simultaneously.
   if (endlessMode) {
     if (level < 25) return 2;
-    if (level < 50) return 3;
-    return 4;
+    if (level < 45) return 3;
+    if (level < 70) return 4;
+    return 5;
   }
   if (currentTier() === 'hell')    return 3;
   if (currentTier() === 'veteran') return 2;
@@ -1206,12 +1207,18 @@ function trySpawnScreenMissile() {
 }
 function updateScreenMissiles() {
   if (!shouldEnableScreenMissiles() || screen !== 'game') return;
+  // Endless: late-game can fire bursts of multiple missiles per spawn tick
+  // so 3+ rows / columns appear nearly simultaneously.
   const interval = endlessMode
-    ? Math.max(180, 540 - (level - 30) * 6)
+    ? Math.max(90, 540 - (level - 30) * 9)
     : (currentTier() === 'hell' ? 360 : 540);
   if (frame - lastMissileSpawn > interval) {
     lastMissileSpawn = frame;
     trySpawnScreenMissile();
+    // Late endless — fire a burst so multiple warnings appear at once
+    if (endlessMode && level >= 30) trySpawnScreenMissile();
+    if (endlessMode && level >= 50) trySpawnScreenMissile();
+    if (endlessMode && level >= 70) trySpawnScreenMissile();
   }
   for (const m of screenMissiles) {
     if (m.warnT > 0) {
@@ -1329,9 +1336,9 @@ function shouldEnableBlackHoles() {
   return currentTier() === 'hell';           // Stage: master / 地狱 难度
 }
 function maxBlackHolesNow() {
-  // Cap = up to 3, scaled by level
+  // Cap = up to 3 simultaneously at very high endless levels
   if (endlessMode) {
-    if (level >= 50) return 3;
+    if (level >= 45) return 3;
     if (level >= 30) return 2;
     return 1;
   }
@@ -1361,11 +1368,13 @@ function trySpawnBlackHole() {
 }
 function updateBlackHoles() {
   if (!shouldEnableBlackHoles() || screen !== 'game') return;
-  // Spawn pacing: every ~22s while under cap
-  const interval = endlessMode ? Math.max(560, 1400 - (level - 20) * 10) : 1100;
+  // Spawn pacing — high endless levels: holes appear quickly so the cap of 3
+  // is hit and stays hit (constant pressure).
+  const interval = endlessMode ? Math.max(240, 1400 - (level - 20) * 18) : 1100;
   if (frame - lastBlackHoleSpawn > interval) {
     lastBlackHoleSpawn = frame;
     trySpawnBlackHole();
+    if (endlessMode && level >= 45) trySpawnBlackHole();   // double-spawn at very high lv
   }
   for (const h of blackHoles) {
     h.spinT++;
@@ -3529,6 +3538,30 @@ function updateBullets() {
 const ENEMY_BULLET_SPD_GLOBAL = 0.7;
 function updateEnemyBullets() {
   for(const b of enemyBullets){
+    // Homing missiles (eliteHomer) — keep orbiting / chasing the player.
+    if (b.homing) {
+      const tgt = players.find(p => !p.dead);
+      if (tgt) {
+        const dx = tgt.x - b.x, dy = tgt.y - b.y;
+        const d = Math.sqrt(dx*dx + dy*dy) || 1;
+        const str = b.homingStr || 0.045;
+        b.vx += (dx/d) * str;
+        b.vy += (dy/d) * str;
+        // Cap speed so it slowly orbits instead of beelining
+        const cap = b.maxSpeed || 2.4;
+        const cs = Math.sqrt(b.vx*b.vx + b.vy*b.vy);
+        if (cs > cap) { b.vx = b.vx/cs * cap; b.vy = b.vy/cs * cap; }
+      }
+      // Lifetime: missiles persist longer than normal bullets so they actually orbit
+      b.life = (b.life || 0) + 1;
+      if (b.life > 600) b.alive = false;   // 10s cap to prevent runaway
+      b.x += b.vx;       // missiles ignore the global slowdown
+      b.y += b.vy;
+      b.px = b.x|0; b.py = b.y|0;
+      // Off-screen for missiles only kills if WAY off, since they curve back
+      if (b.x < -60 || b.x > W + 60 || b.y < -60 || b.y > H + 60) b.alive = false;
+      continue;
+    }
     b.x+=b.vx*ENEMY_BULLET_SPD_GLOBAL;
     b.y+=b.vy*ENEMY_BULLET_SPD_GLOBAL;
     b.px=b.x|0;b.py=b.y|0;
@@ -3648,6 +3681,8 @@ const ENEMY_CFG = {
   // Ramming-only types: no bullets, only deal contact damage
   asteroid: {hp:80, spd:0.9,pts:120,w:60,h:60,col:'#888899',cv:2},
   ramship:  {hp:50, spd:2.4,pts:140,w:22,h:22,col:'#aa44ff',cv:2},
+  // 爆炸怪 — fast dasher; on death, 2s fuse → AOE blast that hurts player.
+  exploder: {hp:90, spd:3.2,pts:200,w:22,h:22,col:'#ffaa22',cv:3},
   // 3 elite enemies
   eliteTank:  {hp:480,spd:0.4,pts:900,w:46,h:38,col:'#7788aa',cv:8},  // 重甲不发子弹
   eliteHomer: {hp:140,spd:1.0,pts:520,w:30,h:26,col:'#ff8866',cv:4},  // 发射可击毁追踪弹
@@ -3816,6 +3851,78 @@ function updateEnemy(e) {
       e.x += Math.sin(e.moveTimer*0.018) * 0.4;
       e.spin = (e.spin || 0) + 0.025;
       break;
+    case 'exploder': {
+      // Fuse mode (death-triggered) — pulse outward without moving until blast.
+      if (e.fuse > 0) {
+        e.fuse--;
+        e._pulse = (e._pulse || 0) + 0.15;
+        if (e.fuse === 0) {
+          // BOOM — AOE damage to player, plus visual shockwave.
+          const blastR = 70;
+          for (const p of players) {
+            if (p.dead || p.invTimer > 0 || invincible) continue;
+            const dx = p.x - e.x, dy = (p.y - 12) - e.y;
+            if (dx*dx + dy*dy < blastR*blastR) hitPlayer(p);
+          }
+          // Light ring of damage particles
+          for (let k = 0; k < 18; k++) {
+            const a = (k/18) * Math.PI * 2;
+            explosions.push({
+              x: e.x, y: e.y, vx: Math.cos(a) * 5, vy: Math.sin(a) * 5,
+              life: 28, maxLife: 28, size: 5, color: k%2 ? '#ffcc44' : '#ff6622'
+            });
+          }
+          spawnExplosion(e.x, e.y, 'large');
+          triggerShake(10, 16);
+          e.alive = false;
+          score += e.pts;
+        }
+        break;
+      }
+      // Active mode — sprint diagonally toward the nearest player.
+      const t = players.find(p => !p.dead);
+      if (t) {
+        const dx = t.x - e.x, dy = (t.y - 12) - e.y, d = Math.sqrt(dx*dx + dy*dy) || 1;
+        e.x += (dx/d) * e.speed * 1.3;
+        e.y += (dy/d) * e.speed * 1.3;
+      } else {
+        e.y += e.speed;
+      }
+      break;
+    }
+    case 'exploder': {
+      // Spiked diamond hull with glowing core; flashes red while fuse counts down.
+      const fusing = e.fuse > 0;
+      const flash = fusing ? (Math.sin(e._pulse || 0) * 0.5 + 0.5) : 0;
+      // Outer warning ring while fusing
+      if (fusing) {
+        cx.strokeStyle = `rgba(255,80,40,${0.5 + flash * 0.5})`;
+        cx.lineWidth = 2;
+        cx.beginPath(); cx.arc(0, 0, 18 + flash * 14, 0, Math.PI*2); cx.stroke();
+        cx.strokeStyle = `rgba(255,200,80,${0.4 + flash * 0.4})`;
+        cx.beginPath(); cx.arc(0, 0, 28 + flash * 22, 0, Math.PI*2); cx.stroke();
+      }
+      // Spiked body
+      cx.fillStyle = fusing ? '#ff5522' : rg;
+      cx.beginPath();
+      const spikes = 8;
+      for (let k = 0; k < spikes * 2; k++) {
+        const r = (k % 2 === 0) ? e.w * 0.55 : e.w * 0.30;
+        const a = (k / (spikes * 2)) * Math.PI * 2 + (e.moveTimer * 0.04);
+        const px = Math.cos(a) * r, py = Math.sin(a) * r;
+        if (k === 0) cx.moveTo(px, py); else cx.lineTo(px, py);
+      }
+      cx.closePath(); cx.fill();
+      cx.strokeStyle = '#ffcc44'; cx.lineWidth = 1; cx.stroke();
+      // Glowing core
+      const cg = cx.createRadialGradient(0, 0, 1, 0, 0, e.w * 0.32);
+      cg.addColorStop(0, '#ffffff');
+      cg.addColorStop(0.4, fusing ? '#ff2200' : '#ffaa22');
+      cg.addColorStop(1, 'rgba(255,80,0,0)');
+      cx.fillStyle = cg;
+      cx.beginPath(); cx.arc(0, 0, e.w * 0.32, 0, Math.PI*2); cx.fill();
+      break;
+    }
     case 'mirrorClone': {
       // Mirror clone — moves like a player, fires player-style bullets at the real player
       const target = players.find(p => !p.dead);
@@ -3847,18 +3954,25 @@ function updateEnemy(e) {
       else                e.x += Math.sin(e.moveTimer * 0.02) * 1.5;
       break;
     case 'eliteHomer':
-      // 缓速移动, 周期发射追踪导弹 (可被打爆, 速度略低于 e.speed*Speed)
-      e.y += e.speed * 0.55;
+      // Hover around upper third of screen, periodically launch persistent
+      // homing missiles that orbit-chase the player until shot down.
+      if (e.y < 110) e.y += e.speed * 0.8;
+      else           e.y += Math.sin(e.moveTimer * 0.03) * 0.4;
       e.x += Math.sin(e.moveTimer * 0.03) * 1.2;
-      if (e.moveTimer % ((90 * fireMul) | 0) === 0) {
+      if (e.moveTimer % ((75 * fireMul) | 0) === 0) {
         const t = players.find(p => !p.dead);
         if (t) {
-          const dx = t.x - e.x, dy = t.y - e.y, d = Math.sqrt(dx*dx + dy*dy) || 1;
-          const sp = e.speed * 0.85;       // 弹速略低于敌机移动速度
-          const m = mkEBSpecial(e.x, e.y + 14, dx/d * sp, dy/d * sp, '#ff8866', 3, 'homer');
-          m.homing = true;
-          m.homingStr = 0.045;
-          m.maxSpeed = sp * 1.1;
+          // Launch from a random side angle so missiles spiral in instead of
+          // flying straight at the player.
+          const launchAng = rnd(-0.9, 0.9);
+          const sp = 1.3;
+          const m = mkEBSpecial(e.x, e.y + 14,
+            Math.sin(launchAng) * sp, Math.cos(launchAng) * sp,
+            '#ff8866', 4, 'homer');
+          m.homing    = true;
+          m.homingStr = 0.06 + Math.min(level, 50) * 0.001;
+          m.maxSpeed  = 2.3;
+          m.w = 6; m.h = 8;
           enemyBullets.push(m);
         }
       }
@@ -6286,6 +6400,16 @@ function doRevive() {
 
 function killEnemy(e) {
   if(!e.alive) return;
+  // Exploder — entering kill state starts a 2s fuse instead of dying.
+  // The actual `alive=false` happens in the fuse-tick branch in updateEnemy.
+  if (e.type === 'exploder' && !e.fuse) {
+    e.fuse = 120;       // 2 seconds @ 60fps
+    e.hp = 1;           // keep it "alive" for the fuse window
+    killCount++;
+    addFT('!倒计时!', e.x, e.y - 12, '#ffcc44');
+    SFX.bossAppear();   // tense sting
+    return;
+  }
   e.alive=false; score+=e.pts; killCount++;
   spawnExplosion(e.x,e.y,e.type==='carrier'||e.type==='tank'||e.type==='elite'?'large':'medium');
   addFT('+'+e.pts,e.x,e.y,'#ffffff');
@@ -6450,11 +6574,11 @@ const WAVE_POOLS = [
   ['zigzag','dart','jet','saucer','bomber','splitter'],
   ['zigzag','bomber','splitter','gunship','minelayer','stealth'],
   ['bomber','gunship','minelayer','stealth','sniper','mortar'],
-  ['gunship','minelayer','sniper','mortar','tank','hive','swarmlet'],
-  ['gunship','tank','hive','swarmlet','sniper','elite','turret','ramship','eliteHomer'],
-  ['tank','elite','turret','sniper','mortar','carrier','splitter','ramship','eliteHomer','eliteClone'],
-  ['elite','tank','carrier','turret','sniper','minelayer','hive','jet','ramship','eliteTank','eliteHomer','eliteClone'],
-  ['elite','tank','carrier','turret','sniper','mortar','minelayer','hive','stealth','ramship','eliteTank','eliteHomer','eliteClone'],
+  ['gunship','minelayer','sniper','mortar','tank','hive','swarmlet','exploder'],
+  ['gunship','tank','hive','swarmlet','sniper','elite','turret','ramship','eliteHomer','exploder'],
+  ['tank','elite','turret','sniper','mortar','carrier','splitter','ramship','eliteHomer','eliteClone','exploder'],
+  ['elite','tank','carrier','turret','sniper','minelayer','hive','jet','ramship','eliteTank','eliteHomer','eliteClone','exploder'],
+  ['elite','tank','carrier','turret','sniper','mortar','minelayer','hive','stealth','ramship','eliteTank','eliteHomer','eliteClone','exploder'],
   ['elite','tank','carrier','turret','sniper','mortar','minelayer','hive','stealth','splitter','dart','jet','asteroid','ramship','eliteTank','eliteHomer','eliteClone'],
 ];
 
@@ -6541,9 +6665,13 @@ function updateWaves() {
       const idx2 = Math.max(0, idx-1);
       pool = WAVE_POOLS[idx].concat(WAVE_POOLS[idx2]);
     }
-    // Endless lv 5+ — sprinkle in giant asteroids as a hazard, but keep them rare.
+    // Endless lv 5+ — giant asteroids start as occasional hazards;
+    // at high levels they become a steady downward shower.
     if (level >= 5) {
-      pool = pool.concat(['asteroid']);
+      // Number of asteroid copies in the pool scales with level so the random
+      // pick rate grows: ~1× at lv5, ~3× at lv25, ~6× at lv50, capped at 8×.
+      const asteroidWeight = Math.min(8, 1 + Math.floor((level - 5) / 8));
+      for (let k = 0; k < asteroidWeight; k++) pool.push('asteroid');
     }
   } else {
     pool = poolForLevel(level);
