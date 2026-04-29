@@ -105,7 +105,7 @@ canvas { display:block; width:100%; height:100%; image-rendering:auto; }
     <div class="body" id="console-body"></div>
     <div class="footer">
       <button id="console-reset" class="warn">重置默认</button>
-      <button id="console-back">← 返回排行榜</button>
+      <button id="console-back">← 返回主页</button>
     </div>
   </div>
 </div>
@@ -186,6 +186,37 @@ const BG_SKINS = [
 ];
 const ANIME_BG_TYPES = ['animeSakura','animeStar','animeMoon','animeSnow','animeFlame','animeOcean','animeNeon','animeDusk','animeRainbow','animeGoddess'];
 
+// ─── RUNES ───────────────────────────────────────────────────────────────────
+// Each rune: name, key, color, base proc rate, lv 10 max rate, diamond cost per lv up
+const RUNE_DEFS = [
+  { key:'burn',   name:'燃烧符文', icon:'🔥', col:'#ff8844',
+    base:0.04, max:0.30, desc:'子弹击中有概率引燃, 持续掉血' },
+  { key:'poison', name:'淬毒符文', icon:'☠',  col:'#88ff44',
+    base:0.05, max:0.35, desc:'中毒敌军子弹间隔变长' },
+  { key:'freeze', name:'冰冻符文', icon:'❄',  col:'#88eeff',
+    base:0.10, max:0.45, desc:'大概率减速 / 小概率冻结' },
+  { key:'plague', name:'疫病符文', icon:'☣',  col:'#cc44ff',
+    base:0.03, max:0.25, desc:'感染敌人持续掉血并传染相邻敌人' },
+  { key:'crit',   name:'暴击符文', icon:'⚡', col:'#ffcc44',
+    base:0.06, max:0.35, desc:'子弹概率双倍伤害, 显示暴击效果' },
+  { key:'decap',  name:'斩首符文', icon:'🗡', col:'#ff4488',
+    base:0.01, max:0.10, desc:'对小怪小概率秒杀, Boss 不适用' },
+];
+function runeProb(key) {
+  const lv = (save.runes && save.runes[key]) || 0;
+  if (lv <= 0) return 0;
+  const def = RUNE_DEFS.find(r => r.key === key);
+  if (!def) return 0;
+  return def.base + (def.max - def.base) * ((lv - 1) / 9);
+}
+function isRuneEquipped(key) {
+  return save.equippedRunes && save.equippedRunes.indexOf(key) >= 0;
+}
+function runeUpgradeCost(lv) {
+  // lv 0→1: 1💎; lv 9→10: 10💎. Triangular total = 55💎
+  return Math.max(1, lv + 1);
+}
+
 // ─── SAVE DATA ───────────────────────────────────────────────────────────────
 // Tier multipliers for stage difficulty (must be defined before loadSave runs)
 const TIER_MUL = { novice:1.0, veteran:1.55, hell:2.4 };
@@ -206,6 +237,8 @@ function defaultSave() {
     endlessState: null,
     endlessLeaderboard: [],
     console: defaultConsole(),
+    runes: { burn:0, poison:0, freeze:0, plague:0, crit:0, decap:0 },
+    equippedRunes: [],   // up to 2 keys from RUNE_DEFS
   };
 }
 function defaultConsole() {
@@ -282,6 +315,14 @@ function loadSave() {
           if (typeof d.console[k] === 'number') def[k] = d.console[k];
         }
         save.console = def;
+      }
+      if (d.runes && typeof d.runes === 'object') {
+        for (const k of Object.keys(save.runes)) {
+          if (typeof d.runes[k] === 'number') save.runes[k] = clamp(d.runes[k], 0, 10);
+        }
+      }
+      if (Array.isArray(d.equippedRunes)) {
+        save.equippedRunes = d.equippedRunes.filter(k => k in save.runes).slice(0, 2);
       }
     }
   } catch(e) {}
@@ -913,6 +954,8 @@ let players = [];
 let wingmen = [];
 let bullets = [];
 let enemyBullets = [];
+let screenMissiles = [];   // {axis:'h'|'v', pos, warnT, fireT}
+let lastMissileSpawn = 0;
 let enemies = [];
 let pickups = [];
 let explosions = [];
@@ -926,6 +969,106 @@ const MAX_FT            = 25;
 const MAX_PICKUPS       = 40;
 function capArray(arr, max) {
   if (arr.length > max) arr.splice(0, arr.length - max);
+}
+
+// ─── SCREEN MISSILES (横向/纵向贯穿屏幕导弹) ──────────────────────────────────
+const MISSILE_WARN_FRAMES = 180;   // 3s 红线警告
+const MISSILE_FIRE_FRAMES = 28;    // ~0.45s 致命光束
+const MISSILE_GAP = 110;           // 同轴最小间距, 保证有路可走
+function shouldEnableScreenMissiles() {
+  if (!endlessMode) {
+    const tier = currentTier();
+    return tier === 'veteran' || tier === 'hell';
+  }
+  return level >= 30;
+}
+function maxConcurrentMissiles() {
+  if (endlessMode) {
+    return clamp(1 + Math.floor((level - 30) / 15), 1, 4);
+  }
+  return currentTier() === 'hell' ? 3 : 2;
+}
+function trySpawnScreenMissile() {
+  if (screenMissiles.length >= maxConcurrentMissiles()) return;
+  const axis = Math.random() < 0.5 ? 'h' : 'v';
+  const minP = axis === 'h' ? 80 : 30;
+  const maxP = axis === 'h' ? H - 80 : W - 30;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const pos = rnd(minP, maxP);
+    // Reject if would crowd same-axis warnings
+    const tooClose = screenMissiles.some(m => m.axis === axis && Math.abs(m.pos - pos) < MISSILE_GAP);
+    if (tooClose) continue;
+    // Hard rule: never let same-axis active warnings exceed 2 at once → guarantees corridor
+    const sameAxisCount = screenMissiles.filter(m => m.axis === axis).length;
+    if (sameAxisCount >= 2) return;
+    screenMissiles.push({ axis, pos, warnT: MISSILE_WARN_FRAMES, fireT: 0 });
+    return;
+  }
+}
+function updateScreenMissiles() {
+  if (!shouldEnableScreenMissiles() || screen !== 'game') return;
+  const interval = endlessMode
+    ? Math.max(180, 540 - (level - 30) * 6)
+    : (currentTier() === 'hell' ? 360 : 540);
+  if (frame - lastMissileSpawn > interval) {
+    lastMissileSpawn = frame;
+    trySpawnScreenMissile();
+  }
+  for (const m of screenMissiles) {
+    if (m.warnT > 0) {
+      m.warnT--;
+      continue;
+    }
+    m.fireT++;
+    // Player damage when beam is bright (first half of fire)
+    if (m.fireT > 0 && m.fireT < 18) {
+      for (const p of players) {
+        if (p.dead || p.invTimer > 0 || invincible) continue;
+        const hcx = p.x, hcy = p.y - 12;
+        const hit = m.axis === 'h' ? Math.abs(m.pos - hcy) < 8 : Math.abs(m.pos - hcx) < 8;
+        if (hit) hitPlayer(p);
+      }
+    }
+  }
+  screenMissiles = screenMissiles.filter(m => m.fireT < MISSILE_FIRE_FRAMES);
+}
+function drawScreenMissiles() {
+  for (const m of screenMissiles) {
+    if (m.warnT > 0) {
+      const flash = Math.sin(m.warnT * 0.4) > 0 ? 0.85 : 0.30;
+      cx.save();
+      cx.strokeStyle = `rgba(255,40,40,${flash})`;
+      cx.lineWidth = 2;
+      cx.setLineDash([10, 6]);
+      cx.beginPath();
+      if (m.axis === 'h') { cx.moveTo(0, m.pos); cx.lineTo(W, m.pos); }
+      else                { cx.moveTo(m.pos, 0); cx.lineTo(m.pos, H); }
+      cx.stroke();
+      cx.setLineDash([]);
+      cx.restore();
+      // Countdown number
+      const sec = Math.ceil(m.warnT / 60);
+      cx.fillStyle = '#ff4444';
+      cx.font = "bold 13px 'Courier New', monospace";
+      cx.textAlign = 'center';
+      if (m.axis === 'h') cx.fillText('!' + sec + 's!', W - 28, m.pos + 4);
+      else                cx.fillText('!' + sec + 's!', m.pos, 50);
+      cx.textAlign = 'left';
+    } else if (m.fireT < MISSILE_FIRE_FRAMES) {
+      const fade = 1 - m.fireT / MISSILE_FIRE_FRAMES;
+      const w = 14;
+      const grad = cx.createLinearGradient(
+        m.axis === 'h' ? 0 : m.pos - w, m.axis === 'h' ? m.pos - w : 0,
+        m.axis === 'h' ? W : m.pos + w, m.axis === 'h' ? m.pos + w : H
+      );
+      grad.addColorStop(0,    `rgba(255,255,255,${fade * 0.95})`);
+      grad.addColorStop(0.5,  `rgba(255,80,80,${fade})`);
+      grad.addColorStop(1,    `rgba(255,255,255,${fade * 0.95})`);
+      cx.fillStyle = grad;
+      if (m.axis === 'h') cx.fillRect(0, m.pos - w, W, w * 2);
+      else                cx.fillRect(m.pos - w, 0, w * 2, H);
+    }
+  }
 }
 let bgStars = [];
 let bgTerrain = [];
@@ -2025,16 +2168,52 @@ function updatePlayer(p, keys) {
 
 // ─── BULLETS ─────────────────────────────────────────────────────────────────
 function mkB(x,y,vx,vy,color,w,h,owner,dmg) {
-  // Player bullets honor console multipliers; enemy/wingman bullets pass owner so we
-  // only scale player-owned. (Wingman bullets count as player damage too.)
   const C = save.console || defaultConsole();
   const isPlayer = !!owner && (owner.pNum !== undefined);
-  const finalDmg = (dmg || 10) * (isPlayer ? C.weaponDmgMul : 1);
+  let finalDmg = (dmg || 10) * (isPlayer ? C.weaponDmgMul : 1);
+  let crit = false;
+  // Crit rune: roll at bullet creation, doubles damage, gold tint
+  if (isPlayer && isRuneEquipped('crit') && Math.random() < runeProb('crit')) {
+    crit = true;
+    finalDmg *= 2;
+  }
   const sm = isPlayer ? C.bulletSpeedMul : 1;
   return {x, y, px:x|0, py:y|0,
           vx: vx*sm, vy: vy*sm,
-          color, w, h, owner,
-          dmg: finalDmg, alive:true};
+          color: crit ? '#ffcc44' : color,
+          w: crit ? w + 1 : w, h: crit ? h + 1 : h,
+          owner, dmg: finalDmg, alive:true, crit};
+}
+
+// Apply rune procs at the moment a player bullet hits an enemy.
+function applyRuneOnHit(e, b) {
+  if (!b || !b.owner || b.owner.pNum === undefined) return;
+  // Crit visual
+  if (b.crit) addFT('暴击!', e.x, e.y - 10, '#ffcc44');
+  // Burn
+  if (isRuneEquipped('burn') && Math.random() < runeProb('burn')) {
+    e.burn = Math.max(e.burn || 0, 180);
+  }
+  // Poison
+  if (isRuneEquipped('poison') && Math.random() < runeProb('poison')) {
+    e.poison = Math.max(e.poison || 0, 240);
+  }
+  // Freeze (large slow chance, smaller hard-freeze chance)
+  if (isRuneEquipped('freeze')) {
+    const p = runeProb('freeze');
+    if (Math.random() < p) e.slow   = Math.max(e.slow   || 0, 120);
+    if (Math.random() < p * 0.25) e.freeze = Math.max(e.freeze || 0, 60);
+  }
+  // Plague (also drains and spreads)
+  if (isRuneEquipped('plague') && Math.random() < runeProb('plague')) {
+    e.plague = Math.max(e.plague || 0, 180);
+  }
+  // Decap — non-boss only
+  if (isRuneEquipped('decap') && Math.random() < runeProb('decap')) {
+    addFT('斩  首!', e.x, e.y - 10, '#ff4488');
+    spawnExplosion(e.x, e.y, 'large');
+    e.hp = 0;
+  }
 }
 function mkLaser(x,playerY,wl,owner) {
   return {x,y:0,px:x|0,py:0,vx:0,vy:0,color:'#ff2200',w:3+wl*2,h:playerY+12,
@@ -2431,10 +2610,33 @@ function mkEnemy(type, x, y) {
 
 function updateEnemy(e) {
   if(!e.alive) return;
+  // Pre-tick: rune effects (burn / plague drain HP, freeze stops everything, slow halves motion)
+  if (e.burn   > 0) { e.burn--;   e.hp -= e.maxHp * 0.005; }
+  if (e.poison > 0) e.poison--;
+  if (e.freeze > 0) { e.freeze--; e.px = e.x|0; e.py = e.y|0; if (e.hp <= 0) killEnemy(e); return; }
+  if (e.slow   > 0) e.slow--;
+  if (e.plague > 0) {
+    e.plague--;
+    e.hp -= e.maxHp * 0.004;
+    if (e.plague % 30 === 0) {
+      let near = null, bestD = 60*60;
+      for (const o of enemies) {
+        if (!o.alive || o === e || (o.plague||0) > 0) continue;
+        const dx = o.x - e.x, dy = o.y - e.y, d = dx*dx + dy*dy;
+        if (d < bestD) { bestD = d; near = o; }
+      }
+      if (near) near.plague = 180;
+    }
+  }
+  if (e.hp <= 0) { killEnemy(e); return; }
   e.moveTimer++;
-  // Density relief: in endless mode, scale firing intervals up; console also multiplies
   const C = save.console || defaultConsole();
+  // Poisoned enemies fire much less often (skip half their internal ticks)
+  if (e.poison > 0 && Math.random() < 0.5) e.moveTimer--;
   const fireMul = (endlessMode ? 1.6 : 1.0) * C.enemyFireRateMul;
+  // Pre-record position for slow modifier
+  const _slowApply = e.slow > 0;
+  const _xPre = e.x, _yPre = e.y;
   switch(e.type) {
     case 'basic':   e.y+=e.speed; e.x+=Math.sin(e.moveTimer*0.03)*0.5; break;
     case 'zigzag':  e.y+=e.speed; e.x+=Math.sin(e.moveTimer*0.08)*3; break;
@@ -2543,6 +2745,11 @@ function updateEnemy(e) {
         }
       }
       break;
+  }
+  // Apply slow: 50% of frame movement when slowed
+  if (_slowApply) {
+    e.x = _xPre + (e.x - _xPre) * 0.5;
+    e.y = _yPre + (e.y - _yPre) * 0.5;
   }
   e.x=clamp(e.x,e.w/2,W-e.w/2);
   e.px=e.x|0; e.py=e.y|0;
@@ -2946,6 +3153,40 @@ function drawEnemy(e) {
     }
   }
   cx.restore();
+  // Status overlays (rune effects)
+  if (e.burn > 0 || e.poison > 0 || e.freeze > 0 || e.plague > 0) {
+    const flick = 0.4 + Math.sin(frame * 0.3) * 0.25;
+    cx.save();
+    cx.globalAlpha = flick;
+    if (e.burn > 0) {
+      cx.fillStyle = '#ff8844';
+      cx.beginPath(); cx.arc(x, y, e.w*0.55, 0, Math.PI*2); cx.fill();
+      // Flame puffs above
+      cx.fillStyle = '#ffcc44';
+      for (let i=0;i<3;i++) {
+        cx.beginPath(); cx.arc(x + rnd(-6,6), y - e.h*0.4 + rnd(-3,3), 2.5, 0, Math.PI*2); cx.fill();
+      }
+    }
+    if (e.poison > 0) {
+      cx.fillStyle = '#88ff44';
+      cx.beginPath(); cx.arc(x, y, e.w*0.5, 0, Math.PI*2); cx.fill();
+    }
+    if (e.freeze > 0) {
+      cx.fillStyle = '#88eeff';
+      cx.fillRect(x-e.w*0.5, y-e.h*0.5, e.w, e.h);
+      cx.strokeStyle = '#aaeeff';
+      cx.lineWidth = 1.5;
+      cx.beginPath();
+      cx.moveTo(x-e.w*0.4, y); cx.lineTo(x+e.w*0.4, y);
+      cx.moveTo(x, y-e.h*0.4); cx.lineTo(x, y+e.h*0.4);
+      cx.stroke();
+    }
+    if (e.plague > 0) {
+      cx.fillStyle = '#cc44ff';
+      cx.beginPath(); cx.arc(x, y, e.w*0.55, 0, Math.PI*2); cx.fill();
+    }
+    cx.restore();
+  }
   // Health bar
   if(e.hp<e.maxHp){
     const hbx=x-e.w/2, hby=y-e.h/2-6;
@@ -3012,9 +3253,9 @@ function updateBoss() {
   boss.moveTimer++;
   if(!boss.entryDone){
     boss.y+=2;
-    if(boss.y>=80){
+    if(boss.y>=110){
       boss.entryDone=true;
-      boss.y=80;
+      boss.y=110;
       boss.anchorX = boss.x;
       boss.anchorY = boss.y;
     }
@@ -3416,24 +3657,78 @@ function drawBoss() {
   sg.addColorStop(1, 'rgba(0,0,0,0.45)');
   cx.fillStyle = sg;
   cx.beginPath(); cx.ellipse(0, 38, 50, 12, 0, 0, Math.PI*2); cx.fill();
+
+  // ─ Damage feedback: more scorch / flames as HP drops ─
+  const hr = b.hp / b.maxHp;
+  const dmgLv = hr < 0.2 ? 4 : hr < 0.4 ? 3 : hr < 0.7 ? 2 : hr < 0.9 ? 1 : 0;
+  if (dmgLv >= 1) {
+    // Persistent scorch marks (rendered with a deterministic pattern per boss)
+    cx.fillStyle = 'rgba(20,5,0,0.85)';
+    const scorch = (b.bossType * 13) % 7;
+    for (let i = 0; i < dmgLv * 2; i++) {
+      const a = (i + scorch) * 0.9;
+      const sx = Math.cos(a) * 24;
+      const sy = Math.sin(a) * 22 - 6;
+      cx.beginPath();
+      cx.ellipse(sx, sy, 5 + (i%3), 4 + (i%2), a, 0, Math.PI*2);
+      cx.fill();
+    }
+  }
+  if (dmgLv >= 2 && frame % 3 === 0) {
+    // Smoke puffs trailing upward
+    cx.fillStyle = 'rgba(60,40,30,0.45)';
+    for (let i = 0; i < 2; i++) {
+      cx.beginPath();
+      cx.arc(rnd(-25,25), -20 - rnd(0,12), 4 + rnd(0,3), 0, Math.PI*2);
+      cx.fill();
+    }
+  }
+  if (dmgLv >= 3 && frame % 2 === 0) {
+    // Flame flickers around the body
+    cx.fillStyle = 'rgba(255,160,40,0.7)';
+    for (let i = 0; i < 3; i++) {
+      cx.beginPath();
+      cx.arc(rnd(-30,30), rnd(-10,30), 2 + rnd(0,2), 0, Math.PI*2);
+      cx.fill();
+    }
+  }
   cx.restore();
 
-  // HP bar at TOP (under HUD); shows current segment + xN remaining
-  const bpw=300, bpx=(W-bpw)/2, bpy=42;
+  // Spawn explosion particles outside transform for damage feedback
+  if (dmgLv >= 2 && frame % (10 - dmgLv*2) === 0) {
+    spawnExplosion(b.x + rnd(-30,30), b.y + rnd(-20,20), 'small');
+  }
+  if (dmgLv >= 4 && frame % 4 === 0) {
+    spawnExplosion(b.x + rnd(-40,40), b.y + rnd(-30,30), 'medium');
+  }
+
+  // Boss HP bar — pushed below the score backdrop so name isn't covered
+  const bpw=300, bpx=(W-bpw)/2, bpy=70;
   const segs = b.barCount || 1;
   const segHp = b.maxHp / segs;
   const barsLeft = Math.max(1, Math.ceil(b.hp / segHp));
   const fillRatio = clamp((b.hp - (barsLeft-1)*segHp) / segHp, 0, 1);
+  // Per-segment color palette (rich → faded as bars run out)
+  const SEG_COLORS = ['#ff0033','#ff4400','#ff8800','#ffcc00','#ffff44','#aaff00','#00ff66','#00ffcc','#00ccff'];
+  const curIdx = Math.max(0, barsLeft - 1);
+  const curColor = SEG_COLORS[Math.min(curIdx, SEG_COLORS.length - 1)];
+  const nextColor = curIdx === 0
+    ? '#220011'
+    : SEG_COLORS[Math.min(curIdx - 1, SEG_COLORS.length - 1)];
 
-  cx.fillStyle='rgba(0,0,0,0.75)'; cx.fillRect(bpx-2,bpy-14,bpw+4,28);
+  cx.fillStyle='rgba(0,0,0,0.85)'; cx.fillRect(bpx-2,bpy-16,bpw+4,30);
   // Title row
   cx.fillStyle='#fff'; cx.font="bold 11px sans-serif"; cx.textAlign='center';
-  cx.fillText('★ '+b.name+' ★', (W/2)|0, bpy-2);
-  // HP fill
-  cx.fillStyle='#220011'; cx.fillRect(bpx|0,bpy|0,bpw,10);
-  const bHpGrad=cx.createLinearGradient(bpx,0,bpx+bpw,0);
-  bHpGrad.addColorStop(0,b.color); bHpGrad.addColorStop(1,b.acc);
-  cx.fillStyle=bHpGrad; cx.fillRect(bpx|0,bpy|0,(bpw*fillRatio)|0,10);
+  cx.fillText('★ '+b.name+' ★', (W/2)|0, bpy-3);
+  // Drained portion shows the NEXT segment's color (instead of black)
+  cx.fillStyle = nextColor;
+  cx.fillRect(bpx|0, bpy|0, bpw, 10);
+  // Current segment fill (current color, drains left→right)
+  cx.fillStyle = curColor;
+  cx.fillRect(bpx|0, bpy|0, (bpw*fillRatio)|0, 10);
+  // Subtle highlight stripe
+  cx.fillStyle = 'rgba(255,255,255,0.18)';
+  cx.fillRect(bpx, bpy, (bpw*fillRatio)|0, 2);
   // x N indicator
   cx.fillStyle='#ffcc44'; cx.font="bold 11px 'Courier New', monospace"; cx.textAlign='left';
   cx.fillText('x'+barsLeft, bpx+bpw+6, bpy+9);
@@ -4053,7 +4348,7 @@ function damageWingmen(player) {
 function updateWingmen() {
   for(const w of wingmen) {
     if(!w.alive) continue;
-    if(w.owner.dead) { w.alive=false; continue; }
+    if(w.owner.dead) continue;       // owner respawn 后保留僚机和等级
     const tx=w.owner.x+w.dx, ty=w.owner.y+w.dy;
     w.x+=(tx-w.x)*0.12; w.y+=(ty-w.y)*0.12;
     w.fireTimer++;
@@ -4268,6 +4563,7 @@ function checkCollisions() {
     for(const e of enemies) {
       if(!e.alive) continue;
       if(Math.abs(b.x-e.x)<(b.w/2+e.w/2)&&Math.abs(b.y-e.y)<(b.h/2+e.h/2)) {
+        applyRuneOnHit(e, b);
         e.hp-=b.dmg; b.alive=false; SFX.hitEnemy();
         if(e.hp<=0) killEnemy(e);
         break;
@@ -4329,8 +4625,7 @@ function hitPlayer(p) {
     p.weaponLevel--;
     addFT('武器降级!',p.x,p.y-20,'#ff8888');
   }
-  // Damage also degrades wingmen
-  damageWingmen(p);
+  // (Wingmen no longer degrade on damage — they persist with their levels)
   spawnExplosion(p.x,p.y,'medium');
   if(p.lives<=0){p.dead=true;p.lives=0;spawnExplosion(p.x,p.y,'large');checkGameOver();}
   else{p.dead=true;p.respawnTimer=120;}
@@ -4751,7 +5046,7 @@ function clickTitle(mx,my) {
       else if(btn.act==='endless') startGame(false,true);
       else if(btn.act==='shop') screen='shop';
       else if(btn.act==='codex') screen='codex';
-      else if(btn.act==='console') screen='console';
+      else if(btn.act==='console') { screen='console'; renderConsole(); }
     }
 }
 
@@ -5223,11 +5518,13 @@ function drawShop() {
   cx.fillStyle='#ffcc00';cx.font="14px 'Courier New', monospace";cx.textAlign='center';
   cx.fillText('🪙 '+save.coins+'   💎 '+save.diamonds,W/2,54);cx.textAlign='left';
 
-  drawButton(20,68,210,34,'飞机皮肤',shopTab===0);
-  drawButton(250,68,210,34,'背景皮肤',shopTab===1);
+  drawButton(20, 68,140,34,'飞机皮肤',shopTab===0);
+  drawButton(170,68,140,34,'背景皮肤',shopTab===1);
+  drawButton(320,68,140,34,'符  文', shopTab===2);
 
   if(shopTab===0) drawShopPlanes();
-  else drawShopBGs();
+  else if(shopTab===1) drawShopBGs();
+  else drawShopRunes();
 
   drawButton(20,655,110,36,'← 返回',false);
   drawButton(350,655,110,36,'装备选中',shopSelectedPlane>=0||shopSelectedBG>=0);
@@ -5280,6 +5577,116 @@ function drawShopPlanes() {
     }
     if(isHL){cx.fillStyle='#88ccff';cx.font="9px 'Courier New'";cx.fillText('▶选中◀',(bx+cw/2)|0,(by+102)|0);}
     cx.textAlign='left';
+  }
+}
+
+function drawShopRunes() {
+  const sx = 20, sy = 115, rowH = 78;
+  cx.textAlign = 'left';
+  cx.fillStyle = '#88ccee';
+  cx.font = "11px 'Courier New', monospace";
+  cx.textAlign = 'center';
+  const eq = save.equippedRunes || [];
+  cx.fillText('已装备 ' + eq.length + ' / 2  ·  钻石升级符文 · 等级越高概率越高', W/2, sy-2);
+  cx.textAlign = 'left';
+  for (let i = 0; i < RUNE_DEFS.length; i++) {
+    const r = RUNE_DEFS[i];
+    const ry = sy + 8 + i * rowH;
+    const lv = save.runes[r.key] || 0;
+    const equipped = isRuneEquipped(r.key);
+    // Card background
+    cx.fillStyle = equipped ? 'rgba(80,40,60,0.55)' : 'rgba(20,40,60,0.45)';
+    cx.fillRect(sx, ry, W - sx*2, rowH - 8);
+    cx.strokeStyle = equipped ? r.col : '#244466';
+    cx.lineWidth = equipped ? 2 : 1;
+    cx.strokeRect(sx + 0.5, ry + 0.5, W - sx*2 - 1, rowH - 9);
+    // Rune name + icon + level
+    cx.fillStyle = r.col;
+    cx.font = "bold 14px 'Courier New', monospace";
+    cx.fillText(r.icon + ' ' + r.name, sx + 10, ry + 18);
+    cx.fillStyle = '#ffcc44';
+    cx.font = "bold 11px 'Courier New', monospace";
+    cx.fillText('Lv ' + lv + ' / 10', sx + 10, ry + 36);
+    cx.fillStyle = '#ffffff';
+    cx.font = "10px 'Courier New', monospace";
+    cx.fillText('概率 ' + (runeProb(r.key) * 100).toFixed(1) + '%', sx + 90, ry + 36);
+    // Description
+    cx.fillStyle = '#aaccee';
+    cx.font = "10px 'Courier New', monospace";
+    cx.fillText(r.desc, sx + 10, ry + 54);
+    // Upgrade button (right-top)
+    const ub = { x: W - 168, y: ry + 8, w: 70, h: 24 };
+    if (lv < 10) {
+      cx.fillStyle = '#114466';
+      cx.fillRect(ub.x, ub.y, ub.w, ub.h);
+      cx.strokeStyle = '#44aaff';
+      cx.lineWidth = 1;
+      cx.strokeRect(ub.x + 0.5, ub.y + 0.5, ub.w - 1, ub.h - 1);
+      cx.fillStyle = '#ffcc44';
+      cx.font = "bold 10px 'Courier New', monospace";
+      cx.textAlign = 'center';
+      cx.fillText('升级 💎' + runeUpgradeCost(lv), ub.x + ub.w/2, ub.y + 16);
+      cx.textAlign = 'left';
+    } else {
+      cx.fillStyle = '#444';
+      cx.fillRect(ub.x, ub.y, ub.w, ub.h);
+      cx.fillStyle = '#888';
+      cx.font = "bold 10px 'Courier New', monospace";
+      cx.textAlign = 'center';
+      cx.fillText('Lv MAX', ub.x + ub.w/2, ub.y + 16);
+      cx.textAlign = 'left';
+    }
+    // Equip button (right-bottom)
+    const eb = { x: W - 90, y: ry + 8, w: 70, h: 24 };
+    cx.fillStyle = equipped ? '#664422' : (lv > 0 ? '#226622' : '#222222');
+    cx.fillRect(eb.x, eb.y, eb.w, eb.h);
+    cx.strokeStyle = equipped ? '#ffcc44' : (lv > 0 ? '#44ff44' : '#333');
+    cx.lineWidth = 1;
+    cx.strokeRect(eb.x + 0.5, eb.y + 0.5, eb.w - 1, eb.h - 1);
+    cx.fillStyle = equipped ? '#ffeeaa' : (lv > 0 ? '#aaffaa' : '#666');
+    cx.font = "bold 10px 'Courier New', monospace";
+    cx.textAlign = 'center';
+    cx.fillText(equipped ? '✓ 已装备' : (lv > 0 ? '装备' : '需 Lv1'), eb.x + eb.w/2, eb.y + 16);
+    cx.textAlign = 'left';
+  }
+}
+function clickShopRunes(mx, my) {
+  const sx = 20, sy = 115, rowH = 78;
+  for (let i = 0; i < RUNE_DEFS.length; i++) {
+    const r = RUNE_DEFS[i];
+    const ry = sy + 8 + i * rowH;
+    const lv = save.runes[r.key] || 0;
+    // Upgrade
+    const ub = { x: W - 168, y: ry + 8, w: 70, h: 24 };
+    if (mx >= ub.x && mx <= ub.x + ub.w && my >= ub.y && my <= ub.y + ub.h) {
+      if (lv < 10) {
+        const cost = runeUpgradeCost(lv);
+        if (save.diamonds >= cost) {
+          save.diamonds -= cost;
+          save.runes[r.key] = lv + 1;
+          writeSave();
+          SFX.buySuccess();
+        } else SFX.buyFail();
+      }
+      return;
+    }
+    // Equip toggle
+    const eb = { x: W - 90, y: ry + 8, w: 70, h: 24 };
+    if (mx >= eb.x && mx <= eb.x + eb.w && my >= eb.y && my <= eb.y + eb.h) {
+      if (lv <= 0) { SFX.buyFail(); return; }
+      const idx = save.equippedRunes.indexOf(r.key);
+      if (idx >= 0) {
+        save.equippedRunes.splice(idx, 1);
+        SFX.buySuccess();
+      } else if (save.equippedRunes.length < 2) {
+        save.equippedRunes.push(r.key);
+        SFX.buySuccess();
+      } else {
+        SFX.buyFail();
+      }
+      writeSave();
+      return;
+    }
   }
 }
 
@@ -5343,7 +5750,13 @@ function clickShop(mx,my) {
   if(mx>=20&&mx<=130&&my>=655&&my<=691){screen='title';shopSelectedPlane=-1;shopSelectedBG=-1;return;}
   if(mx>=350&&mx<=460&&my>=655&&my<=691){equipSelected();return;}
   if(mx>=160&&mx<=330&&my>=655&&my<=691){save.coins+=9999;save.diamonds+=99;writeSave();SFX.buySuccess();return;}
-  if(my>=68&&my<=102){if(mx>=20&&mx<=230){shopTab=0;shopSelectedPlane=-1;}else if(mx>=250&&mx<=460){shopTab=1;shopSelectedBG=-1;}return;}
+  if(my>=68&&my<=102){
+    if(mx>=20&&mx<=160){shopTab=0;shopSelectedPlane=-1;}
+    else if(mx>=170&&mx<=310){shopTab=1;shopSelectedBG=-1;shopBGScroll=0;}
+    else if(mx>=320&&mx<=460){shopTab=2;}
+    return;
+  }
+  if(shopTab===2){clickShopRunes(mx,my);return;}
   if(shopTab===0){
     const cols=4,cw=110,ch=110,sx=10,sy=115;
     for(let i=0;i<PLANE_SKINS.length;i++){
@@ -5938,6 +6351,7 @@ function clearEndlessSnapshot() {
 function startGame(two, endless, startLv) {
   twoPlayer=two; endlessMode=!!endless;
   players=[]; wingmen=[]; bullets=[]; enemyBullets=[]; enemies=[]; pickups=[]; explosions=[]; floatingTexts=[];
+  screenMissiles=[]; lastMissileSpawn=0;
   score=0; level=Math.max(1,(startLv|0)||1); waveTimer=0; killCount=0; bossActive=false; boss=null; bombFlash=0;
   sessionCoins=0; sessionDiamonds=0; finalScore=0; frame=0;
   players.push(createPlayer(1,save.selP1));
@@ -6164,6 +6578,7 @@ canvas.addEventListener('wheel', e=>{
   }
 }, {passive:false});
 
+let _lastScreen = '';
 function syncPauseBtn() {
   const btn = document.getElementById('btn-pause');
   if (screen === 'title') {
@@ -6173,8 +6588,13 @@ function syncPauseBtn() {
     btn.textContent = '⏸';
     btn.title = '暂停 (P)';
   }
-  // Sync console DOM panel visibility with screen state
-  consolePanelEl.classList.toggle('show', screen === 'console');
+  // Console DOM panel visibility + render-on-enter
+  const showConsole = (screen === 'console');
+  consolePanelEl.classList.toggle('show', showConsole);
+  if (showConsole && _lastScreen !== 'console') {
+    renderConsole();
+  }
+  _lastScreen = screen;
 }
 document.getElementById('btn-pause').addEventListener('click',()=>{
   if (screen==='title') {
@@ -6236,6 +6656,7 @@ function update() {
   updateEnemyBullets();
   for(const e of enemies) updateEnemy(e);
   updateBoss();
+  updateScreenMissiles();
   updatePickups();
   collectPickups();
   checkCollisions();
@@ -6274,6 +6695,7 @@ function drawGameField() {
   drawExplosions();
   drawWingmen();
   for(const p of players) drawPlayer(p);
+  drawScreenMissiles();
   drawFTs();
   cx.restore();
   // HUD + joystick visual outside shake transform
