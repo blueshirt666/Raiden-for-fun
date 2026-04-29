@@ -113,6 +113,11 @@ canvas { display:block; width:100%; height:100%; image-rendering:auto; }
     <div class="tabs" id="console-tabs"></div>
     <div class="body" id="console-body"></div>
     <div class="footer">
+      <button id="console-unlock-shop">🛒 商品全解锁满级</button>
+      <button id="console-unlock-stage">🏅 关卡全解锁</button>
+      <button id="console-endless-pick">🌌 选关无尽</button>
+    </div>
+    <div class="footer">
       <button id="console-reset" class="warn">重置默认</button>
       <button id="console-back">← 返回设置</button>
     </div>
@@ -633,20 +638,7 @@ const BAROQUE_TRACKS = BAROQUE_DEFS.map(def => {
   return { m, b, name: def.name, sax: false, tempo: def.tempo, baroque: true };
 });
 
-// ─── AMBIENT SLEEP TRACKS (5) ───────────────────────────────────────────────
-// Noise-based ambience (campfire / rain / waves / forest / starnight). Marked
-// ambient:true so scheduleBGM picks the noise generator instead of melody+bass.
-const AMBIENT_DEFS = [
-  { name:'眠·篝火', kind:'fire',   filterFreq: 600,  rate: 1.3, crackle: true  },
-  { name:'眠·细雨', kind:'rain',   filterFreq: 1800, rate: 0.6, crackle: false },
-  { name:'眠·海浪', kind:'waves',  filterFreq: 400,  rate: 4.0, crackle: false },
-  { name:'眠·森林', kind:'forest', filterFreq: 2400, rate: 1.8, crackle: false },
-  { name:'眠·星夜', kind:'night',  filterFreq: 900,  rate: 2.5, crackle: false },
-];
-const AMBIENT_TRACKS = AMBIENT_DEFS.map(def => ({
-  m: [[0, 1]], b: [[0, 1]],   // unused
-  name: def.name, ambient: true, ambientDef: def,
-}));
+// (Ambient sleep tracks removed.)
 
 const BGM_TRACKS=[
   {m:MELODY_BGM, b:BASS_BGM, name:'A小调·战'},
@@ -661,7 +653,6 @@ const BGM_TRACKS=[
   {m:SAX_M_5, b:SAX_B_5, name:'萨·深夜', sax:true, tempo:1.6},
   ...LIGHT_TRACKS,
   ...BAROQUE_TRACKS,
-  ...AMBIENT_TRACKS,
 ];
 const BGM_TRACK_NAMES=BGM_TRACKS.map(t=>t.name);
 
@@ -732,12 +723,6 @@ function scheduleBGM() {
     let bassIdx = Math.floor(bgmNoteIdx / 2) % BASS_BGM.length;
 
     const track=BGM_TRACKS[bgmTrack]||BGM_TRACKS[0];
-    // Ambient (sleep) tracks use noise generation instead of melody/bass
-    if (track.ambient) {
-      scheduleAmbient(track, scheduleUntil);
-      bgmTimeout = setTimeout(scheduleBGM, 200);
-      return;
-    }
     const isSax = !!track.sax;
     const tempo = track.tempo || 1;
     const meloWave = isSax ? 'triangle' : 'square';
@@ -8359,6 +8344,10 @@ function drawShopBGs() {
   }
 }
 
+// Double-click detection for shop: clicking the same already-owned card twice
+// within 350ms equips it (shortcut for the bottom 装备 button).
+let shopLastClickT = 0;
+let shopLastClickKey = '';
 function clickShop(mx,my) {
   if(mx>=20&&mx<=130&&my>=655&&my<=691){screen='title';shopSelectedPlane=-1;shopSelectedBG=-1;return;}
   if(mx>=350&&mx<=460&&my>=655&&my<=691){equipSelected();return;}
@@ -8377,12 +8366,19 @@ function clickShop(mx,my) {
       const bx=sx+(i%cols)*cw, by=sy+Math.floor(i/cols)*ch - shopPlaneScroll;
       if(my < sy-2 || my > sy+540) continue;
       if(mx>=bx&&mx<=bx+cw&&my>=by&&my<=by+ch){
+        const key = 'plane:'+i;
+        const now = performance.now();
+        const isDouble = (now - shopLastClickT < 350) && shopLastClickKey === key;
+        shopLastClickT = now; shopLastClickKey = key;
         if(!save.planes[i]){
           const sk=PLANE_SKINS[i];
           if(sk[2]==='free'){save.planes[i]=true;writeSave();SFX.buySuccess();shopSelectedPlane=i;}
           else if(sk[2]==='g'){if(save.coins>=sk[1]){save.coins-=sk[1];save.planes[i]=true;writeSave();SFX.buySuccess();shopSelectedPlane=i;}else SFX.buyFail();}
           else if(sk[2]==='d'){if(save.diamonds>=sk[1]){save.diamonds-=sk[1];save.planes[i]=true;writeSave();SFX.buySuccess();shopSelectedPlane=i;}else SFX.buyFail();}
-        } else shopSelectedPlane=i;
+        } else {
+          shopSelectedPlane=i;
+          if (isDouble) equipSelected();   // double-click owned plane = equip
+        }
         return;
       }
     }
@@ -8392,12 +8388,19 @@ function clickShop(mx,my) {
       const bx=sx+(i%cols)*cw, by=sy+Math.floor(i/cols)*ch - shopBGScroll;
       if(my < sy-2 || my > sy+540) break;
       if(mx>=bx&&mx<=bx+cw&&my>=by&&my<=by+ch){
+        const key = 'bg:'+i;
+        const now = performance.now();
+        const isDouble = (now - shopLastClickT < 350) && shopLastClickKey === key;
+        shopLastClickT = now; shopLastClickKey = key;
         if(!save.bgs[i]){
           const bg=BG_SKINS[i];
           if(bg[2]==='free'){save.bgs[i]=true;writeSave();SFX.buySuccess();shopSelectedBG=i;}
           else if(bg[2]==='g'){if(save.coins>=bg[1]){save.coins-=bg[1];save.bgs[i]=true;writeSave();SFX.buySuccess();shopSelectedBG=i;}else SFX.buyFail();}
           else if(bg[2]==='d'){if(save.diamonds>=bg[1]){save.diamonds-=bg[1];save.bgs[i]=true;writeSave();SFX.buySuccess();shopSelectedBG=i;}else SFX.buyFail();}
-        } else shopSelectedBG=i;
+        } else {
+          shopSelectedBG=i;
+          if (isDouble) equipSelected();   // double-click owned bg = equip
+        }
         return;
       }
     }
@@ -8720,8 +8723,8 @@ function drawTierSelect() {
     cx.textAlign='left';
     cx.fillText(ti.name, x+24, y+56);
 
-    // Medal disc
-    const mx2 = x+w-50, my2 = y+50;
+    // Medal disc — centered vertically inside the card
+    const mx2 = x+w-50, my2 = y + h/2;
     if (earned) {
       const g = cx.createRadialGradient(mx2-4, my2-4, 1, mx2, my2, 24);
       g.addColorStop(0,'#fff'); g.addColorStop(0.4, ti.medalColor); g.addColorStop(1, '#000');
@@ -9620,6 +9623,32 @@ document.getElementById('console-reset').addEventListener('click', ()=>{
     writeSave();
     renderConsole();
   }
+});
+document.getElementById('console-unlock-shop').addEventListener('click', ()=>{
+  if (!confirm('解锁所有飞机/背景/残影并将所有符文升至 Lv 10?')) return;
+  for (let i = 0; i < PLANE_SKINS.length; i++) save.planes[i] = true;
+  for (let i = 0; i < BG_SKINS.length; i++)    save.bgs[i]    = true;
+  for (let i = 0; i < TRAIL_DEFS.length; i++)  save.trails[i] = true;
+  for (const k of Object.keys(save.runes))     save.runes[k]  = 10;
+  writeSave();
+  alert('全部商品已解锁, 符文已满级.');
+});
+document.getElementById('console-unlock-stage').addEventListener('click', ()=>{
+  if (!confirm('解锁全部 3 难度 12 关卡 + 全部奖牌?')) return;
+  save.stageProgress = { novice: 12, veteran: 12, hell: 12 };
+  save.medals = { novice: true, veteran: true, hell: true };
+  writeSave();
+  alert('关卡 + 奖牌已全部解锁.');
+});
+document.getElementById('console-endless-pick').addEventListener('click', ()=>{
+  const v = prompt('从无尽模式哪一关开始 (1-100)?', '1');
+  if (!v) return;
+  const lv = clamp(parseInt(v, 10) || 1, 1, 100);
+  showConsolePanel(false);
+  pauseConsoleReturn = false;
+  // Wipe any stale endless snapshot so the chosen level is the actual start.
+  save.endlessState = null; writeSave();
+  startGame(false, true, lv);
 });
 
 // ─── PIXEL RESOLUTION ────────────────────────────────────────────────────────
