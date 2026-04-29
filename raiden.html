@@ -9569,16 +9569,9 @@ infBombBtn.addEventListener('touchstart', e=>{ e.preventDefault(); fireInfiniteB
 
 // ─── MAIN LOOP ────────────────────────────────────────────────────────────────
 function update() {
-  if (screen === 'death') {
-    if (deathTimer > 0) {
-      deathTimer--;
-      if (deathTimer === 0) {
-        save.coins += sessionCoins; save.diamonds += sessionDiamonds;
-        writeSave(); screen='title';
-      }
-    }
-    return;
-  }
+  // Death-screen countdown is handled in loop() at real wall-clock cadence so
+  // 倍速 (2x/3x/10x) cannot accelerate the revive timer.
+  if (screen === 'death') return;
   if(screen!=='game') return;
   frame++;
   updateBG();
@@ -9688,6 +9681,16 @@ function loop() {
     speedAccum -= 1;
   }
   if (speedAccum < 0) speedAccum = 0;
+  // Death countdown ticks once per real frame (60fps), independent of 倍速.
+  // 1x label -> 0.5 internal pace would otherwise halve the visible second count;
+  // by ticking here it always matches the real wall clock.
+  if (screen === 'death' && deathTimer > 0) {
+    deathTimer--;
+    if (deathTimer === 0) {
+      save.coins += sessionCoins; save.diamonds += sessionDiamonds;
+      writeSave(); screen='title';
+    }
+  }
   draw();
   refreshBombCount();
   syncPauseBtn();
