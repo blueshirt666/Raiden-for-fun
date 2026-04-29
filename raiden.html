@@ -220,8 +220,11 @@ function runeProb(key) {
   const def = RUNE_DEFS.find(r => r.key === key);
   if (!def) return 0;
   const base = def.base + (def.max - def.base) * ((lv - 1) / 9);
-  const mul = (save.console && typeof save.console.runeProcMul === 'number') ? save.console.runeProcMul : 1;
-  return Math.min(1, base * mul);
+  const C = save.console || defaultConsole();
+  const mul = (typeof C.runeProcMul === 'number') ? C.runeProcMul : 1;
+  // Per-rune individual override (defaults to 1×)
+  const each = (C.runeProcEach && typeof C.runeProcEach[key] === 'number') ? C.runeProcEach[key] : 1;
+  return Math.min(1, base * mul * each);
 }
 function isRuneEquipped(key) {
   return save.equippedRunes && save.equippedRunes.indexOf(key) >= 0;
@@ -291,6 +294,17 @@ function defaultConsole() {
     poisonSlowMul: 1.0,     // poison fire-interval ×; >1 = slower fire
     plagueDmgMul: 1.0,      // plague DoT %hp/tick multiplier
     critDmgMul: 1.0,        // crit damage multiplier (stock = 2x; this scales it)
+    // Per-entity overrides — keyed by ENEMY_CFG type, BOSS_DEFS index, WEAPON idx, RUNE key
+    // Each value is a multiplier that applies on top of the global one (1.0 = stock).
+    enemyHpEach:    {},     // {basic: 1.5, asteroid: 2.0, ...}
+    enemySpdEach:   {},
+    enemyDmgEach:   {},     // contact damage multiplier
+    bossHpEach:     {},     // {0: 2.0, 7: 1.2, 12: 0.5}
+    bossFireRateEach:{},
+    bossBarEach:    {},
+    weaponDmgEach:  {},     // {0: 2.0, 1: 0.5, ...}
+    weaponFireEach: {},     // <1 = faster
+    runeProcEach:   {},     // {burn: 2, dodge: 5, ...}
   };
 }
 let save = defaultSave();
@@ -340,6 +354,12 @@ function loadSave() {
         const def = defaultConsole();
         for (const k in def) {
           if (typeof d.console[k] === 'number') def[k] = d.console[k];
+          // Preserve per-entity override buckets (objects)
+          else if (def[k] && typeof def[k] === 'object' && d.console[k] && typeof d.console[k] === 'object') {
+            for (const sub in d.console[k]) {
+              if (typeof d.console[k][sub] === 'number') def[k][sub] = d.console[k][sub];
+            }
+          }
         }
         save.console = def;
       }
@@ -1314,7 +1334,7 @@ function drawScreenMissiles() {
 // HP-based: only disappears when destroyed. Drifts slowly. Absorbs ALL bullets
 // (player + enemy) — no projectile ever passes through. Player can enter safely
 // but the closer to the center the slower they move.
-const BH_PULL_RADIUS = 130;
+const BH_PULL_RADIUS = 170;       // larger gravity well so the pull feels real
 const BH_CORE_RADIUS = 24;
 function shouldEnableBlackHoles() {
   if (endlessMode) return level >= 20;       // Endless from lv 20
@@ -1377,22 +1397,23 @@ function updateBlackHoles() {
       const dx = h.x - p.x, dy = h.y - p.y;
       const d = Math.hypot(dx, dy);
       if (d < BH_PULL_RADIUS && d > 0.1) {
+        // Stronger inverse-square style pull (k^1.6 amplifies near-center force)
         const k = (1 - d / BH_PULL_RADIUS);
-        // Slight pull toward center
-        p.x += (dx / d) * k * 0.9;
-        p.y += (dy / d) * k * 0.9;
-        // Movement-damping field — flagged here, applied in updatePlayer.
+        const pullStrength = Math.pow(k, 1.6) * 2.4;
+        p.x += (dx / d) * pullStrength;
+        p.y += (dy / d) * pullStrength;
+        // Movement-damping field — applied in updatePlayer.
         const dampNew = clamp(1 - k * 0.95, 0.05, 1);
         p._bhDamp = Math.min(p._bhDamp || 1, dampNew);
       }
     }
-    // Enemies — light pull (flavor only)
+    // Enemies — moderate pull
     for (const e of enemies) {
       if (!e.alive) continue;
       const dx = h.x - e.x, dy = h.y - e.y;
       const d = Math.hypot(dx, dy);
       if (d < BH_PULL_RADIUS) {
-        const k = (1 - d / BH_PULL_RADIUS) * 0.5;
+        const k = (1 - d / BH_PULL_RADIUS) * 0.9;
         e.x += (dx / (d || 1)) * k;
         e.y += (dy / (d || 1)) * k;
       }
@@ -1403,8 +1424,7 @@ function updateBlackHoles() {
       const dx = h.x - b.x, dy = h.y - b.y;
       const d = Math.hypot(dx, dy);
       if (d < BH_PULL_RADIUS) {
-        // Pull toward core
-        const k = (1 - d / BH_PULL_RADIUS) * 0.55;
+        const k = (1 - d / BH_PULL_RADIUS) * 0.95;
         b.vx += (dx / (d || 1)) * k;
         b.vy += (dy / (d || 1)) * k;
       }
@@ -3158,7 +3178,10 @@ function updatePlayer(p, keys) {
 function mkB(x,y,vx,vy,color,w,h,owner,dmg) {
   const C = save.console || defaultConsole();
   const isPlayer = !!owner && (owner.pNum !== undefined);
-  let finalDmg = (dmg || 10) * (isPlayer ? C.weaponDmgMul : 1);
+  // Per-weapon damage override
+  const wIdx = isPlayer ? (owner.weapon || 0) : -1;
+  const eachWpn = (isPlayer && C.weaponDmgEach && typeof C.weaponDmgEach[wIdx] === 'number') ? C.weaponDmgEach[wIdx] : 1;
+  let finalDmg = (dmg || 10) * (isPlayer ? C.weaponDmgMul : 1) * eachWpn;
   let crit = false;
   // Crit rune: roll at bullet creation, doubles damage (×critDmgMul), gold tint
   if (isPlayer && isRuneEquipped('crit') && Math.random() < runeProb('crit')) {
@@ -3362,7 +3385,9 @@ function fireBullet(p) {
   const x=p.x, y=p.y, wl=p.weaponLevel;
   const C = save.console || defaultConsole();
   const delays=[7,11,3,18,11,8,20,10,18,14];
-  p.shootTimer=Math.max(1, Math.round((delays[p.weapon]-(wl-1)*1) * C.fireRateMul));
+  // Per-weapon fire-rate override (×interval; <1 = faster)
+  const eachWpnFire = (C.weaponFireEach && typeof C.weaponFireEach[p.weapon] === 'number') ? C.weaponFireEach[p.weapon] : 1;
+  p.shootTimer=Math.max(1, Math.round((delays[p.weapon]-(wl-1)*1) * C.fireRateMul * eachWpnFire));
 
   // ─ LV MAX 超级形态 (5s) ─
   if (p.weaponMax > 0) {
@@ -3689,15 +3714,19 @@ function mkEnemy(type, x, y) {
   const diff=getDiff();
   const C = save.console || defaultConsole();
   const sp = c.spd*(0.7+level*0.03)*C.enemySpeedMul;
-  // Asteroid: HP = full current-level boss baseline (basal road-block feel).
+  // Asteroid: HP = 1.5× full current-level boss baseline (true road-block).
   let hp = c.hp * diff.hpMult;
   if (type === 'asteroid') {
-    hp = currentBossBaselineHp() * 1.0;
+    hp = currentBossBaselineHp() * 1.5;
   }
+  // Per-enemy-type overrides (console)
+  const eachHp = (C.enemyHpEach && typeof C.enemyHpEach[type] === 'number') ? C.enemyHpEach[type] : 1;
+  const eachSp = (C.enemySpdEach && typeof C.enemySpdEach[type] === 'number') ? C.enemySpdEach[type] : 1;
+  hp *= eachHp;
   return {
     type,x,y,px:x|0,py:y|0,
     hp, maxHp: hp,
-    speed:sp, pts:c.pts, w:c.w, h:c.h, col:c.col, cv:c.cv,
+    speed: sp * eachSp, pts:c.pts, w:c.w, h:c.h, col:c.col, cv:c.cv,
     alive:true, moveTimer:0, vx:rnd(-1,1), vy:sp,
     splitChild:false,
   };
@@ -4845,15 +4874,18 @@ const BOSS_DEFS = [
   {name:'摩羯·卡普',    color:'#446688', acc:'#88ccff', hp:2900},
   {name:'水瓶·阿夸',    color:'#44ccff', acc:'#aaffff', hp:3100},
   {name:'双鱼·皮西斯',  color:'#ff66aa', acc:'#aaffff', hp:3500},
+  // 13: clone boss — full mirror of player's plane at 90% strength
+  {name:'克隆战机·镜',  color:'#ff66aa', acc:'#ffaaff', hp:3300, clone:true},
 ];
 
 // Endless 难度上限 (hell plateau) — 到此分以上难度不再升, 但内容随机化
 const ENDLESS_DIFF_CAP = 100;
 function bossIndex() {
+  // Endless past lv 13 — random pick from the full pool (includes clone boss)
   if (endlessMode && level > BOSS_DEFS.length) {
-    // 超过 12 关后随机抽一个 boss, 增加随机性
     return rndInt(0, BOSS_DEFS.length-1);
   }
+  // Stage / endless within first cycle — sequential
   return clamp(level-1, 0, BOSS_DEFS.length-1);
 }
 
@@ -4874,12 +4906,16 @@ function spawnBoss() {
   writeSave();
   const tierMul = Math.pow(1.10, tier - 1);
   const tierLabel = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十'][Math.min(tier-1, 9)] || (tier + '');
-  const hp = (def.hp + cappedLv*150) * barCount * C.bossHpMul * tierMul;
+  // Per-boss-type overrides (console)
+  const eachBossHp  = (C.bossHpEach   && typeof C.bossHpEach[idx]   === 'number') ? C.bossHpEach[idx]   : 1;
+  const eachBossBar = (C.bossBarEach  && typeof C.bossBarEach[idx]  === 'number') ? C.bossBarEach[idx]  : 1;
+  const finalBars = clamp(Math.round(barCount * eachBossBar), 1, 12);
+  const hp = (def.hp + cappedLv*150) * finalBars * C.bossHpMul * tierMul * eachBossHp;
   boss = {
     bossType: idx,
     x: W/2, y: -80, px:W/2|0, py:-80,
     hp, maxHp: hp,
-    barCount,
+    barCount: finalBars,
     w:80, h:60, alive:true,
     phase:0, moveTimer:0, shootTimer:0,
     vx: 1.5, entryDone:false,
@@ -5039,7 +5075,9 @@ function bossLogic(b) {
   // Poison drastically slows boss firing (interval ×2.5) and slow lengthens it too.
   const poisonMul = (b.poison > 0) ? (2.5 * (save.console.poisonSlowMul || 1)) : 1.0;
   const slowMul   = (b.slow   > 0) ? 1.4 : 1.0;
-  const fireMul = (endlessMode ? 1.4 : 1.0) * rageBase * C.bossFireRateMul * poisonMul * slowMul;
+  // Per-boss-type fire rate override
+  const eachBossFire = (C.bossFireRateEach && typeof C.bossFireRateEach[b.bossType] === 'number') ? C.bossFireRateEach[b.bossType] : 1;
+  const fireMul = (endlessMode ? 1.4 : 1.0) * rageBase * C.bossFireRateMul * poisonMul * slowMul * eachBossFire;
   // While poisoned the boss skips ~half its internal ticks → bullet count drops too.
   if (b.poison > 0 && Math.random() < 0.5) b.moveTimer--;
   if (phase >= 2) {
@@ -5202,6 +5240,85 @@ function bossLogic(b) {
           const ag=(a/10)*Math.PI*2;
           enemyBullets.push({x:b.x,y:b.y,px:0,py:0,
             vx:Math.cos(ag)*2.6, vy:Math.sin(ag)*2.6, alive:true, color:'#44ccff'});
+        }
+      }
+      break;
+    }
+    case 12: { // 克隆战机·Mirror — fires player's current weapon at 90% strength
+      // Tracking move: drift toward player at moderate speed
+      const t = players.find(p => !p.dead);
+      if (t) {
+        const dx = t.x - b.x;
+        b.x += Math.sign(dx) * Math.min(Math.abs(dx) * 0.04, 2.4);
+        if (b.y < 90) b.y += 1.4;
+        else b.y += Math.sin(mt * 0.05) * 0.6;
+      }
+      // Weapon mirror — fire bursts based on current player weapon at 90% rate
+      const cloneCD = Math.max(8, Math.round(20 * fireMul));
+      if (mt % cloneCD === 0 && t) {
+        const wl = Math.max(1, Math.floor((t.weaponLevel || 1) * 0.9));
+        const w  = t.weapon || 0;
+        // Standard mirrored salvo (down-firing)
+        switch (w % 10) {
+          case 0: { // 标准炮 mirror
+            enemyBullets.push({x:b.x, y:b.y+12, px:0,py:0, vx:0, vy:5.5, alive:true, color:'#ff66aa'});
+            if (wl >= 2) {
+              enemyBullets.push({x:b.x-9, y:b.y+8, px:0,py:0, vx:-0.4, vy:5.4, alive:true, color:'#ffaaaa'});
+              enemyBullets.push({x:b.x+9, y:b.y+8, px:0,py:0, vx: 0.4, vy:5.4, alive:true, color:'#ffaaaa'});
+            }
+            if (wl >= 3) {
+              enemyBullets.push({x:b.x-18,y:b.y+4, px:0,py:0, vx:-0.7, vy:5.2, alive:true, color:'#ff88aa'});
+              enemyBullets.push({x:b.x+18,y:b.y+4, px:0,py:0, vx: 0.7, vy:5.2, alive:true, color:'#ff88aa'});
+            }
+            break;
+          }
+          case 1: { // 散弹 mirror
+            const num = 3 + wl * 2, sp = 0.6 + wl * 0.12;
+            for (let i = 0; i < num; i++) {
+              const v = num > 1 ? (i/(num-1) - 0.5) * 2 * sp : 0;
+              enemyBullets.push({x:b.x, y:b.y+10, px:0,py:0, vx:v*3, vy:4.2, alive:true, color:'#ffaa66'});
+            }
+            break;
+          }
+          case 3: { // 制导弹 mirror — player-style homing
+            const m = mkEBSpecial(b.x, b.y + 12, 0, 4, '#ff88aa', 4, 'homer');
+            m.homing = true; m.homingStr = 0.05; m.maxSpeed = 2.4; m.w = 6; m.h = 8;
+            enemyBullets.push(m);
+            break;
+          }
+          case 4: { // 等离子 mirror — single big slow bullet
+            enemyBullets.push({x:b.x, y:b.y+18, px:0,py:0, vx:0, vy:3.6, alive:true, color:'#aa66ff'});
+            break;
+          }
+          case 7: { // 波动炮 mirror — sine-wave triple
+            for (let i = -1; i <= 1; i++) {
+              const eb = {x:b.x + i*4, y:b.y+12, px:0,py:0, vx:0, vy:4.6, alive:true, color:'#88ccff'};
+              eb.wave = true; eb.baseX = eb.x; eb.wAmp = 2 + Math.abs(i)*1.5; eb.wPhase = 0;
+              enemyBullets.push(eb);
+            }
+            break;
+          }
+          case 8: { // 龙卷 mirror — short ring
+            for (let a = 0; a < 6; a++) {
+              const ag = (a/6) * Math.PI * 2 + mt * 0.05;
+              enemyBullets.push({x:b.x, y:b.y, px:0,py:0,
+                vx:Math.cos(ag)*2.2, vy:Math.sin(ag)*2.2 + 1.6, alive:true, color:'#ff66ff'});
+            }
+            break;
+          }
+          default: { // 默认 5 路扇射
+            for (let i = -2; i <= 2; i++) {
+              enemyBullets.push({x:b.x, y:b.y+10, px:0,py:0, vx:i*0.7, vy:4.6, alive:true, color:'#ff88aa'});
+            }
+          }
+        }
+      }
+      // Rage phase 2 — release a bomb-like ring every 2.5s
+      if (phase >= 2 && mt % 150 === 0) {
+        for (let a = 0; a < 14; a++) {
+          const ag = (a/14) * Math.PI * 2;
+          enemyBullets.push({x:b.x, y:b.y, px:0,py:0,
+            vx:Math.cos(ag)*3, vy:Math.sin(ag)*3, alive:true, color:'#ffaaff'});
         }
       }
       break;
@@ -5715,6 +5832,22 @@ function drawBossShape(b) {
         const wy = 30 + ((t*3 + i*20) % 50);
         cx.beginPath(); cx.arc(40+i*4, wy, 2, 0, Math.PI*2); cx.fill();
       }
+      break;
+    }
+    case 12: { // 克隆战机·Mirror — render the player's plane silhouette flipped + recolored
+      const skinIdx = save.selP1 || 0;
+      const skin = PLANE_SKINS[skinIdx];
+      const cloneCol = ['#ff66aa', '#ffaaff', '#88224a', '#ffffff'];
+      cx.save();
+      cx.scale(2.0, -2.0);  // 2× scale, vertical flip so it points down
+      drawVectorPlane(skin[3], cloneCol, cx, 0, 0, 1, false, 0, 0, 0);
+      cx.restore();
+      // Glitchy aura ring
+      cx.strokeStyle = `rgba(255,140,200,${0.4 + Math.sin(t*0.2)*0.3})`;
+      cx.lineWidth = 2;
+      cx.beginPath(); cx.arc(0, 0, 56 + Math.sin(t*0.15)*4, 0, Math.PI*2); cx.stroke();
+      cx.strokeStyle = `rgba(255,200,240,${0.25 + Math.sin(t*0.25)*0.2})`;
+      cx.beginPath(); cx.arc(0, 0, 78, 0, Math.PI*2); cx.stroke();
       break;
     }
     case 11: { // 双鱼·Pisces — two fish in yin-yang
@@ -6479,17 +6612,8 @@ function killBoss() {
     }
   }
   SFX.levelUp(); addFT('LEVEL '+level,W/2,H/2-20,'#ffff00');
-  // ─── Hidden mirror level (镜像隐藏关) ──────────────────────────────────
-  // 25% chance from lv 4 onward; replaces the normal wave for this level.
-  if (level >= 4 && Math.random() < 0.25) {
-    mirrorLevel = true;
-    // Big screen banner so the player notices the special encounter
-    if (boss) boss.bannerTime = 0;
-    hiddenLevelBannerTime = 180;   // 3s banner
-    addFT('⚠ 隐 藏 关 卡 ⚠', W/2, H/2 + 20, '#ff88ff');
-  } else {
-    mirrorLevel = false;
-  }
+  // Mirror level removed — the clone fighter is now a proper boss (BOSS_DEFS[12]).
+  mirrorLevel = false;
 }
 let hiddenLevelBannerTime = 0;
 let mirrorLevel = false;
@@ -7419,6 +7543,7 @@ const CODEX_TABS = [
   {id:'wingmen', label:'僚机'},
   {id:'runes',   label:'符文'},
   {id:'trails',  label:'残影'},
+  {id:'hazards', label:'陷阱'},
   {id:'pickups', label:'道具'},
 ];
 let codexTab = 'weapons';
@@ -7438,26 +7563,33 @@ const CODEX_WEAPONS = [
 ];
 
 const CODEX_ENEMIES = [
-  ['基础机',   '#ff4444','HP 20  速 1.5  分 100','基础敌机, 直线下降+轻微摆动'],
-  ['锯齿机',   '#ff8800','HP 30  速 2.0  分 150','Z 字飞行, 难以预判'],
-  ['轰炸机',   '#aa44ff','HP 60  速 1.0  分 300','中速大体型, 周期单发瞄准'],
-  ['炮舰',     '#44aaff','HP 80  速 1.2  分 250','六边装甲, 双管交叉射击'],
-  ['坦克',     '#44ff44','HP 150 速 0.7  分 400','装甲堡垒, 5 路扇形齐射'],
-  ['速度王',   '#ffff00','HP 15  速 3.5  分 80','高速横冲, 不开火'],
-  ['母舰',     '#ff44aa','HP 200 速 0.5  分 600','三路射击 + 召唤速度王'],
-  ['飞镖机',   '#ffaaaa','HP 18  速 3.0  分 90','俯冲后发射一发高速弹'],
-  ['UFO',      '#aaffaa','HP 60  速 0.9  分 280','横向扫荡, 6 弹环形齐射'],
-  ['侦察机',   '#ffffaa','HP 10  速 4.2  分 60','极快撞击, 不开火'],
-  ['狙击手',   '#ff66ff','HP 80  速 0.4  分 320','滞空瞄准, 警告后高速发射'],
-  ['迫击炮',   '#cc8855','HP 50  速 0.6  分 240','抛物线弧射, 子弹可被打掉'],
-  ['蜂群虫',   '#ff77aa','HP 8   速 2.6  分 40','小型摇摆突进, 撞击型'],
-  ['蜂巢',     '#cc44ff','HP 140 速 0.7  分 480','六边形, 持续召唤蜂群虫'],
-  ['炮塔',     '#888888','HP 120 速 0    分 280','固定锁屏, 旋转 3 路扫射'],
-  ['隐形机',   '#553388','HP 35  速 1.6  分 220','周期隐身, 难以瞄准'],
-  ['分裂机',   '#88ddff','HP 50  速 1.1  分 240','死亡后分裂为 2 蜂群虫'],
-  ['布雷舰',   '#aaaa44','HP 90  速 0.7  分 330','掉落地雷, 子弹可击毁'],
-  ['喷气机',   '#88ccff','HP 25  速 5.0  分 110','极速直线突袭, 不开火'],
-  ['精英',     '#ff2244','HP 260 速 0.9  分 700','装甲精锐, 5 路连发 + 8 弹环爆'],
+  ['基础机',   '#ff4444','HP 80   速 1.5  分 100','基础敌机, 直线下降+轻微摆动'],
+  ['锯齿机',   '#ff8800','HP 120  速 2.0  分 150','Z 字飞行, 难以预判'],
+  ['轰炸机',   '#aa44ff','HP 200  速 1.0  分 300','中速大体型, 周期单发瞄准'],
+  ['炮舰',     '#44aaff','HP 260  速 1.2  分 250','六边装甲, 双管交叉射击'],
+  ['坦克',     '#44ff44','HP 460  速 0.7  分 400','双发战机+三联前炮 + 5 路扇形'],
+  ['速度王',   '#ffff00','HP 60   速 3.5  分 80','高速横冲, 不开火'],
+  ['母舰',     '#ff44aa','HP 650  速 0.5  分 600','三角翼+三发引擎+机库灯带, 召唤速度王'],
+  ['飞镖机',   '#ffaaaa','HP 65   速 3.0  分 90','俯冲后发射一发高速弹'],
+  ['UFO',      '#aaffaa','HP 200  速 0.9  分 280','横向扫荡, 6 弹环形齐射'],
+  ['侦察机',   '#ffffaa','HP 40   速 4.2  分 60','极快撞击, 不开火'],
+  ['狙击手',   '#ff66ff','HP 260  速 0.4  分 320','隐形机+长狙击管, 警告后高速发射'],
+  ['迫击炮',   '#cc8855','HP 170  速 0.6  分 240','子弹犬机身+侧弹仓+蓄能炮膛, 子弹可被打掉'],
+  ['蜂群虫',   '#ff77aa','HP 30   速 2.6  分 40','小型摇摆突进, 撞击型'],
+  ['蜂巢',     '#cc44ff','HP 460  速 0.7  分 480','透明翅膀+5节胸甲, 持续召唤蜂群虫'],
+  ['炮塔',     '#888888','HP 400  速 0    分 280','固定锁屏, 旋转 3 路扫射'],
+  ['隐形机',   '#553388','HP 120  速 1.6  分 220','周期隐身, 难以瞄准'],
+  ['分裂机',   '#88ddff','HP 170  速 1.1  分 240','死亡后分裂为 2 蜂群虫'],
+  ['布雷舰',   '#aaaa44','HP 300  速 0.7  分 330','掉落地雷, 子弹可击毁'],
+  ['喷气机',   '#88ccff','HP 85   速 5.0  分 110','极速直线突袭, 不开火'],
+  ['精英',     '#ff2244','HP 850  速 0.9  分 700','装甲精锐, 5 路连发 + 8 弹环爆'],
+  // ─── 新增 ──────────────────────────────────────────────────────────
+  ['爆炸怪',   '#ffaa22','HP 90    速 3.2  分 200','冲撞玩家, 击杀后 2s 倒计时引爆 70px AOE'],
+  ['大陨石',   '#888899','HP 1.5×Boss 速 0.9  分 120','超大体积路障, 缓慢垂直坠落, 不发子弹'],
+  ['撞击船',   '#aa44ff','HP 50    速 2.4  分 140','高速直冲, 撞击伤害, 不发子弹'],
+  ['精英坦克', '#7788aa','HP 480   速 0.4  分 900','重甲不开火, 体积巨大撞击伤害'],
+  ['精英追踪', '#ff8866','HP 140   速 1.0  分 520','螺旋绕行追踪导弹(可击毁) 持续追击'],
+  ['精英克隆', '#aaccff','HP 120   速 1.2  分 600','克隆玩家武器(削弱版本), 慢速跟踪'],
 ];
 
 const CODEX_BOSS_DESC = [
@@ -7473,6 +7605,7 @@ const CODEX_BOSS_DESC = [
   '4 模式轮换: 扇射/12环/瞄准追/纵向密集',
   '水瓶倾倒水流弹 + 周期落雨',
   '双鱼阴阳旋转 + 双向追击',
+  '克隆战机: 镜像玩家飞机+90% 当前武器/僚机, 狂怒释放炸弹环',
 ];
 
 const CODEX_PICKUPS = [
@@ -7523,6 +7656,7 @@ function drawCodex() {
   else if (codexTab==='wingmen') totalContentH = drawCodexWingmen(bodyY - codexScroll);
   else if (codexTab==='runes')   totalContentH = drawCodexRunes(bodyY - codexScroll);
   else if (codexTab==='trails')  totalContentH = drawCodexTrails(bodyY - codexScroll);
+  else if (codexTab==='hazards') totalContentH = drawCodexHazards(bodyY - codexScroll);
   else if (codexTab==='pickups') totalContentH = drawCodexPickups(bodyY - codexScroll);
   cx.restore();
 
@@ -7615,7 +7749,9 @@ function drawCodexWeapons(startY) {
 // Mini enemy thumbnail (re-uses drawEnemy switch via a stub enemy object)
 const CODEX_ENEMY_TYPES = [
   'basic','zigzag','bomber','gunship','tank','speeder','carrier','dart','saucer','scout',
-  'sniper','mortar','swarmlet','hive','turret','stealth','splitter','minelayer','jet','elite'
+  'sniper','mortar','swarmlet','hive','turret','stealth','splitter','minelayer','jet','elite',
+  // New entries (must match CODEX_ENEMIES order)
+  'exploder','asteroid','ramship','eliteTank','eliteHomer','eliteClone',
 ];
 function drawEnemyThumb(typeKey, cxC, cyC, scale) {
   const cfg = ENEMY_CFG[typeKey];
@@ -7805,6 +7941,49 @@ function drawCodexRunes(startY) {
     cx.fillText(owned > 0 ? ('已拥有 Lv ' + owned) : '未拥有 (商城购买)', W - 144, ry+58);
   }
   return RUNE_DEFS.length * rowH + 20;
+}
+
+function drawCodexHazards(startY) {
+  const rowH = 70;
+  cx.textAlign = 'left';
+  const HAZARDS = [
+    ['🚀 地图导弹', '#ff4444', '红线警告 3s 后高速光束横/纵贯穿屏幕。无尽末段同时多行多列同时爆发, 上限可达 10 道。'],
+    ['🌀 黑洞',     '#cc88ff', '同等 boss 一半血量, 缓慢漂浮, 吸入并销毁所有子弹(含玩家+敌方); 玩家进入不扣血但越靠近核心移动越慢。仅大师 / 无尽 20+, 上限 1/2/3 随等级。'],
+    ['💥 爆炸怪',  '#ffaa22', '高速冲撞玩家, 击杀触发 2s 倒计时, 引爆 70px AOE 红圈伤害。'],
+    ['🪨 大陨石',  '#888899', '同等 boss 1.5 倍血量, 缓慢垂直坠落, 不发子弹但撞到掉血。无尽 5+ 出现, 关卡末段权重高。'],
+    ['🪞 镜像 boss','#ff66aa', '克隆战机·镜: 玩家飞机镜像, 90% 当前武器与僚机, 狂怒释放炸弹环。无尽 13+ 随机出现。'],
+    ['🛡 Boss 阶级','#ffcc44', '同一 boss 重复出现时阶级 +1, 血量与伤害 ×1.10^(N-1), 名字前显示 二阶 / 三阶 等。'],
+  ];
+  for (let i = 0; i < HAZARDS.length; i++) {
+    const [n, col, desc] = HAZARDS[i];
+    const ry = startY + i * rowH + 6;
+    cx.fillStyle = 'rgba(20,40,60,0.45)';
+    cx.fillRect(16, ry, W - 32, rowH - 8);
+    cx.fillStyle = col;
+    cx.fillRect(16, ry, 4, rowH - 8);
+    cx.fillStyle = col;
+    cx.font = "bold 14px 'Courier New', monospace";
+    cx.fillText(n, 28, ry + 22);
+    cx.fillStyle = '#cccccc';
+    cx.font = "11px 'Courier New', monospace";
+    // Word-wrap for descriptions wider than the row
+    const words = desc;
+    const maxW = W - 50;
+    let line = '', y2 = ry + 40;
+    const chars = words.split('');
+    for (const c of chars) {
+      const t = line + c;
+      if (cx.measureText(t).width > maxW) {
+        cx.fillText(line, 28, y2);
+        line = c;
+        y2 += 14;
+      } else {
+        line = t;
+      }
+    }
+    if (line) cx.fillText(line, 28, y2);
+  }
+  return HAZARDS.length * rowH + 20;
 }
 
 function drawCodexTrails(startY) {
@@ -9553,11 +9732,60 @@ const CONSOLE_TABS = [
     {k:'poisonSlowMul', name:'中毒减速倍率',  min:0.1,max:10, step:0.1, desc:'×敌方射速间隔'},
     {k:'critDmgMul',    name:'暴击倍率',      min:0.5,max:20, step:0.1, desc:'×伤害(基础2x)'},
   ]},
+  // ─── 细分: 单个敌人/Boss/武器/符文 ──────────────────────────────────
+  // bucket = save.console.<bucketKey>; key = inner subKey (e.g. 'basic' / 0 / 'burn')
+  { id:'eachEnemy', label:'细·敌人', dynamic: 'eachEnemy' },
+  { id:'eachBoss',  label:'细·Boss', dynamic: 'eachBoss' },
+  { id:'eachWeapon',label:'细·武器', dynamic: 'eachWeapon' },
+  { id:'eachRune',  label:'细·符文', dynamic: 'eachRune' },
   { id:'wallet', label:'钱包', fields: [
     {k:'__coins',    name:'当前金币',  min:0, max:9999999, step:1, desc:'直接修改账户余额', live:true},
     {k:'__diamonds', name:'当前钻石',  min:0, max:9999999, step:1, desc:'直接修改账户余额', live:true},
   ]},
 ];
+
+// Build dynamic field rows for the per-entity tabs.
+// Each row binds to save.console[bucketKey][innerKey].
+function buildDynamicConsoleFields(kind) {
+  const rows = [];
+  if (kind === 'eachEnemy') {
+    const labels = {
+      basic:'基础机', zigzag:'锯齿机', bomber:'轰炸机', gunship:'炮舰',
+      tank:'坦克', speeder:'速度王', carrier:'母舰', dart:'飞镖机',
+      saucer:'UFO', scout:'侦察机', sniper:'狙击手', mortar:'迫击炮',
+      swarmlet:'蜂群虫', hive:'蜂巢', turret:'炮塔', stealth:'隐形机',
+      splitter:'分裂机', minelayer:'布雷舰', jet:'喷气机', elite:'精英',
+      asteroid:'大陨石', ramship:'撞击船',
+      eliteTank:'精英坦克', eliteHomer:'精英追踪', eliteClone:'精英克隆',
+      exploder:'爆炸怪',
+    };
+    for (const k of Object.keys(labels)) {
+      rows.push({bucket:'enemyHpEach',  key:k, name:labels[k]+' · 血量×',  min:0.1, max:50, step:0.1});
+      rows.push({bucket:'enemySpdEach', key:k, name:labels[k]+' · 速度×',  min:0.1, max:5,  step:0.1});
+    }
+  } else if (kind === 'eachBoss') {
+    const names = ['白羊·阿瑞斯','金牛·陶罗斯','双子·杰米尼','巨蟹·坎瑟尔','狮子·利奥',
+                   '处女·维戈','天秤·利布拉','天蝎·斯科皮奥','射手·萨吉塔','摩羯·卡普',
+                   '水瓶·阿夸','双鱼·皮西斯','克隆战机·镜'];
+    for (let i = 0; i < names.length; i++) {
+      rows.push({bucket:'bossHpEach',       key:i, name:names[i]+' · 血量×',  min:0.1, max:50, step:0.1});
+      rows.push({bucket:'bossFireRateEach', key:i, name:names[i]+' · 攻速×',  min:0.1, max:10, step:0.1});
+      rows.push({bucket:'bossBarEach',      key:i, name:names[i]+' · 血条×',  min:0.1, max:5,  step:0.1});
+    }
+  } else if (kind === 'eachWeapon') {
+    const wnames = ['标准炮','散弹枪','激光炮','制导弹','等离子','闪电链','回旋镖','波动炮','龙卷炮','冰晶炮'];
+    for (let i = 0; i < wnames.length; i++) {
+      rows.push({bucket:'weaponDmgEach',  key:i, name:wnames[i]+' · 伤害×', min:0.1, max:50, step:0.1});
+      rows.push({bucket:'weaponFireEach', key:i, name:wnames[i]+' · 间隔×', min:0.1, max:10, step:0.1});
+    }
+  } else if (kind === 'eachRune') {
+    const rnames = {burn:'燃烧',poison:'淬毒',freeze:'冰冻',plague:'疫病',crit:'暴击',decap:'斩首',dodge:'闪避'};
+    for (const k of Object.keys(rnames)) {
+      rows.push({bucket:'runeProcEach', key:k, name:rnames[k]+' · 触发概率×', min:0, max:50, step:0.1});
+    }
+  }
+  return rows;
+}
 let consoleActiveTab = 'player';
 const consolePanelEl = document.getElementById('console-panel');
 const consoleTabsEl  = document.getElementById('console-tabs');
@@ -9577,6 +9805,31 @@ function renderConsole() {
   consoleBodyEl.innerHTML = '';
   const tab = CONSOLE_TABS.find(t=>t.id===consoleActiveTab);
   const C = save.console || (save.console = defaultConsole());
+  // Dynamic tabs (per-entity grids)
+  if (tab.dynamic) {
+    const rows = buildDynamicConsoleFields(tab.dynamic);
+    for (const f of rows) {
+      const row = document.createElement('div'); row.className='row';
+      const lab = document.createElement('label'); lab.textContent = f.name;
+      const d = document.createElement('span'); d.className='desc'; d.textContent='1.0=原版';
+      lab.appendChild(d);
+      const inp = document.createElement('input');
+      inp.type = 'number'; inp.min = f.min; inp.max = f.max; inp.step = f.step;
+      const bucket = (C[f.bucket] = C[f.bucket] || {});
+      inp.value = (typeof bucket[f.key] === 'number') ? bucket[f.key] : 1;
+      inp.addEventListener('change', ()=>{
+        let v = parseFloat(inp.value);
+        if (isNaN(v)) v = 1;
+        v = Math.max(f.min, Math.min(f.max, v));
+        bucket[f.key] = v;
+        inp.value = v;
+        writeSave();
+      });
+      row.appendChild(lab); row.appendChild(inp);
+      consoleBodyEl.appendChild(row);
+    }
+    return;
+  }
   for (const f of tab.fields) {
     const row = document.createElement('div'); row.className='row';
     const lab = document.createElement('label'); lab.textContent = f.name;
