@@ -45,14 +45,19 @@ canvas { display:block; width:100%; height:100%; image-rendering:auto; }
 .touch-only { display:none; }
 @media (hover: none) and (pointer: coarse), (max-width: 640px) {
   body.is-mobile #wrap { width:100vw; height:auto; aspect-ratio:480/700; max-height:100dvh; }
-  body.is-mobile .side-btn { right:auto; width:36px; height:36px; font-size:14px; }
-  body.is-mobile #btn-pause { top:6px; left:6px; }
-  body.is-mobile #btn-invincible { top:6px; left:48px; opacity:.55; }
+  body.is-mobile .side-btn { right:auto; width:34px; height:34px; font-size:13px; }
+  body.is-mobile #btn-pause      { top:6px; left:6px; }
+  body.is-mobile #btn-invincible { top:6px; left:44px; opacity:.55; }
   body.is-mobile .touch-only { display:flex; }
-  body.is-mobile #btn-speed   { right:auto; left:90px;  top:6px; width:36px; height:36px; font-size:11px; }
-  body.is-mobile #btn-infbomb { right:auto; left:132px; top:6px; width:36px; height:36px; font-size:14px; }
-  body.is-mobile #btn-shop    { right:auto; left:174px; top:6px; width:36px; height:36px; font-size:14px; }
-  body.is-mobile #btn-codex   { right:auto; left:216px; top:6px; width:36px; height:36px; font-size:14px; }
+  body.is-mobile #btn-speed   { right:auto; left:82px;  top:6px; width:34px; height:34px; font-size:10px; }
+  body.is-mobile #btn-infbomb { right:auto; left:120px; top:6px; width:34px; height:34px; font-size:13px; }
+  body.is-mobile #btn-shop    { right:auto; left:158px; top:6px; width:34px; height:34px; font-size:13px; }
+  body.is-mobile #btn-codex   { right:auto; left:196px; top:6px; width:34px; height:34px; font-size:13px; }
+}
+/* Very narrow phones — wrap to a second row so buttons don't get clipped */
+@media (max-width: 360px) {
+  body.is-mobile #btn-shop    { left:6px;  top:44px; }
+  body.is-mobile #btn-codex   { left:44px; top:44px; }
 }
 #btn-bomb {
   position:absolute; right:14px; bottom:18px;
@@ -181,8 +186,10 @@ const BG_SKINS = [
   ['日落云海',5,'d','sunset'],
   ['远古遗迹',8,'d','ruins'],
   ['次元裂隙',12,'d','rift'],
+  // New anime-girl portrait background (warm street-light glow + bokeh)
+  ['夜行少女',15,'d','animePortrait'],
 ];
-const ANIME_BG_TYPES = [];
+const ANIME_BG_TYPES = ['animePortrait'];
 
 // ─── RUNES ───────────────────────────────────────────────────────────────────
 // Each rune: name, key, color, base proc rate, lv 10 max rate, diamond cost per lv up
@@ -612,6 +619,35 @@ const LIGHT_TRACKS = LIGHT_DEFS.map(def => {
   return { m, b, name: def.name, sax: true, tempo: def.tempo };
 });
 
+// ─── BAROQUE PIANO TRACKS (5) ───────────────────────────────────────────────
+// Classical-style chord progressions; slightly faster tempo than 轻 series.
+const BAROQUE_DEFS = [
+  { name:'巴洛克·赋格',  roots:[D3, A3, B3, G3],  tempo:1.30, ohi:2,   olo:0.5 },
+  { name:'巴洛克·小步舞',roots:[G3, D3, E3, C3],  tempo:1.45, ohi:2,   olo:0.5 },
+  { name:'巴洛克·四季',  roots:[E3, B3, Fs3, A3], tempo:1.20, ohi:2,   olo:0.5 },
+  { name:'巴洛克·咏叹',  roots:[F3, C4, Bb3, A3], tempo:1.35, ohi:1.5, olo:0.5 },
+  { name:'巴洛克·卡农',  roots:[D3, A3, B3, Fs3], tempo:1.30, ohi:2,   olo:0.5 },
+];
+const BAROQUE_TRACKS = BAROQUE_DEFS.map(def => {
+  const { m, b } = makeArpeggio(def.roots, def.olo, def.ohi);
+  return { m, b, name: def.name, sax: false, tempo: def.tempo, baroque: true };
+});
+
+// ─── AMBIENT SLEEP TRACKS (5) ───────────────────────────────────────────────
+// Noise-based ambience (campfire / rain / waves / forest / starnight). Marked
+// ambient:true so scheduleBGM picks the noise generator instead of melody+bass.
+const AMBIENT_DEFS = [
+  { name:'眠·篝火', kind:'fire',   filterFreq: 600,  rate: 1.3, crackle: true  },
+  { name:'眠·细雨', kind:'rain',   filterFreq: 1800, rate: 0.6, crackle: false },
+  { name:'眠·海浪', kind:'waves',  filterFreq: 400,  rate: 4.0, crackle: false },
+  { name:'眠·森林', kind:'forest', filterFreq: 2400, rate: 1.8, crackle: false },
+  { name:'眠·星夜', kind:'night',  filterFreq: 900,  rate: 2.5, crackle: false },
+];
+const AMBIENT_TRACKS = AMBIENT_DEFS.map(def => ({
+  m: [[0, 1]], b: [[0, 1]],   // unused
+  name: def.name, ambient: true, ambientDef: def,
+}));
+
 const BGM_TRACKS=[
   {m:MELODY_BGM, b:BASS_BGM, name:'A小调·战'},
   {m:MELODY_T2,  b:BASS_T2,  name:'D小调·雷'},
@@ -624,6 +660,8 @@ const BGM_TRACKS=[
   {m:SAX_M_4, b:SAX_B_4, name:'萨·律动', sax:true, tempo:1.45},
   {m:SAX_M_5, b:SAX_B_5, name:'萨·深夜', sax:true, tempo:1.6},
   ...LIGHT_TRACKS,
+  ...BAROQUE_TRACKS,
+  ...AMBIENT_TRACKS,
 ];
 const BGM_TRACK_NAMES=BGM_TRACKS.map(t=>t.name);
 
@@ -694,6 +732,12 @@ function scheduleBGM() {
     let bassIdx = Math.floor(bgmNoteIdx / 2) % BASS_BGM.length;
 
     const track=BGM_TRACKS[bgmTrack]||BGM_TRACKS[0];
+    // Ambient (sleep) tracks use noise generation instead of melody/bass
+    if (track.ambient) {
+      scheduleAmbient(track, scheduleUntil);
+      bgmTimeout = setTimeout(scheduleBGM, 200);
+      return;
+    }
     const isSax = !!track.sax;
     const tempo = track.tempo || 1;
     const meloWave = isSax ? 'triangle' : 'square';
@@ -747,6 +791,65 @@ function scheduleBGM() {
   } catch(e) {}
 
   bgmTimeout = setTimeout(scheduleBGM, 200);
+}
+
+// Ambient noise generator — schedules short noise bursts shaped by a band-pass
+// filter to evoke the chosen environment (rain / fire / waves / forest / night).
+function scheduleAmbient(track, scheduleUntil) {
+  try {
+    const ctx = audioCtx;
+    const def = track.ambientDef || { kind:'rain', filterFreq:1200, rate:1.2, crackle:false };
+    const bgmDest = bgmGain || masterGain;
+    while (bgmStartTime < scheduleUntil) {
+      // Each chunk is 0.18s of pre-generated noise → smooth crossfade with next
+      const dur = 0.18 / Math.max(0.5, def.rate);
+      const sr = ctx.sampleRate;
+      const len = Math.max(64, (sr * dur) | 0);
+      const buf = ctx.createBuffer(1, len, sr);
+      const ch = buf.getChannelData(0);
+      for (let i = 0; i < len; i++) {
+        // White noise core; fire kind injects rare crackles
+        let v = (Math.random() * 2 - 1) * 0.7;
+        if (def.crackle && Math.random() < 0.0008) v += (Math.random() * 2 - 1) * 5;
+        ch[i] = v;
+      }
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.loop = false;
+      const filt = ctx.createBiquadFilter();
+      filt.type = (def.kind === 'fire') ? 'lowpass' : 'bandpass';
+      filt.frequency.value = def.filterFreq;
+      filt.Q.value = (def.kind === 'forest') ? 4 : 1;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0, bgmStartTime);
+      g.gain.linearRampToValueAtTime(0.18, bgmStartTime + 0.02);
+      g.gain.linearRampToValueAtTime(0.0, bgmStartTime + dur);
+      src.connect(filt); filt.connect(g); g.connect(bgmDest);
+      src.start(bgmStartTime);
+      src.stop(bgmStartTime + dur + 0.02);
+      // Wave kind — add a slow LFO on the filter cutoff to simulate ebb/flow
+      if (def.kind === 'waves') {
+        const t = bgmStartTime;
+        filt.frequency.setValueAtTime(def.filterFreq, t);
+        filt.frequency.linearRampToValueAtTime(def.filterFreq * 1.6, t + dur * 0.5);
+        filt.frequency.linearRampToValueAtTime(def.filterFreq, t + dur);
+      }
+      // Forest — add a tiny chirp every few chunks
+      if (def.kind === 'forest' && Math.random() < 0.06) {
+        const o = ctx.createOscillator(), og = ctx.createGain();
+        o.type = 'sine';
+        const f = 1800 + Math.random() * 1200;
+        o.frequency.setValueAtTime(f, bgmStartTime);
+        o.frequency.linearRampToValueAtTime(f * 1.3, bgmStartTime + 0.08);
+        og.gain.setValueAtTime(0.04, bgmStartTime);
+        og.gain.exponentialRampToValueAtTime(0.001, bgmStartTime + 0.10);
+        o.connect(og); og.connect(bgmDest);
+        o.start(bgmStartTime); o.stop(bgmStartTime + 0.12);
+      }
+      bgmStartTime += dur;
+      bgmNoteIdx++;
+    }
+  } catch(e) {}
 }
 
 function startBGM() {
@@ -2338,6 +2441,8 @@ function getBGColors(type) {
     animeDusk:    {sky:'#3a1228',terrain:'#5a2244',atmos:'#aa4466'},
     animeRainbow: {sky:'#0a0218',terrain:'#220a3a',atmos:'#aa44ff'},
     animeGoddess: {sky:'#181028',terrain:'#3a2050',atmos:'#ffcc88'},
+    // 夜行少女 — warm street-light night with red/orange bokeh
+    animePortrait:{sky:'#1a0a14',terrain:'#3a1828',atmos:'#cc5544'},
   };
   return m[type] || m.space;
 }
@@ -2354,6 +2459,7 @@ const ANIME_PALETTES = {
   animeDusk:    {hair:'#cc6688', skin:'#ffd0c0', acc:'#ff88aa', glow:'#ff8866', flake:'#ffaa88'},
   animeRainbow: {hair:'#ff44aa', skin:'#ffe0e8', acc:'#88ffcc', glow:'#aaffff', flake:'#ffffaa'},
   animeGoddess: {hair:'#ffeeaa', skin:'#fff0e0', acc:'#ffcc44', glow:'#ffffaa', flake:'#ffeeaa'},
+  animePortrait:{hair:'#3a2418', skin:'#ffe0d0', acc:'#cc4422', glow:'#ff8844', flake:'#ffaa66'},
 };
 
 // Helper: draw a soft drop shadow under a path
@@ -2413,6 +2519,15 @@ function drawAnimeWaifu(type) {
     } else if (type === 'animeNeon' || type === 'animeRainbow') {
       cx.fillStyle = ['#ff00aa', '#00ffcc', '#ffff00', '#ff66ff'][i % 4];
       cx.fillRect((fx + drift) | 0, fy | 0, sw, sw);
+    } else if (type === 'animePortrait') {
+      // Soft warm bokeh disks — looks like out-of-focus street/car lights
+      const palette = ['#ff8844', '#ffaa66', '#ffcc88', '#ffffff', '#ff5522'];
+      const bg = cx.createRadialGradient(fx, fy, 0, fx, fy, 14);
+      bg.addColorStop(0, palette[i % palette.length]);
+      bg.addColorStop(0.45, palette[i % palette.length] + '88');
+      bg.addColorStop(1, 'transparent');
+      cx.fillStyle = bg;
+      cx.beginPath(); cx.arc(fx, fy, 12 + (i % 4), 0, Math.PI * 2); cx.fill();
     } else {
       cx.strokeStyle = pal.flake; cx.lineWidth = 1;
       cx.beginPath(); cx.arc(fx + drift, fy, sw * 1.5, 0, Math.PI * 2); cx.stroke();
@@ -3531,7 +3646,7 @@ const ENEMY_CFG = {
   jet:      {hp:85, spd:5,  pts:110,w:14,h:22,col:'#88ccff',cv:1},
   elite:    {hp:850,spd:0.9,pts:700,w:38,h:32,col:'#ff2244',cv:5},
   // Ramming-only types: no bullets, only deal contact damage
-  asteroid: {hp:80, spd:1.0,pts:120,w:32,h:32,col:'#888899',cv:2},
+  asteroid: {hp:80, spd:0.9,pts:120,w:60,h:60,col:'#888899',cv:2},
   ramship:  {hp:50, spd:2.4,pts:140,w:22,h:22,col:'#aa44ff',cv:2},
   // 3 elite enemies
   eliteTank:  {hp:480,spd:0.4,pts:900,w:46,h:38,col:'#7788aa',cv:8},  // 重甲不发子弹
@@ -3554,10 +3669,10 @@ function mkEnemy(type, x, y) {
   const diff=getDiff();
   const C = save.console || defaultConsole();
   const sp = c.spd*(0.7+level*0.03)*C.enemySpeedMul;
-  // Asteroid: HP = 1/2 of current-level boss baseline (per spec). Slow vertical drop.
+  // Asteroid: HP = full current-level boss baseline (basal road-block feel).
   let hp = c.hp * diff.hpMult;
   if (type === 'asteroid') {
-    hp = currentBossBaselineHp() * 0.5;
+    hp = currentBossBaselineHp() * 1.0;
   }
   return {
     type,x,y,px:x|0,py:y|0,
@@ -6256,15 +6371,18 @@ function killBoss() {
   }
   SFX.levelUp(); addFT('LEVEL '+level,W/2,H/2-20,'#ffff00');
   // ─── Hidden mirror level (镜像隐藏关) ──────────────────────────────────
-  // 8% chance after lv 3 (endless or stage). Spawns clones of the player's plane
-  // with same wingmen but at 50% strength. Replaces normal wave for this level.
-  if (level >= 4 && Math.random() < 0.08) {
+  // 25% chance from lv 4 onward; replaces the normal wave for this level.
+  if (level >= 4 && Math.random() < 0.25) {
     mirrorLevel = true;
-    addFT('⚠ 镜像关卡', W/2, H/2 + 20, '#ff88ff');
+    // Big screen banner so the player notices the special encounter
+    if (boss) boss.bannerTime = 0;
+    hiddenLevelBannerTime = 180;   // 3s banner
+    addFT('⚠ 隐 藏 关 卡 ⚠', W/2, H/2 + 20, '#ff88ff');
   } else {
     mirrorLevel = false;
   }
 }
+let hiddenLevelBannerTime = 0;
 let mirrorLevel = false;
 // Spawn a single mirror clone — visually identical to the player but acts as enemy.
 function spawnMirrorClone() {
@@ -6455,6 +6573,24 @@ function updateWaves() {
 
 // ─── HUD ─────────────────────────────────────────────────────────────────────
 function drawHUD() {
+  // Hidden-level entry banner — bold pink "隐藏关卡" overlay
+  if (hiddenLevelBannerTime > 0) {
+    const a = Math.min(1, hiddenLevelBannerTime / 60);
+    cx.fillStyle = `rgba(255,80,180,${0.18 * a})`;
+    cx.fillRect(0, H/2 - 56, W, 112);
+    cx.strokeStyle = `rgba(255,160,220,${a})`;
+    cx.lineWidth = 2;
+    cx.strokeRect(8, H/2 - 56, W - 16, 112);
+    cx.textAlign = 'center';
+    cx.fillStyle = `rgba(255,255,255,${a})`;
+    cx.font = "bold 32px 'Courier New', monospace";
+    cx.fillText('隐 藏 关 卡', W/2, H/2 - 6);
+    cx.fillStyle = `rgba(255,200,240,${a})`;
+    cx.font = "bold 13px 'Courier New', monospace";
+    cx.fillText('全员是你的镜像克隆 · 50% 强度', W/2, H/2 + 22);
+    cx.textAlign = 'left';
+    hiddenLevelBannerTime--;
+  }
   fillPx('rgba(0,0,20,0.75)',0,0,W,36);
   cx.fillStyle='#aaa';cx.font="11px 'Courier New', monospace";cx.fillText('SCORE',8,13);
   cx.fillStyle='#00ffff';cx.font="bold 14px 'Courier New', monospace";cx.fillText(score.toString().padStart(8,'0'),8,29);
@@ -7054,19 +7190,25 @@ function drawTitleSettings() {
   drawSensSlider(70, 240, 340, '横向', 'moveSensX');
   drawSensSlider(70, 270, 340, '纵向', 'moveSensY');
 
-  // Music — dropdown top row, sliders below (no overlap with % values)
+  // Music — sliders first, then dropdown LAST so it can open downward into the
+  // empty area without ever covering the volume readouts or the console button.
   cx.textAlign='center';
   cx.fillStyle='#ffcc00'; cx.font="bold 13px 'Courier New', monospace";
   cx.fillText('音 乐 设 置', W/2, 320);
-  drawDropdown(70, 332, 340, 30, BGM_TRACK_NAMES, bgmTrack, bgmDropdownOpen);
-  drawVolumeSlider(70, 374, 280, '背景', 'bgmVol');
-  drawVolumeSlider(70, 402, 280, '音效', 'sfxVol');
+  drawVolumeSlider(70, 336, 280, '背景', 'bgmVol');
+  drawVolumeSlider(70, 366, 280, '音效', 'sfxVol');
 
-  // Dev console as sub-page link
+  // Dev console as sub-page link (above the dropdown so an open list never hides it)
   cx.textAlign='center';
   cx.fillStyle='#ffcc00'; cx.font="bold 13px 'Courier New', monospace";
-  cx.fillText('开 发 者', W/2, 450);
-  drawButton(140, 468, 200, 38, '🛠 控  制  台', false);
+  cx.fillText('开 发 者', W/2, 410);
+  drawButton(140, 424, 200, 36, '🛠 控  制  台', false);
+
+  // BGM track dropdown — at the BOTTOM, so opening downward only fills the
+  // remaining empty area between it and the 返回 button (no overlap issue).
+  cx.fillStyle='#ffcc00'; cx.font="bold 13px 'Courier New', monospace";
+  cx.fillText('选择音乐', W/2, 484);
+  drawDropdown(70, 498, 340, 30, BGM_TRACK_NAMES, bgmTrack, bgmDropdownOpen, true);
 
   drawButton(20, 655, 110, 36, '← 返回', false);
   cx.textAlign='left';
@@ -7124,8 +7266,8 @@ function clickTitleSettings(mx, my) {
   if (mx>=20 && mx<=130 && my>=655 && my<=691) {
     bgmDropdownOpen = false; screen='title'; return;
   }
-  // Console sub-page entry
-  if (mx>=140 && mx<=340 && my>=468 && my<=506) {
+  // Console sub-page entry (moved up to y=424 so the bottom dropdown can expand freely)
+  if (mx>=140 && mx<=340 && my>=424 && my<=460) {
     bgmDropdownOpen = false;
     screen='console';
     renderConsole();
@@ -7133,7 +7275,8 @@ function clickTitleSettings(mx, my) {
   }
   // Dropdown picks (header now spans 70..410, y=332..362)
   if (bgmDropdownOpen) {
-    const lx=70, ly=332+30+2, lw=340, itemH=DROPDOWN_ITEM_H, visH=DROPDOWN_VISIBLE_H;
+    // Dropdown opens UPWARD from header at y=498. List sits at 316..496.
+    const lx=70, ly=316, lw=340, itemH=DROPDOWN_ITEM_H, visH=DROPDOWN_VISIBLE_H;
     if (mx>=lx && mx<=lx+lw && my>=ly && my<=ly+visH) {
       const localY = (my - ly) + bgmDropdownScroll;
       const idx = Math.floor(localY / itemH);
@@ -7143,16 +7286,16 @@ function clickTitleSettings(mx, my) {
       bgmDropdownOpen = false;
       return;
     }
-    if (!(mx>=70 && mx<=410 && my>=332 && my<=362)) bgmDropdownOpen = false;
+    if (!(mx>=70 && mx<=410 && my>=498 && my<=528)) bgmDropdownOpen = false;
   }
   if (hitResSlider(mx, my, 70, 142, 340)) return;
   if (hitSensSlider(mx, my, 70, 240, 340, 'moveSensX')) return;
   if (hitSensSlider(mx, my, 70, 270, 340, 'moveSensY')) return;
   // Volume sliders (full width, no dropdown collision)
-  if (hitVolumeSlider(mx, my, 70, 374, 280, 'bgmVol', t => setBgmVol(t))) return;
-  if (hitVolumeSlider(mx, my, 70, 402, 280, 'sfxVol', t => setSfxVol(t))) return;
-  // Dropdown header (track picker) toggles open/close
-  if (mx>=70 && mx<=410 && my>=332 && my<=362) { bgmDropdownOpen = !bgmDropdownOpen; return; }
+  if (hitVolumeSlider(mx, my, 70, 336, 280, 'bgmVol', t => setBgmVol(t))) return;
+  if (hitVolumeSlider(mx, my, 70, 366, 280, 'sfxVol', t => setSfxVol(t))) return;
+  // Dropdown header (track picker) — now at y=498
+  if (mx>=70 && mx<=410 && my>=498 && my<=528) { bgmDropdownOpen = !bgmDropdownOpen; return; }
 }
 
 // ─── CODEX (图鉴) ─────────────────────────────────────────────────────────────
@@ -8272,7 +8415,7 @@ const DROPDOWN_ITEM_H    = 28;
 function dropdownListBounds(x, y, w, h) {
   return { lx: x, ly: y + h + 2, lw: w, lh: DROPDOWN_VISIBLE_H };
 }
-function drawDropdown(x, y, w, h, items, selectedIdx, open) {
+function drawDropdown(x, y, w, h, items, selectedIdx, open, openUp) {
   // Header showing current value
   cx.fillStyle = open ? '#003344' : '#001828';
   cx.fillRect(x, y, w, h);
@@ -8285,16 +8428,16 @@ function drawDropdown(x, y, w, h, items, selectedIdx, open) {
   cx.fillText('♬ '+items[selectedIdx], x+10, y+h/2+4);
   cx.fillStyle = '#88ccee';
   cx.font="bold 14px 'Courier New', monospace";
-  cx.fillText(open ? '▲' : '▼', x+w-22, y+h/2+5);
+  cx.fillText(open ? (openUp ? '▼' : '▲') : (openUp ? '▲' : '▼'), x+w-22, y+h/2+5);
   cx.textAlign='left';
-  // Open list overlay (scrollable)
+  // Open list overlay (scrollable). If openUp, the list rises above the header.
   if (open) {
     const itemH = DROPDOWN_ITEM_H;
     const listFullH = items.length * itemH;
     const visH = Math.min(DROPDOWN_VISIBLE_H, listFullH);
     const maxScroll = Math.max(0, listFullH - visH);
     bgmDropdownScroll = clamp(bgmDropdownScroll, 0, maxScroll);
-    const lx = x, ly = y + h + 2;
+    const lx = x, ly = openUp ? (y - 2 - visH) : (y + h + 2);
     // Background + clip
     cx.fillStyle='#001828';
     cx.fillRect(lx, ly, w, visH);
@@ -8909,11 +9052,11 @@ function pickSliderUnder(mx, my) {
     if (my >= 270 - 6 && my <= 270 + 22 && mx >= 70 - 12 && mx <= 70 + 340 + 12) {
       return { x:70, y:270, w:340, type:'sens', key:'moveSensY' };
     }
-    if (my >= 374 - 6 && my <= 374 + 22 && mx >= 70 - 12 && mx <= 70 + 280 + 12) {
-      return { x:70, y:374, w:280, type:'vol', key:'bgmVol' };
+    if (my >= 336 - 6 && my <= 336 + 22 && mx >= 70 - 12 && mx <= 70 + 280 + 12) {
+      return { x:70, y:336, w:280, type:'vol', key:'bgmVol' };
     }
-    if (my >= 402 - 6 && my <= 402 + 22 && mx >= 70 - 12 && mx <= 70 + 280 + 12) {
-      return { x:70, y:402, w:280, type:'vol', key:'sfxVol' };
+    if (my >= 366 - 6 && my <= 366 + 22 && mx >= 70 - 12 && mx <= 70 + 280 + 12) {
+      return { x:70, y:366, w:280, type:'vol', key:'sfxVol' };
     }
   }
   // Pause-page sliders (sensitivity + volume — match drawPause coords)
