@@ -6330,14 +6330,14 @@ function drawHUD() {
 //   y=  60–135 : title art + brand subtitle
 //   y= 160–340 : plane showcase + side arrows
 //   y= 345–375 : skin name + page indicator
-//   y= 392–436 : 4-card quick equip strip (Map / Trail / Rune-A / Rune-B)
-//   y= 458–528 : two large mode tabs
-//   y= 545–565 : control hint
-const TITLE_EQUIP = { y: 392, h: 44, cardW: 100, gap: 8 };
+//   y= 384–424 : 4-card quick equip strip (Map / Trail / Rune-A / Rune-B)
+//   y= 446–516 : two large mode tabs (clear gap of 22px below strip)
+//   y= 540–565 : control hint
+const TITLE_EQUIP = { y: 384, h: 40, cardW: 100, gap: 8 };
 const TITLE_EQUIP_X = (W - (TITLE_EQUIP.cardW * 4 + TITLE_EQUIP.gap * 3)) / 2;  // = 28
 const titleBtns=[
-  {x: 60, y:458, w:172, h:70, text:'关卡模式',  act:'solo'},
-  {x:248, y:458, w:172, h:70, text:'无尽模式',  act:'endless'},
+  {x: 60, y:446, w:172, h:70, text:'关卡模式',  act:'solo'},
+  {x:248, y:446, w:172, h:70, text:'无尽模式',  act:'endless'},
 ];
 function titleEquipCardX(i){ return TITLE_EQUIP_X + i*(TITLE_EQUIP.cardW + TITLE_EQUIP.gap); }
 // Shop / Codex / Settings now use DOM side-bar buttons (#btn-shop / #btn-codex / #btn-pause).
@@ -6584,10 +6584,10 @@ function drawTitle() {
     }
     cx.fillStyle = accent;
     cx.font = "bold 10px 'Courier New', monospace"; cx.textAlign = 'left';
-    cx.fillText('地  图', x + 32, ey + 18);
+    cx.fillText('地  图', x + 32, ey + 16);
     cx.font = "bold 11px 'Courier New', monospace";
     const label = isRandom ? '随  机' : (bgDef ? bgDef[0] : '—');
-    cx.fillText(label.length > 6 ? label.slice(0,6) : label, x + 32, ey + 33);
+    cx.fillText(label.length > 6 ? label.slice(0,6) : label, x + 32, ey + 30);
   }
   // Card 1 — Trail
   {
@@ -6601,9 +6601,9 @@ function drawTitle() {
     cx.beginPath(); cx.arc(tcx, tcy, 11, 0, Math.PI*2); cx.fill();
     cx.fillStyle = trailDef[4];
     cx.font = "bold 10px 'Courier New', monospace"; cx.textAlign = 'left';
-    cx.fillText('残  影', x + 32, ey + 18);
+    cx.fillText('残  影', x + 32, ey + 16);
     cx.font = "bold 11px 'Courier New', monospace";
-    cx.fillText(trailDef[0].length > 6 ? trailDef[0].slice(0,6) : trailDef[0], x + 32, ey + 33);
+    cx.fillText(trailDef[0].length > 6 ? trailDef[0].slice(0,6) : trailDef[0], x + 32, ey + 30);
   }
   // Cards 2 & 3 — Rune slots
   for (let s = 0; s < 2; s++) {
@@ -6625,17 +6625,17 @@ function drawTitle() {
       cx.fillText(def.icon, tcx, tcy + 4);
       cx.fillStyle = def.col;
       cx.font = "bold 10px 'Courier New', monospace"; cx.textAlign = 'left';
-      cx.fillText('符文 ' + (s+1), x + 32, ey + 18);
+      cx.fillText('符文 ' + (s+1), x + 32, ey + 16);
       cx.font = "bold 10px 'Courier New', monospace";
-      cx.fillText(def.name.slice(0,2) + ' Lv' + lv, x + 32, ey + 33);
+      cx.fillText(def.name.slice(0,2) + ' Lv' + lv, x + 32, ey + 30);
     } else {
       cx.fillStyle = '#446688';
       cx.beginPath(); cx.arc(tcx, tcy, 10, 0, Math.PI*2); cx.stroke();
       cx.fillStyle = '#557799';
       cx.font = "bold 10px 'Courier New', monospace"; cx.textAlign = 'left';
-      cx.fillText('符文 ' + (s+1), x + 32, ey + 18);
+      cx.fillText('符文 ' + (s+1), x + 32, ey + 16);
       cx.font = "10px 'Courier New', monospace";
-      cx.fillText('点击装备', x + 32, ey + 33);
+      cx.fillText('点击装备', x + 32, ey + 30);
     }
   }
   cx.textAlign = 'left';
@@ -6738,7 +6738,7 @@ function drawTitle() {
   cx.fillStyle = '#557799';
   cx.font = "11px 'Courier New', monospace";
   cx.textAlign = 'center';
-  cx.fillText('点击模式开始 · 侧栏可访问商城 / 图鉴 / 设置', W/2, 552);
+  cx.fillText('点击模式开始 · 侧栏可访问商城 / 图鉴 / 设置', W/2, 540);
   cx.textAlign = 'left';
 }
 
@@ -7927,44 +7927,48 @@ function clickDeath(mx,my) {
 }
 
 // ─── PAUSE MENU ──────────────────────────────────────────────────────────────
+// 2x2 grid keeps the 4-button stack tight so the sensitivity section below has room.
 const pauseBtns = [
-  {x:140,y:188,w:200,h:42,text:'继续游戏',act:'resume'},
-  {x:140,y:236,w:200,h:42,text:'重新开始',act:'restart'},
-  {x:140,y:284,w:200,h:42,text:'⚙ 控 制 台',act:'console'},
-  {x:140,y:332,w:200,h:42,text:'返回主页',act:'home'},
+  {x: 60, y:180, w:170, h:46, text:'继续游戏',   act:'resume'},
+  {x:250, y:180, w:170, h:46, text:'重新开始',   act:'restart'},
+  {x: 60, y:236, w:170, h:46, text:'⚙ 控制台',   act:'console'},
+  {x:250, y:236, w:170, h:46, text:'返回主页',   act:'home'},
 ];
 
 function drawPause() {
-  cx.fillStyle='rgba(0,0,20,0.75)';
+  cx.fillStyle='rgba(0,0,20,0.78)';
   cx.fillRect(0,0,W,H);
+  // Title block
   cx.textAlign='center';
   cx.fillStyle='#00ffff';
-  cx.font="bold 40px 'Courier New', monospace";
-  cx.fillText('暂  停', W/2, 130);
+  cx.font="bold 36px 'Courier New', monospace";
+  cx.fillText('暂  停', W/2, 110);
   cx.fillStyle='#88ccee';
   cx.font="13px 'Courier New', monospace";
-  cx.fillText('LV '+level+(endlessMode?' [无尽]':' [关卡]'), W/2, 162);
+  cx.fillText('LV '+level+(endlessMode?' [无尽]':' [关卡]'), W/2, 140);
 
+  // Buttons (2x2)
   for (const btn of pauseBtns) drawButton(btn.x, btn.y, btn.w, btn.h, btn.text, false);
 
   // Sensitivity sliders
   cx.fillStyle='#ffcc00';
   cx.font="bold 13px 'Courier New', monospace";
   cx.textAlign='center';
-  cx.fillText('遥 感 灵 敏 度', W/2, 376);
-  drawSensSlider(70, 392, 340, '横向', 'moveSensX');
-  drawSensSlider(70, 422, 340, '纵向', 'moveSensY');
+  cx.fillText('遥 感 灵 敏 度', W/2, 312);
+  drawSensSlider(70, 328, 340, '横向', 'moveSensX');
+  drawSensSlider(70, 358, 340, '纵向', 'moveSensY');
 
   // Music section
   cx.fillStyle='#ffcc00';
   cx.font="bold 13px 'Courier New', monospace";
   cx.textAlign='center';
-  cx.fillText('音 乐 设 置', W/2, 460);
+  cx.fillText('音 乐 设 置', W/2, 400);
 
-  // Volume sliders + track dropdown
-  drawVolumeSlider(70, 480, 180, '背景', 'bgmVol');
-  drawVolumeSlider(70, 510, 180, '音效', 'sfxVol');
-  drawDropdown(290, 488, 150, 36, BGM_TRACK_NAMES, bgmTrack, bgmDropdownOpen);
+  // Volume sliders (full-width on top so the % readout doesn't fight the dropdown)
+  drawVolumeSlider(70, 420, 280, '背景', 'bgmVol');
+  drawVolumeSlider(70, 450, 280, '音效', 'sfxVol');
+  // Track dropdown sits below the volumes, full row
+  drawDropdown(70, 480, 340, 30, BGM_TRACK_NAMES, bgmTrack, bgmDropdownOpen);
 
   cx.fillStyle='#666';
   cx.font="11px 'Courier New', monospace";
@@ -8093,7 +8097,7 @@ function clickPause(mx,my) {
   }
   // Dropdown open: handle item picks first
   if (bgmDropdownOpen) {
-    const lx=290, ly=488+36+2, lw=150, itemH=DROPDOWN_ITEM_H, visH=DROPDOWN_VISIBLE_H;
+    const lx=70, ly=480+30+2, lw=340, itemH=DROPDOWN_ITEM_H, visH=DROPDOWN_VISIBLE_H;
     if (mx>=lx && mx<=lx+lw && my>=ly && my<=ly+visH) {
       const localY = (my - ly) + bgmDropdownScroll;
       const idx = Math.floor(localY / itemH);
@@ -8106,18 +8110,18 @@ function clickPause(mx,my) {
       bgmDropdownOpen = false;
       return;
     }
-    if (!(mx>=290 && mx<=440 && my>=488 && my<=524)) {
+    if (!(mx>=70 && mx<=410 && my>=480 && my<=510)) {
       bgmDropdownOpen = false;
     }
   }
   // Sensitivity sliders
-  if (hitSensSlider(mx, my, 70, 392, 340, 'moveSensX')) return;
-  if (hitSensSlider(mx, my, 70, 422, 340, 'moveSensY')) return;
-  // Volume sliders
-  if (hitVolumeSlider(mx, my, 70, 480, 180, 'bgmVol', t => setBgmVol(t))) return;
-  if (hitVolumeSlider(mx, my, 70, 510, 180, 'sfxVol', t => setSfxVol(t))) return;
-  // Track dropdown header
-  if (mx>=290 && mx<=440 && my>=488 && my<=524) {
+  if (hitSensSlider(mx, my, 70, 328, 340, 'moveSensX')) return;
+  if (hitSensSlider(mx, my, 70, 358, 340, 'moveSensY')) return;
+  // Volume sliders (full-width row above the dropdown)
+  if (hitVolumeSlider(mx, my, 70, 420, 280, 'bgmVol', t => setBgmVol(t))) return;
+  if (hitVolumeSlider(mx, my, 70, 450, 280, 'sfxVol', t => setSfxVol(t))) return;
+  // Track dropdown header (full-width row)
+  if (mx>=70 && mx<=410 && my>=480 && my<=510) {
     bgmDropdownOpen = !bgmDropdownOpen;
     return;
   }
@@ -8621,13 +8625,19 @@ function pickSliderUnder(mx, my) {
       return { x:70, y:402, w:280, type:'vol', key:'sfxVol' };
     }
   }
-  // Pause-page volume sliders
+  // Pause-page sliders (sensitivity + volume — match drawPause coords)
   if (screen === 'pause') {
-    if (my >= 480 - 6 && my <= 480 + 22 && mx >= 70 - 12 && mx <= 70 + 180 + 12) {
-      return { x:70, y:480, w:180, type:'vol', key:'bgmVol' };
+    if (my >= 328 - 6 && my <= 328 + 22 && mx >= 70 - 12 && mx <= 70 + 340 + 12) {
+      return { x:70, y:328, w:340, type:'sens', key:'moveSensX' };
     }
-    if (my >= 510 - 6 && my <= 510 + 22 && mx >= 70 - 12 && mx <= 70 + 180 + 12) {
-      return { x:70, y:510, w:180, type:'vol', key:'sfxVol' };
+    if (my >= 358 - 6 && my <= 358 + 22 && mx >= 70 - 12 && mx <= 70 + 340 + 12) {
+      return { x:70, y:358, w:340, type:'sens', key:'moveSensY' };
+    }
+    if (my >= 420 - 6 && my <= 420 + 22 && mx >= 70 - 12 && mx <= 70 + 280 + 12) {
+      return { x:70, y:420, w:280, type:'vol', key:'bgmVol' };
+    }
+    if (my >= 450 - 6 && my <= 450 + 22 && mx >= 70 - 12 && mx <= 70 + 280 + 12) {
+      return { x:70, y:450, w:280, type:'vol', key:'sfxVol' };
     }
   }
   return null;
