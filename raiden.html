@@ -238,7 +238,9 @@ function defaultSave() {
     endlessLeaderboard: [],
     console: defaultConsole(),
     runes: { burn:0, poison:0, freeze:0, plague:0, crit:0, decap:0 },
-    equippedRunes: [],   // up to 2 keys from RUNE_DEFS
+    equippedRunes: [],
+    trails: Array(20).fill(false).map((_,i) => i === 0),
+    selTrail: 0,
   };
 }
 function defaultConsole() {
@@ -324,6 +326,8 @@ function loadSave() {
       if (Array.isArray(d.equippedRunes)) {
         save.equippedRunes = d.equippedRunes.filter(k => k in save.runes).slice(0, 2);
       }
+      if (Array.isArray(d.trails) && d.trails.length === 20) save.trails = d.trails;
+      if (typeof d.selTrail === 'number') save.selTrail = clamp(d.selTrail, 0, 19);
     }
   } catch(e) {}
 }
@@ -553,6 +557,48 @@ const SAX_B_5 = [
   [A3,2],[B3,2],[E3,3],[B3,1],
 ];
 
+// ─── Light-music original tracks (10 new chill/ambient loops) ────────────────
+// Each is an arpeggio over a slow chord cadence in a different key — generated
+// programmatically from chord roots so no copyrighted material is reproduced.
+function makeArpeggio(roots, octaveLow, octaveHigh) {
+  const m = [], b = [];
+  // Each "root" represents a chord; we walk an arpeggio (1-3-5-octave) across it.
+  for (const root of roots) {
+    const r = root;            // base Hz
+    const third = r * 1.189;   // ~major 3rd
+    const minorThird = r * 1.122;
+    const fifth = r * 1.498;
+    const oct = r * 2;
+    // Choose major/minor randomly per note set so each track varies
+    const t3 = (root * 13) % 2 === 0 ? minorThird : third;
+    const seq = [r, t3, fifth, oct, fifth, t3, r, oct];
+    const ohi = octaveHigh || 2;
+    for (let s = 0; s < seq.length; s++) {
+      m.push([seq[s] * ohi, 1]);
+    }
+    // Bass holds the root for one bar
+    b.push([r * (octaveLow || 0.5), 4], [r * (octaveLow || 0.5), 4]);
+  }
+  return { m, b };
+}
+// Distinct chord progressions per track — each cycles through 4 chord roots
+const LIGHT_DEFS = [
+  { name:'轻·晨曦', roots:[A3,F3,G3,E3], tempo:1.7,  ohi:2,    olo:0.5 },
+  { name:'轻·细雨', roots:[D3,A3,Bb3,F3], tempo:1.85, ohi:2,    olo:0.5 },
+  { name:'轻·星河', roots:[C3,G3,Ab3,Eb3],tempo:1.7,  ohi:2,    olo:0.5 },
+  { name:'轻·微风', roots:[E3,B3,A3,F3s],tempo:1.6,  ohi:2,    olo:0.5 },
+  { name:'轻·茶语', roots:[G3,D3,Eb3,C4],tempo:1.95, ohi:1.5,  olo:0.5 },
+  { name:'轻·落叶', roots:[F3,Bb3,C4,A3],tempo:1.8,  ohi:2,    olo:0.5 },
+  { name:'轻·云朵', roots:[B3,F3s,A3,E3],tempo:1.55, ohi:2,    olo:0.5 },
+  { name:'轻·暖阳', roots:[D4,A3,B3,G3], tempo:1.7,  ohi:1.5,  olo:0.5 },
+  { name:'轻·星语', roots:[Eb3,Bb3,Ab3,F3],tempo:1.85,ohi:2,   olo:0.5 },
+  { name:'轻·夜曲', roots:[A3,E3,F3,D3], tempo:1.6,  ohi:2,    olo:0.5 },
+];
+const LIGHT_TRACKS = LIGHT_DEFS.map(def => {
+  const { m, b } = makeArpeggio(def.roots, def.olo, def.ohi);
+  return { m, b, name: def.name, sax: true, tempo: def.tempo };
+});
+
 const BGM_TRACKS=[
   {m:MELODY_BGM, b:BASS_BGM, name:'A小调·战'},
   {m:MELODY_T2,  b:BASS_T2,  name:'D小调·雷'},
@@ -564,6 +610,7 @@ const BGM_TRACKS=[
   {m:SAX_M_3, b:SAX_B_3, name:'萨·烟雨', sax:true, tempo:1.65},
   {m:SAX_M_4, b:SAX_B_4, name:'萨·律动', sax:true, tempo:1.45},
   {m:SAX_M_5, b:SAX_B_5, name:'萨·深夜', sax:true, tempo:1.6},
+  ...LIGHT_TRACKS,
 ];
 const BGM_TRACK_NAMES=BGM_TRACKS.map(t=>t.name);
 
@@ -1110,6 +1157,136 @@ function shadeHex(hex, amt) {
   const b = parseInt(hex.slice(5,7),16);
   const f = v => Math.max(0, Math.min(255, v + amt));
   return '#'+[f(r),f(g),f(b)].map(v=>v.toString(16).padStart(2,'0')).join('');
+}
+
+// ─── 20 残影/彗尾 TRAILS ─────────────────────────────────────────────────────
+const TRAIL_DEFS = [
+  ['无',          0,    'free', 'none',     '#888888'],
+  ['浅蓝拖影',    300,  'g',    'fade',     '#44aaff'],
+  ['火焰彗尾',    600,  'g',    'flame',    '#ff5522'],
+  ['绿色尾流',    600,  'g',    'fade',     '#44ff88'],
+  ['白色雾痕',    900,  'g',    'fade',     '#ffffff'],
+  ['霓虹双带',    900,  'g',    'twin',     '#ff00ff'],
+  ['粒子散光',    1200, 'g',    'spark',    '#ffcc00'],
+  ['星屑漂流',    1200, 'g',    'spark',    '#aaccff'],
+  ['冰晶尾',      1500, 'g',    'fade',     '#aaeeff'],
+  ['黑洞拖影',    1500, 'g',    'fade',     '#552288'],
+  ['彩虹流光',    2000, 'g',    'rainbow',  '#ff44ff'],
+  ['闪电尾',      2500, 'g',    'lightning','#88ffff'],
+  ['樱花飘散',    2,    'd',    'petal',    '#ffaadd'],
+  ['炽金光痕',    3,    'd',    'fade',     '#ffcc44'],
+  ['等离子尾',    4,    'd',    'plasma',   '#cc44ff'],
+  ['量子残影',    5,    'd',    'echo',     '#88ddff'],
+  ['烟花喷射',    6,    'd',    'spark',    '#ff66aa'],
+  ['流星雨',      8,    'd',    'meteor',   '#ffaa88'],
+  ['极光丝带',    10,   'd',    'aurora',   '#aaffcc'],
+  ['虚空裂痕',    15,   'd',    'echo',     '#ff44ff'],
+];
+
+// Tracks recent positions per plane id for trail rendering
+function ensureTrailHistory(p) {
+  if (!p._trail) p._trail = [];
+  p._trail.push({x:p.x, y:p.y, frame});
+  while (p._trail.length > 20) p._trail.shift();
+}
+function drawPlaneTrail(p) {
+  const idx = (p.pNum === 1) ? (save.selTrail || 0) : 0;
+  const def = TRAIL_DEFS[idx] || TRAIL_DEFS[0];
+  const style = def[3], col = def[4];
+  if (style === 'none' || !p._trail) return;
+  const hist = p._trail;
+  cx.save();
+  if (style === 'fade') {
+    for (let i = 0; i < hist.length; i++) {
+      const a = i / hist.length;
+      cx.globalAlpha = a * 0.5;
+      cx.fillStyle = col;
+      cx.beginPath(); cx.arc(hist[i].x, hist[i].y + 12, 6 - i*0.2, 0, Math.PI*2); cx.fill();
+    }
+  } else if (style === 'flame') {
+    for (let i = 0; i < hist.length; i++) {
+      const a = i / hist.length;
+      cx.globalAlpha = a * 0.6;
+      cx.fillStyle = i % 2 === 0 ? col : '#ffaa00';
+      cx.beginPath(); cx.arc(hist[i].x + rnd(-2,2), hist[i].y + 14 + rnd(-1,1), 5 - i*0.2, 0, Math.PI*2); cx.fill();
+    }
+  } else if (style === 'twin') {
+    for (let i = 0; i < hist.length; i++) {
+      const a = i / hist.length;
+      cx.globalAlpha = a * 0.55;
+      cx.fillStyle = i % 2 === 0 ? col : '#00ffff';
+      cx.fillRect(hist[i].x - 8, hist[i].y + 12, 3, 3);
+      cx.fillRect(hist[i].x + 5, hist[i].y + 12, 3, 3);
+    }
+  } else if (style === 'spark') {
+    for (let i = 0; i < hist.length; i++) {
+      const a = i / hist.length;
+      cx.globalAlpha = a * 0.7;
+      cx.fillStyle = col;
+      cx.fillRect(hist[i].x + rnd(-6,6), hist[i].y + 12 + rnd(-2,4), 1.5, 1.5);
+    }
+  } else if (style === 'rainbow') {
+    for (let i = 0; i < hist.length; i++) {
+      const a = i / hist.length;
+      cx.globalAlpha = a * 0.6;
+      cx.fillStyle = `hsl(${(frame*4 + i*30) % 360}, 100%, 60%)`;
+      cx.beginPath(); cx.arc(hist[i].x, hist[i].y + 12, 5 - i*0.18, 0, Math.PI*2); cx.fill();
+    }
+  } else if (style === 'lightning') {
+    cx.strokeStyle = col;
+    cx.lineWidth = 1.5;
+    cx.globalAlpha = 0.6;
+    cx.beginPath();
+    for (let i = 0; i < hist.length; i++) {
+      const x = hist[i].x + rnd(-3,3), y = hist[i].y + 12;
+      if (i === 0) cx.moveTo(x, y); else cx.lineTo(x, y);
+    }
+    cx.stroke();
+  } else if (style === 'petal') {
+    for (let i = 0; i < hist.length; i++) {
+      const a = i / hist.length;
+      cx.globalAlpha = a * 0.7;
+      cx.fillStyle = i % 2 === 0 ? col : '#ffffff';
+      cx.beginPath();
+      cx.ellipse(hist[i].x + rnd(-4,4), hist[i].y + 12 + i, 3, 1.5, frame*0.05+i, 0, Math.PI*2);
+      cx.fill();
+    }
+  } else if (style === 'plasma') {
+    for (let i = 0; i < hist.length; i++) {
+      const a = i / hist.length;
+      cx.globalAlpha = a * 0.5;
+      cx.fillStyle = col;
+      cx.beginPath(); cx.arc(hist[i].x, hist[i].y + 12, 7 - i*0.3, 0, Math.PI*2); cx.fill();
+      cx.fillStyle = '#ffffff';
+      cx.beginPath(); cx.arc(hist[i].x, hist[i].y + 12, 2.5 - i*0.1, 0, Math.PI*2); cx.fill();
+    }
+  } else if (style === 'echo') {
+    // 每 3 帧画一次完整复制(更显残影)
+    for (let i = 0; i < hist.length; i += 3) {
+      const a = i / hist.length;
+      cx.globalAlpha = a * 0.35;
+      cx.fillStyle = col;
+      cx.fillRect(hist[i].x - 3, hist[i].y - 12, 6, 24);
+    }
+  } else if (style === 'meteor') {
+    for (let i = 0; i < hist.length; i++) {
+      const a = i / hist.length;
+      cx.globalAlpha = a * 0.5;
+      cx.fillStyle = i % 2 === 0 ? col : '#ffffff';
+      cx.fillRect(hist[i].x + (i*2)%5 - 2, hist[i].y + 12, 2, 4);
+    }
+  } else if (style === 'aurora') {
+    cx.strokeStyle = col;
+    cx.lineWidth = 4;
+    cx.globalAlpha = 0.35;
+    cx.beginPath();
+    for (let i = 0; i < hist.length; i++) {
+      const x = hist[i].x + Math.sin(i*0.4)*4, y = hist[i].y + 12;
+      if (i === 0) cx.moveTo(x, y); else cx.lineTo(x, y);
+    }
+    cx.stroke();
+  }
+  cx.restore();
 }
 
 // Per-skin idle FX based on the skin's primary body color → unique animation feel.
@@ -2263,6 +2440,9 @@ function drawPlayer(p) {
   const skin = PLANE_SKINS[p.skinIdx];
   const colors = [...skin[4]];
   if (p.pNum===2) colors[0]=shiftColor(colors[0],30);
+  // Track recent positions for afterimage/comet trail
+  ensureTrailHistory(p);
+  drawPlaneTrail(p);
   // Shape-aware shadow: re-render the plane silhouette in dark + offset
   cx.save();
   cx.globalAlpha = 0.34;
@@ -2384,25 +2564,68 @@ function mkB(x,y,vx,vy,color,w,h,owner,dmg) {
 // Apply rune procs at the moment a player bullet hits an enemy.
 function applyRuneOnHit(e, b) {
   if (!b || !b.owner || b.owner.pNum === undefined) return;
-  // Crit visual
-  if (b.crit) addFT('暴击!', e.x, e.y - 10, '#ffcc44');
+  // Crit visual — large floating golden number with damage shown
+  if (b.crit) {
+    const dmgInt = Math.max(1, Math.round(b.dmg));
+    addFT('-' + dmgInt, e.x + rnd(-6,6), e.y - 14, '#ffcc44');
+    addFT('★暴击', e.x + rnd(-6,6), e.y - 28, '#ffaa00');
+    // Golden burst sparkle
+    for (let i = 0; i < 6; i++) {
+      const a = (i/6) * Math.PI * 2;
+      explosions.push({
+        x:e.x, y:e.y, vx:Math.cos(a)*3, vy:Math.sin(a)*3,
+        life:18, maxLife:18, size:3, color:'#ffcc44'
+      });
+    }
+  }
   // Burn
   if (isRuneEquipped('burn') && Math.random() < runeProb('burn')) {
     e.burn = Math.max(e.burn || 0, 180);
+    addFT('🔥 燃烧', e.x, e.y - 14, '#ff8844');
+    // Flame burst
+    for (let i = 0; i < 5; i++) {
+      explosions.push({
+        x:e.x + rnd(-6,6), y:e.y + rnd(-4,4),
+        vx:rnd(-1,1), vy:rnd(-2,-0.5),
+        life:24, maxLife:24, size:3, color: i%2===0 ? '#ff8844' : '#ffcc44'
+      });
+    }
   }
   // Poison
   if (isRuneEquipped('poison') && Math.random() < runeProb('poison')) {
     e.poison = Math.max(e.poison || 0, 240);
+    addFT('☠ 中毒', e.x, e.y - 14, '#88ff44');
+    for (let i = 0; i < 4; i++) {
+      explosions.push({
+        x:e.x + rnd(-5,5), y:e.y + rnd(-5,5),
+        vx:rnd(-0.6,0.6), vy:rnd(-1.2,-0.3),
+        life:26, maxLife:26, size:2.5, color:'#88ff44'
+      });
+    }
   }
   // Freeze (large slow chance, smaller hard-freeze chance)
   if (isRuneEquipped('freeze')) {
     const p = runeProb('freeze');
-    if (Math.random() < p) e.slow   = Math.max(e.slow   || 0, 120);
-    if (Math.random() < p * 0.25) e.freeze = Math.max(e.freeze || 0, 60);
+    if (Math.random() < p) {
+      e.slow = Math.max(e.slow || 0, 120);
+      addFT('❄ 减速', e.x, e.y - 14, '#88eeff');
+      for (let i = 0; i < 5; i++) {
+        explosions.push({
+          x:e.x + rnd(-7,7), y:e.y + rnd(-7,7),
+          vx:rnd(-0.5,0.5), vy:rnd(-0.8,0.4),
+          life:22, maxLife:22, size:2.5, color:'#aaeeff'
+        });
+      }
+    }
+    if (Math.random() < p * 0.25) {
+      e.freeze = Math.max(e.freeze || 0, 60);
+      addFT('❄❄ 冻 结!', e.x, e.y - 26, '#aaffff');
+    }
   }
-  // Plague (also drains and spreads)
+  // Plague
   if (isRuneEquipped('plague') && Math.random() < runeProb('plague')) {
     e.plague = Math.max(e.plague || 0, 180);
+    addFT('☣ 疫病', e.x, e.y - 14, '#cc44ff');
   }
   // Decap — non-boss only
   if (isRuneEquipped('decap') && Math.random() < runeProb('decap')) {
@@ -2791,6 +3014,10 @@ const ENEMY_CFG = {
   // Ramming-only types: no bullets, only deal contact damage
   asteroid: {hp:80, spd:1.0,pts:120,w:32,h:32,col:'#888899',cv:2},
   ramship:  {hp:50, spd:2.4,pts:140,w:22,h:22,col:'#aa44ff',cv:2},
+  // 3 elite enemies
+  eliteTank:  {hp:480,spd:0.4,pts:900,w:46,h:38,col:'#7788aa',cv:8},  // 重甲不发子弹
+  eliteHomer: {hp:140,spd:1.0,pts:520,w:30,h:26,col:'#ff8866',cv:4},  // 发射可击毁追踪弹
+  eliteClone: {hp:120,spd:1.2,pts:600,w:24,h:24,col:'#aaccff',cv:4},  // 克隆玩家武器(削弱)
 };
 
 function mkEnemy(type, x, y) {
@@ -2939,6 +3166,61 @@ function updateEnemy(e) {
       e.x += Math.sin(e.moveTimer*0.025) * 0.6;
       e.spin = (e.spin || 0) + 0.04;
       break;
+    case 'eliteTank':
+      // 慢速重装, 锁屏中段, 不开火, 撞击伤害
+      if (e.y < H * 0.32) e.y += e.speed * 1.4;
+      else                e.x += Math.sin(e.moveTimer * 0.02) * 1.5;
+      break;
+    case 'eliteHomer':
+      // 缓速移动, 周期发射追踪导弹 (可被打爆, 速度略低于 e.speed*Speed)
+      e.y += e.speed * 0.55;
+      e.x += Math.sin(e.moveTimer * 0.03) * 1.2;
+      if (e.moveTimer % ((90 * fireMul) | 0) === 0) {
+        const t = players.find(p => !p.dead);
+        if (t) {
+          const dx = t.x - e.x, dy = t.y - e.y, d = Math.sqrt(dx*dx + dy*dy) || 1;
+          const sp = e.speed * 0.85;       // 弹速略低于敌机移动速度
+          const m = mkEBSpecial(e.x, e.y + 14, dx/d * sp, dy/d * sp, '#ff8866', 3, 'homer');
+          m.homing = true;
+          m.homingStr = 0.045;
+          m.maxSpeed = sp * 1.1;
+          enemyBullets.push(m);
+        }
+      }
+      break;
+    case 'eliteClone': {
+      // 克隆玩家武器, 削弱版本; 慢速跟踪移动
+      e.y += e.speed * 0.6;
+      const tgt = players.find(p => !p.dead);
+      if (tgt) {
+        if (e.x < tgt.x - 2) e.x += 1.2;
+        else if (e.x > tgt.x + 2) e.x -= 1.2;
+      }
+      // 武器克隆: 取玩家当前武器, 用敌弹模式发出
+      if (tgt && e.moveTimer % ((28 * fireMul) | 0) === 0) {
+        const w = tgt.weapon || 0;
+        const wl = Math.max(1, (tgt.weaponLevel || 1) - 1);   // 削弱一级
+        const baseSp = 4 + wl * 0.4;
+        if (w === 0 || w === 7) {
+          enemyBullets.push({x:e.x, y:e.y+12, px:e.x|0, py:(e.y+12)|0,
+            vx:0, vy: baseSp, alive:true, color:'#88ccff'});
+        } else if (w === 1) { // 散弹
+          for (let i=-1;i<=1;i++) enemyBullets.push({x:e.x, y:e.y+12, px:0,py:0,
+            vx:i*1.4, vy: baseSp - 0.6, alive:true, color:'#aaccff'});
+        } else if (w === 2) { // 激光: 短促直射
+          enemyBullets.push({x:e.x, y:e.y+12, px:0,py:0, vx:0, vy: baseSp + 1.4, alive:true, color:'#ffaaaa'});
+        } else if (w === 3) { // 制导
+          const dx=tgt.x-e.x, dy=tgt.y-e.y, d=Math.sqrt(dx*dx+dy*dy)||1;
+          enemyBullets.push({x:e.x, y:e.y+12, px:0,py:0,
+            vx:dx/d*baseSp, vy:dy/d*baseSp, alive:true, color:'#ffcc99'});
+        } else if (w === 4) { // 等离子: 大球
+          enemyBullets.push({x:e.x, y:e.y+12, px:0,py:0, vx:0, vy: baseSp - 1, alive:true, color:'#cc88ff'});
+        } else { // 默认: 直射
+          enemyBullets.push({x:e.x, y:e.y+12, px:0,py:0, vx:0, vy: baseSp, alive:true, color:'#aaccff'});
+        }
+      }
+      break;
+    }
     case 'ramship':
       // 锁定追击玩家, 横向缓慢拉近, 不发子弹
       e.y += e.speed * 0.85;
@@ -3381,6 +3663,95 @@ function drawEnemy(e) {
       cx.strokeStyle = 'rgba(0,0,0,0.5)';
       cx.lineWidth = 0.7;
       cx.beginPath(); cx.moveTo(-e.w*.4, 0); cx.lineTo( e.w*.4, 0); cx.stroke();
+      break;
+    }
+    case 'eliteTank': {
+      // 重装巨型: 厚装甲 + 蓝灰金属感, 没炮口
+      cx.fillStyle = rg;
+      cx.beginPath(); cx.roundRect(-e.w*.5, -e.h*.5, e.w, e.h, 8); cx.fill();
+      cx.strokeStyle = '#222'; cx.lineWidth = 2; cx.stroke();
+      // Plate seams
+      cx.strokeStyle = 'rgba(0,0,0,.55)'; cx.lineWidth = 1.2;
+      cx.beginPath();
+      cx.moveTo(-e.w*.5, -e.h*.18); cx.lineTo(e.w*.5, -e.h*.18);
+      cx.moveTo(-e.w*.5,  e.h*.12); cx.lineTo(e.w*.5,  e.h*.12);
+      cx.moveTo(0, -e.h*.5); cx.lineTo(0, e.h*.5);
+      cx.stroke();
+      // Rivets at corners
+      cx.fillStyle = '#444';
+      for (const sx of [-e.w*.4, e.w*.4]) for (const sy of [-e.h*.42, e.h*.42]) {
+        cx.beginPath(); cx.arc(sx, sy, 2, 0, Math.PI*2); cx.fill();
+      }
+      // Front shield bumper
+      cx.fillStyle = '#bbcce0';
+      cx.fillRect(-e.w*.46, e.h*.32, e.w*.92, 4);
+      cx.fillStyle = '#445566';
+      cx.fillRect(-e.w*.46, e.h*.36, e.w*.92, 2);
+      // Gold "no-bullets" mark on hull
+      cx.fillStyle = '#ffcc44'; cx.font = 'bold 10px sans-serif'; cx.textAlign = 'center';
+      cx.fillText('Ⅹ', 0, 0);
+      cx.textAlign = 'left';
+      break;
+    }
+    case 'eliteHomer': {
+      // 追击发射型: 机身 + 双导弹仓 + 寻头雷达
+      cx.fillStyle = rg;
+      cx.beginPath();
+      cx.moveTo(0, e.h*.55); cx.lineTo(-e.w*.5, e.h*.05); cx.lineTo(-e.w*.32, -e.h*.5);
+      cx.lineTo(e.w*.32, -e.h*.5); cx.lineTo(e.w*.5, e.h*.05); cx.closePath();
+      cx.fill();
+      // Side missile pods
+      cx.fillStyle = '#aa3322';
+      cx.fillRect(-e.w*.46, -e.h*.18, 6, e.h*.36);
+      cx.fillRect( e.w*.46-6, -e.h*.18, 6, e.h*.36);
+      // Pod warheads
+      cx.fillStyle = '#ffcc44';
+      for (let i = 0; i < 3; i++) {
+        cx.fillRect(-e.w*.45, -e.h*.16 + i*8, 4, 2);
+        cx.fillRect( e.w*.45-4, -e.h*.16 + i*8, 4, 2);
+      }
+      // Radar dish
+      cx.fillStyle = '#cc99aa';
+      cx.beginPath(); cx.ellipse(0, -e.h*.25, 6, 3, 0, 0, Math.PI*2); cx.fill();
+      cx.strokeStyle = '#ff4422'; cx.lineWidth = 1;
+      const ra = e.moveTimer * 0.15;
+      cx.beginPath();
+      cx.moveTo(0, -e.h*.25);
+      cx.lineTo(Math.cos(ra) * 8, -e.h*.25 + Math.sin(ra) * 4);
+      cx.stroke();
+      // Cockpit
+      cx.fillStyle = 'rgba(255,150,80,.75)';
+      cx.beginPath(); cx.arc(0, 0, 4, 0, Math.PI*2); cx.fill();
+      break;
+    }
+    case 'eliteClone': {
+      // 克隆飞机: 银白镜像版玩家 + 闪烁数据流
+      cx.fillStyle = e.col + 'aa';
+      cx.beginPath();
+      cx.moveTo(0, e.h*.55); cx.lineTo(-e.w*.5, e.h*.1);
+      cx.lineTo(-e.w*.18, -e.h*.5); cx.lineTo(e.w*.18, -e.h*.5);
+      cx.lineTo(e.w*.5, e.h*.1); cx.closePath();
+      cx.fill();
+      // Mirrored center stripe (shows it's a clone)
+      cx.strokeStyle = '#ffffff';
+      cx.lineWidth = 1;
+      cx.beginPath();
+      cx.moveTo(0, -e.h*.5); cx.lineTo(0, e.h*.55);
+      cx.stroke();
+      // Cockpit (red dot like player)
+      cx.fillStyle = '#ff4444';
+      cx.beginPath(); cx.arc(0, e.h*.18, 2, 0, Math.PI*2); cx.fill();
+      // Data-stream flicker chips
+      cx.fillStyle = `rgba(170,255,255,${0.4 + Math.sin(e.moveTimer*0.3) * 0.3})`;
+      for (let i = 0; i < 4; i++) {
+        cx.fillRect(-e.w*.4 + i*5, -e.h*.4 + ((e.moveTimer + i*4) % 6), 2, 1);
+      }
+      // CLONE label
+      cx.fillStyle = '#ffffff';
+      cx.font = 'bold 6px sans-serif';
+      cx.textAlign = 'center';
+      cx.fillText('CLONE', 0, e.h*.4);
+      cx.textAlign = 'left';
       break;
     }
     case 'elite': {
@@ -5065,11 +5436,11 @@ const WAVE_POOLS = [
   ['zigzag','bomber','splitter','gunship','minelayer','stealth'],
   ['bomber','gunship','minelayer','stealth','sniper','mortar'],
   ['gunship','minelayer','sniper','mortar','tank','hive','swarmlet','asteroid'],
-  ['gunship','tank','hive','swarmlet','sniper','elite','turret','asteroid','ramship'],
-  ['tank','elite','turret','sniper','mortar','carrier','splitter','ramship'],
-  ['elite','tank','carrier','turret','sniper','minelayer','hive','jet','asteroid','ramship'],
-  ['elite','tank','carrier','turret','sniper','mortar','minelayer','hive','stealth','asteroid','ramship'],
-  ['elite','tank','carrier','turret','sniper','mortar','minelayer','hive','stealth','splitter','dart','jet','asteroid','ramship'],
+  ['gunship','tank','hive','swarmlet','sniper','elite','turret','asteroid','ramship','eliteHomer'],
+  ['tank','elite','turret','sniper','mortar','carrier','splitter','ramship','eliteHomer','eliteClone'],
+  ['elite','tank','carrier','turret','sniper','minelayer','hive','jet','asteroid','ramship','eliteTank','eliteHomer','eliteClone'],
+  ['elite','tank','carrier','turret','sniper','mortar','minelayer','hive','stealth','asteroid','ramship','eliteTank','eliteHomer','eliteClone'],
+  ['elite','tank','carrier','turret','sniper','mortar','minelayer','hive','stealth','splitter','dart','jet','asteroid','ramship','eliteTank','eliteHomer','eliteClone'],
 ];
 
 function poolForLevel(lv) {
@@ -5240,17 +5611,58 @@ const titleIconBtns=[
 ];
 let showcaseIdx = 0;
 
-// Only renders if the medal is earned — unearned slots stay empty.
+// Realistic medal disc with red ribbon + engraved tier letter
 function drawMedalIcon(x, y, earned, key) {
   if (!earned) return;
-  const colors = { novice:'#cd7f32', veteran:'#c0c0c0', hell:'#ffd700' };
-  const g = cx.createRadialGradient(x-3, y-3, 1, x, y, 13);
-  g.addColorStop(0,'#fff'); g.addColorStop(0.4, colors[key]); g.addColorStop(1,'#000');
-  cx.fillStyle = g;
+  const palette = {
+    novice:  { rim:'#8b5a2b', face:'#cd7f32', hi:'#ffd0a8', shadow:'#5a3a1a', label:'III' },
+    veteran: { rim:'#888899', face:'#c0c0c0', hi:'#ffffff', shadow:'#444455', label:'II'  },
+    hell:    { rim:'#aa8800', face:'#ffd700', hi:'#ffffaa', shadow:'#664400', label:'I'   },
+  }[key];
+  if (!palette) return;
+  // Ribbon (V-shape) above the disc
+  cx.fillStyle = '#aa2233';
+  cx.beginPath();
+  cx.moveTo(x - 9, y - 18);
+  cx.lineTo(x - 5, y - 8);
+  cx.lineTo(x - 1, y - 14);
+  cx.lineTo(x + 5, y - 8);
+  cx.lineTo(x + 9, y - 18);
+  cx.lineTo(x + 4, y - 22);
+  cx.lineTo(x - 4, y - 22);
+  cx.closePath();
+  cx.fill();
+  cx.strokeStyle = '#660011';
+  cx.lineWidth = 0.6;
+  cx.stroke();
+  // Outer rim
+  cx.fillStyle = palette.shadow;
+  cx.beginPath(); cx.arc(x, y, 12, 0, Math.PI*2); cx.fill();
+  cx.fillStyle = palette.rim;
   cx.beginPath(); cx.arc(x, y, 11, 0, Math.PI*2); cx.fill();
-  cx.strokeStyle='#ffeeaa'; cx.lineWidth=1; cx.stroke();
-  cx.fillStyle='#000'; cx.font="bold 10px 'Courier New', monospace"; cx.textAlign='center';
-  cx.fillText('★', x, y+4);
+  // Face with directional highlight
+  const g = cx.createRadialGradient(x - 4, y - 4, 1, x, y, 10);
+  g.addColorStop(0, palette.hi);
+  g.addColorStop(0.45, palette.face);
+  g.addColorStop(1, palette.shadow);
+  cx.fillStyle = g;
+  cx.beginPath(); cx.arc(x, y, 9, 0, Math.PI*2); cx.fill();
+  // Inner ring engraving
+  cx.strokeStyle = palette.shadow;
+  cx.lineWidth = 0.8;
+  cx.beginPath(); cx.arc(x, y, 6.5, 0, Math.PI*2); cx.stroke();
+  // Roman numeral
+  cx.fillStyle = palette.shadow;
+  cx.font = "bold 8px 'Courier New', monospace";
+  cx.textAlign = 'center';
+  cx.textBaseline = 'middle';
+  cx.fillText(palette.label, x, y + 1);
+  cx.textBaseline = 'alphabetic';
+  // Specular shine
+  cx.fillStyle = 'rgba(255,255,255,0.35)';
+  cx.beginPath();
+  cx.ellipse(x - 3, y - 4, 3, 2, -0.4, 0, Math.PI*2);
+  cx.fill();
 }
 function endlessButtonText() {
   if (save.endlessState) return '继续无尽 · LV '+save.endlessState.level;
@@ -5299,24 +5711,33 @@ function drawTitle() {
     const sx = (i*73 + frame*0.3) % W, sy = (i*97 + frame*(0.18 + (i%3)*0.08)) % H;
     fillPx(i%5===0 ? '#aaccff' : '#ffffff', sx|0, sy|0, i%3===0?2:1, i%3===0?2:1);
   }
-  // Animated lightning bolts crackling at random spots every 60 frames
-  if (Math.floor(frame/60) % 3 === 0) {
-    cx.strokeStyle = `rgba(160,220,255,${0.5 + Math.sin(frame*0.5)*0.4})`;
-    cx.lineWidth = 1.5;
-    cx.beginPath();
-    const lx = ((frame*7) % (W-40)) + 20;
-    let ly = 30;
-    cx.moveTo(lx, ly);
-    while (ly < H - 100) {
-      const dx = rnd(-12, 12), dy = rnd(8, 18);
-      ly += dy;
-      cx.lineTo(lx + dx, ly);
-    }
-    cx.stroke();
-    cx.strokeStyle = `rgba(255,255,255,${0.6 + Math.sin(frame*0.5)*0.3})`;
-    cx.lineWidth = 0.7;
-    cx.stroke();
+  // Modern neon flow streaks (replaces zig-zag lightning)
+  // Drifting horizontal light bars with cyan/magenta glow + vertical scan-line
+  for (let i = 0; i < 5; i++) {
+    const ay = ((i * 167 + frame * 1.4) % (H + 80)) - 40;
+    const ag = cx.createLinearGradient(0, ay, W, ay);
+    ag.addColorStop(0,    'rgba(0,255,255,0)');
+    ag.addColorStop(0.5,  'rgba(0,210,255,0.10)');
+    ag.addColorStop(1,    'rgba(255,80,200,0)');
+    cx.fillStyle = ag;
+    cx.fillRect(0, ay, W, 2);
   }
+  // Floating neon particles
+  for (let i = 0; i < 18; i++) {
+    const px = (i * 73 + frame * (0.4 + (i%3)*0.15)) % W;
+    const py = (i * 211 + frame * 0.6) % H;
+    const a = 0.35 + Math.sin(frame*0.05 + i) * 0.25;
+    cx.fillStyle = i%2 === 0 ? `rgba(120,220,255,${a})` : `rgba(255,140,220,${a})`;
+    cx.beginPath(); cx.arc(px, py, 1.6, 0, Math.PI*2); cx.fill();
+  }
+  // Slow vertical scan-line sweeping down
+  const scanY = (frame * 0.9) % (H + 80) - 40;
+  const sg = cx.createLinearGradient(0, scanY - 14, 0, scanY + 14);
+  sg.addColorStop(0,   'rgba(0,255,255,0)');
+  sg.addColorStop(0.5, 'rgba(0,255,255,0.10)');
+  sg.addColorStop(1,   'rgba(0,255,255,0)');
+  cx.fillStyle = sg;
+  cx.fillRect(0, scanY - 14, W, 28);
   // Title text (compact)
   cx.textAlign='center';
   cx.fillStyle='#886600';cx.font="bold 50px 'Courier New', monospace";cx.fillText('RAIDEN',W/2+3,93);
@@ -5403,25 +5824,22 @@ function drawTitle() {
     cx.moveTo(btn.x+3, btn.y+3); cx.lineTo(btn.x+btn.w-3, btn.y+3);
     cx.moveTo(btn.x+3, btn.y+3); cx.lineTo(btn.x+3, btn.y+btn.h-3);
     cx.stroke();
-    // Tab label + inline glyph (medal / trash) inside the box
-    let glyph = '';
-    let glyphColor = null;
-    if (btn.act === 'solo' && topKey) {
-      glyph = '★';
-      glyphColor = topKey==='hell' ? '#ffd700' : topKey==='veteran' ? '#c0c0c0' : '#cd7f32';
-    } else if (isEndless && save.endlessState) {
-      glyph = '🗑';
-    }
+    // Tab label
     const label = btn.text;
     cx.fillStyle = isActive ? '#aaffff' : '#aaccee';
     cx.font = "bold 20px 'Courier New', monospace";
     cx.textAlign = 'center';
     cx.fillText(label, btn.x + btn.w/2, btn.y + btn.h/2 + 7);
-    if (glyph) {
-      cx.fillStyle = glyphColor || '#ff6666';
+    // Medal disc inside 关卡 tab corner (real medal art)
+    if (btn.act === 'solo' && topKey) {
+      drawMedalIcon(btn.x + btn.w - 22, btn.y + btn.h - 18, true, topKey);
+    }
+    // Trash glyph inside 无尽 tab corner
+    if (isEndless && save.endlessState) {
+      cx.fillStyle = '#ff6666';
       cx.font = "bold 18px sans-serif";
       cx.textBaseline = 'middle';
-      cx.fillText(glyph, btn.x + btn.w - 22, btn.y + btn.h - 15);
+      cx.fillText('🗑', btn.x + btn.w - 22, btn.y + btn.h - 18);
       cx.textBaseline = 'alphabetic';
     }
     // Endless level subtext (Lv N)
@@ -5990,21 +6408,18 @@ function drawShop() {
   cx.fillStyle='#ffcc00';cx.font="14px 'Courier New', monospace";cx.textAlign='center';
   cx.fillText('🪙 '+save.coins+'   💎 '+save.diamonds,W/2,54);cx.textAlign='left';
 
-  drawButton(20, 68,140,34,'飞机皮肤',shopTab===0);
-  drawButton(170,68,140,34,'背景皮肤',shopTab===1);
-  drawButton(320,68,140,34,'符  文', shopTab===2);
+  drawButton(20, 68,106,34,'飞机',shopTab===0);
+  drawButton(132,68,106,34,'背景',shopTab===1);
+  drawButton(244,68,106,34,'符文',shopTab===2);
+  drawButton(356,68,104,34,'残影',shopTab===3);
 
   if(shopTab===0) drawShopPlanes();
   else if(shopTab===1) drawShopBGs();
-  else drawShopRunes();
+  else if(shopTab===2) drawShopRunes();
+  else drawShopTrails();
 
   drawButton(20,655,110,36,'← 返回',false);
   drawButton(350,655,110,36,'装备选中',shopSelectedPlane>=0||shopSelectedBG>=0);
-  // Cheat button
-  cx.fillStyle='#333'; cx.fillRect(160,655,170,36);
-  cx.strokeStyle='#664400'; cx.lineWidth=1; cx.strokeRect(160,655,170,36);
-  cx.fillStyle='#aa6600'; cx.font="12px 'Courier New'"; cx.textAlign='center';
-  cx.fillText('🪙+9999  💎+99',245,677); cx.textAlign='left';
 }
 
 function drawShopPlanes() {
@@ -6049,6 +6464,88 @@ function drawShopPlanes() {
     }
     if(isHL){cx.fillStyle='#88ccff';cx.font="9px 'Courier New'";cx.fillText('▶选中◀',(bx+cw/2)|0,(by+102)|0);}
     cx.textAlign='left';
+  }
+}
+
+let shopTrailScroll = 0;
+function drawShopTrails() {
+  const cols = 4, cw = 110, ch = 88, sx = 10, sy = 115;
+  cx.save();
+  cx.beginPath(); cx.rect(0, sy-2, W, 540); cx.clip();
+  for (let i = 0; i < TRAIL_DEFS.length; i++) {
+    const col = i % cols, row = Math.floor(i / cols);
+    const bx = sx + col * cw, by = sy + row * ch - shopTrailScroll;
+    if (by + ch < sy - 5 || by > sy + 540) continue;
+    const def = TRAIL_DEFS[i];
+    const owned = save.trails[i];
+    const isSel = save.selTrail === i;
+    // Card backdrop
+    cx.fillStyle = isSel ? '#06283a' : '#081828';
+    cx.fillRect(bx + 2, by + 2, cw - 6, ch - 8);
+    cx.strokeStyle = isSel ? '#00ffff' : (owned ? '#446688' : '#223344');
+    cx.lineWidth = isSel ? 2 : 1;
+    cx.strokeRect(bx + 1, by + 1, cw - 4, ch - 9);
+    // Trail preview (animated dots fading right→left)
+    const cxC = bx + cw / 2, cyC = by + 26;
+    for (let p = 0; p < 8; p++) {
+      const tt = ((frame + p * 4) % 32) / 32;
+      const a = 1 - tt;
+      cx.globalAlpha = a * 0.85;
+      cx.fillStyle = def[4];
+      const px = cxC - 28 + tt * 56;
+      cx.beginPath();
+      cx.arc(px, cyC, 4 - tt * 2.5, 0, Math.PI * 2);
+      cx.fill();
+    }
+    cx.globalAlpha = 1;
+    // Plane silhouette to show context
+    cx.fillStyle = '#88ccee';
+    cx.beginPath();
+    cx.moveTo(cxC + 18, cyC - 3);
+    cx.lineTo(cxC + 30, cyC + 5);
+    cx.lineTo(cxC + 18, cyC + 5);
+    cx.closePath(); cx.fill();
+    // Name + price/state
+    cx.fillStyle = owned ? '#aaddff' : '#7799bb';
+    cx.font = "bold 10px 'Courier New', monospace";
+    cx.textAlign = 'center';
+    cx.fillText(def[0], cxC, by + 56);
+    if (owned) {
+      cx.fillStyle = '#00ff88';
+      cx.font = "9px 'Courier New', monospace";
+      cx.fillText(isSel ? '[已装备]' : '✓ 已拥有', cxC, by + 70);
+    } else {
+      cx.fillStyle = def[2] === 'd' ? '#44aaff' : '#ffcc00';
+      cx.font = "9px 'Courier New', monospace";
+      cx.fillText((def[2] === 'd' ? '💎' : '🪙') + def[1], cxC, by + 70);
+    }
+    cx.textAlign = 'left';
+  }
+  cx.restore();
+}
+function clickShopTrails(mx, my) {
+  const cols = 4, cw = 110, ch = 88, sx = 10, sy = 115;
+  for (let i = 0; i < TRAIL_DEFS.length; i++) {
+    const col = i % cols, row = Math.floor(i / cols);
+    const bx = sx + col * cw, by = sy + row * ch - shopTrailScroll;
+    if (mx >= bx && mx <= bx + cw && my >= by && my <= by + ch) {
+      const def = TRAIL_DEFS[i];
+      if (!save.trails[i]) {
+        if (def[2] === 'free') { save.trails[i] = true; SFX.buySuccess(); }
+        else if (def[2] === 'g') {
+          if (save.coins >= def[1]) { save.coins -= def[1]; save.trails[i] = true; SFX.buySuccess(); }
+          else SFX.buyFail();
+        } else if (def[2] === 'd') {
+          if (save.diamonds >= def[1]) { save.diamonds -= def[1]; save.trails[i] = true; SFX.buySuccess(); }
+          else SFX.buyFail();
+        }
+      } else {
+        save.selTrail = i;
+        SFX.buySuccess();
+      }
+      writeSave();
+      return;
+    }
   }
 }
 
@@ -6242,14 +6739,15 @@ function drawShopBGs() {
 function clickShop(mx,my) {
   if(mx>=20&&mx<=130&&my>=655&&my<=691){screen='title';shopSelectedPlane=-1;shopSelectedBG=-1;return;}
   if(mx>=350&&mx<=460&&my>=655&&my<=691){equipSelected();return;}
-  if(mx>=160&&mx<=330&&my>=655&&my<=691){save.coins+=9999;save.diamonds+=99;writeSave();SFX.buySuccess();return;}
   if(my>=68&&my<=102){
-    if(mx>=20&&mx<=160){shopTab=0;shopSelectedPlane=-1;}
-    else if(mx>=170&&mx<=310){shopTab=1;shopSelectedBG=-1;shopBGScroll=0;}
-    else if(mx>=320&&mx<=460){shopTab=2;}
+    if      (mx>=20  && mx<=126) { shopTab=0; shopSelectedPlane=-1; }
+    else if (mx>=132 && mx<=238) { shopTab=1; shopSelectedBG=-1; shopBGScroll=0; }
+    else if (mx>=244 && mx<=350) { shopTab=2; }
+    else if (mx>=356 && mx<=460) { shopTab=3; shopTrailScroll=0; }
     return;
   }
   if(shopTab===2){clickShopRunes(mx,my);return;}
+  if(shopTab===3){clickShopTrails(mx,my);return;}
   if(shopTab===0){
     const cols=4,cw=110,ch=110,sx=10,sy=115;
     for(let i=0;i<PLANE_SKINS.length;i++){
@@ -6471,7 +6969,7 @@ function drawDropdown(x, y, w, h, items, selectedIdx, open) {
   }
 }
 
-const SENS_MIN = 0.3, SENS_MAX = 2.0;
+const SENS_MIN = 0.3, SENS_MAX = 10.0;
 function drawSensSlider(x, y, w, label, key) {
   const v = (typeof save[key] === 'number') ? save[key] : 1;
   const t = (v - SENS_MIN) / (SENS_MAX - SENS_MIN);
@@ -6561,7 +7059,7 @@ function clickPause(mx,my) {
 
 // ─── TIER SELECT ─────────────────────────────────────────────────────────────
 const TIER_INFO = [
-  { key:'novice',  name:'新 手',  medalColor:'#cd7f32', desc:'入门难度', unlock:()=>true },
+  { key:'novice',  name:'休 闲',  medalColor:'#cd7f32', desc:'入门难度', unlock:()=>true },
   { key:'veteran', name:'老 手',  medalColor:'#c0c0c0', desc:'中级难度·伤害提升',  unlock:()=>save.medals && save.medals.novice },
   { key:'hell',    name:'地 狱',  medalColor:'#ffd700', desc:'噩梦难度·全面强化',  unlock:()=>save.medals && save.medals.veteran },
 ];
@@ -7032,6 +7530,76 @@ document.addEventListener('keydown',e=>{
 });
 document.addEventListener('keyup',e=>{keys[e.key]=false;});
 
+// Slider drag tracking — when mouse is held over a slider, dragging updates value continuously
+let _draggingSlider = null;   // {x, y, w, key, type:'sens'|'res'}
+function pickSliderUnder(mx, my) {
+  if (screen !== 'titleSettings') return null;
+  // Resolution slider at (70, 142, 340)
+  if (my >= 142 - 6 && my <= 142 + 22 && mx >= 70 - 12 && mx <= 70 + 340 + 12) {
+    return { x:70, y:142, w:340, type:'res' };
+  }
+  if (my >= 240 - 6 && my <= 240 + 22 && mx >= 70 - 12 && mx <= 70 + 340 + 12) {
+    return { x:70, y:240, w:340, type:'sens', key:'moveSensX' };
+  }
+  if (my >= 270 - 6 && my <= 270 + 22 && mx >= 70 - 12 && mx <= 70 + 340 + 12) {
+    return { x:70, y:270, w:340, type:'sens', key:'moveSensY' };
+  }
+  return null;
+}
+function applyDragSlider(mx) {
+  if (!_draggingSlider) return;
+  const s = _draggingSlider;
+  let t = (mx - s.x) / s.w;
+  t = Math.max(0, Math.min(1, t));
+  if (s.type === 'res') {
+    save.pixelScale = +(PIXEL_SCALE_MIN + (PIXEL_SCALE_MAX - PIXEL_SCALE_MIN) * t).toFixed(2);
+    writeSave();
+    applyResolution();
+  } else if (s.type === 'sens') {
+    save[s.key] = +(SENS_MIN + (SENS_MAX - SENS_MIN) * t).toFixed(2);
+    writeSave();
+  }
+}
+canvas.addEventListener('mousedown', e => {
+  const rect = canvas.getBoundingClientRect();
+  const mx = (e.clientX - rect.left) * (W / rect.width);
+  const my = (e.clientY - rect.top)  * (H / rect.height);
+  const hit = pickSliderUnder(mx, my);
+  if (hit) {
+    _draggingSlider = hit;
+    applyDragSlider(mx);
+  }
+});
+canvas.addEventListener('mousemove', e => {
+  if (!_draggingSlider) return;
+  const rect = canvas.getBoundingClientRect();
+  const mx = (e.clientX - rect.left) * (W / rect.width);
+  applyDragSlider(mx);
+});
+window.addEventListener('mouseup', () => { _draggingSlider = null; });
+canvas.addEventListener('touchstart', e => {
+  if (screen !== 'titleSettings') return;
+  const t0 = e.changedTouches[0];
+  const rect = canvas.getBoundingClientRect();
+  const mx = (t0.clientX - rect.left) * (W / rect.width);
+  const my = (t0.clientY - rect.top)  * (H / rect.height);
+  const hit = pickSliderUnder(mx, my);
+  if (hit) {
+    _draggingSlider = hit;
+    applyDragSlider(mx);
+    e.preventDefault();
+  }
+}, { passive:false });
+canvas.addEventListener('touchmove', e => {
+  if (!_draggingSlider) return;
+  const t0 = e.changedTouches[0];
+  const rect = canvas.getBoundingClientRect();
+  const mx = (t0.clientX - rect.left) * (W / rect.width);
+  applyDragSlider(mx);
+  e.preventDefault();
+}, { passive:false });
+window.addEventListener('touchend', () => { _draggingSlider = null; });
+
 canvas.addEventListener('click',e=>{
   const rect=canvas.getBoundingClientRect();
   const mx=(e.clientX-rect.left)*(W/rect.width);
@@ -7055,6 +7623,12 @@ canvas.addEventListener('wheel', e=>{
     const totalH = Math.ceil(BG_SKINS.length/2) * 72;
     const maxScroll = Math.max(0, totalH - 540);
     shopBGScroll = clamp(shopBGScroll + (e.deltaY>0?40:-40), 0, maxScroll);
+  }
+  if (screen === 'shop' && shopTab === 3) {
+    e.preventDefault();
+    const totalH = Math.ceil(TRAIL_DEFS.length/4) * 88;
+    const maxScroll = Math.max(0, totalH - 540);
+    shopTrailScroll = clamp(shopTrailScroll + (e.deltaY>0?40:-40), 0, maxScroll);
   }
   // BGM dropdown scroll (in pause or title settings)
   if ((screen==='pause' || screen==='titleSettings') && bgmDropdownOpen) {
@@ -7253,33 +7827,37 @@ function loop() {
 // ─── DEV CONSOLE PANEL ───────────────────────────────────────────────────────
 const CONSOLE_TABS = [
   { id:'player', label:'玩家', fields: [
-    {k:'playerSpeed',    name:'移动速度',     min:1,  max:12, step:0.5, desc:'每帧像素'},
-    {k:'playerLives',    name:'初始生命',     min:1,  max:9,  step:1,   desc:''},
-    {k:'playerBombs',    name:'初始导弹数',   min:0,  max:9,  step:1,   desc:''},
-    {k:'reviveBombs',    name:'复活导弹数',   min:0,  max:9,  step:1,   desc:''},
-    {k:'weaponDmgMul',   name:'伤害倍率',     min:0.1,max:10, step:0.1, desc:'×'},
-    {k:'fireRateMul',    name:'射速倍率',     min:0.1,max:5,  step:0.1, desc:'×间隔'},
-    {k:'bulletSpeedMul', name:'子弹速度倍率', min:0.5,max:5,  step:0.1, desc:'×'},
-    {k:'starMaxDuration',name:'LV MAX 秒数',  min:1,  max:30, step:1,   desc:'秒'},
+    {k:'playerSpeed',    name:'移动速度',     min:1,  max:20, step:0.5, desc:'每帧像素'},
+    {k:'playerLives',    name:'初始生命',     min:1,  max:99, step:1,   desc:''},
+    {k:'playerBombs',    name:'初始导弹数',   min:0,  max:99, step:1,   desc:''},
+    {k:'reviveBombs',    name:'复活导弹数',   min:0,  max:99, step:1,   desc:''},
+    {k:'weaponDmgMul',   name:'伤害倍率',     min:0.1,max:50, step:0.1, desc:'×'},
+    {k:'fireRateMul',    name:'射速倍率',     min:0.05,max:5, step:0.05, desc:'×间隔(越小越快)'},
+    {k:'bulletSpeedMul', name:'子弹速度倍率', min:0.5,max:10, step:0.1, desc:'×'},
+    {k:'starMaxDuration',name:'LV MAX 秒数',  min:1,  max:120,step:1,   desc:'秒'},
   ]},
   { id:'enemy', label:'敌人', fields: [
-    {k:'enemyHpMul',        name:'敌人血量倍率',     min:0.1,max:10,step:0.1,desc:'×'},
+    {k:'enemyHpMul',        name:'敌人血量倍率',     min:0.1,max:50,step:0.1,desc:'×'},
     {k:'enemySpeedMul',     name:'敌人速度倍率',     min:0.1,max:5, step:0.1,desc:'×'},
     {k:'enemyBulletSpdMul', name:'敌弹速度倍率',     min:0.1,max:5, step:0.1,desc:'×'},
-    {k:'enemyFireRateMul',  name:'敌弹间隔倍率',     min:0.1,max:5, step:0.1,desc:'×间隔'},
-    {k:'spawnRateMul',      name:'刷怪间隔倍率',     min:0.1,max:5, step:0.1,desc:'×间隔'},
-    {k:'enemyCountMul',     name:'每波数量倍率',     min:0.1,max:5, step:0.1,desc:'×'},
+    {k:'enemyFireRateMul',  name:'敌弹间隔倍率',     min:0.1,max:10,step:0.1,desc:'×间隔'},
+    {k:'spawnRateMul',      name:'刷怪间隔倍率',     min:0.05,max:10,step:0.05,desc:'×间隔'},
+    {k:'enemyCountMul',     name:'每波数量倍率',     min:0.1,max:10,step:0.1,desc:'×'},
   ]},
   { id:'boss', label:'Boss', fields: [
-    {k:'bossHpMul',       name:'Boss 血量倍率',  min:0.1,max:10,step:0.1,desc:'×'},
-    {k:'bossFireRateMul', name:'Boss 攻速倍率',  min:0.1,max:5, step:0.1,desc:'×间隔'},
+    {k:'bossHpMul',       name:'Boss 血量倍率',  min:0.1,max:50,step:0.1,desc:'×'},
+    {k:'bossFireRateMul', name:'Boss 攻速倍率',  min:0.1,max:10,step:0.1,desc:'×间隔'},
     {k:'bossBarMul',      name:'Boss 血条数倍率',min:0.1,max:5, step:0.1,desc:'×段数'},
   ]},
   { id:'progress', label:'进度/经济', fields: [
-    {k:'dropRateMul', name:'道具掉落倍率',   min:0,  max:5,  step:0.1, desc:'×'},
-    {k:'coinMul',     name:'金币倍率',       min:0,  max:20, step:0.1, desc:'×'},
-    {k:'diamondMul',  name:'钻石倍率',       min:0,  max:10, step:0.1, desc:'×'},
-    {k:'bossKillMul', name:'Boss 触发阈值倍率', min:0.1, max:5, step:0.1, desc:'×需击杀数'},
+    {k:'dropRateMul', name:'道具掉落倍率',   min:0,  max:10,  step:0.1, desc:'×'},
+    {k:'coinMul',     name:'金币倍率',       min:0,  max:100, step:0.1, desc:'×'},
+    {k:'diamondMul',  name:'钻石倍率',       min:0,  max:100, step:0.1, desc:'×'},
+    {k:'bossKillMul', name:'Boss 触发阈值倍率', min:0.05, max:5, step:0.05, desc:'×需击杀数'},
+  ]},
+  { id:'wallet', label:'钱包', fields: [
+    {k:'__coins',    name:'当前金币',  min:0, max:9999999, step:1, desc:'直接修改账户余额', live:true},
+    {k:'__diamonds', name:'当前钻石',  min:0, max:9999999, step:1, desc:'直接修改账户余额', live:true},
   ]},
 ];
 let consoleActiveTab = 'player';
@@ -7311,13 +7889,20 @@ function renderConsole() {
     const inp = document.createElement('input');
     inp.type = 'number';
     inp.min = f.min; inp.max = f.max; inp.step = f.step;
-    inp.value = C[f.k];
+    // Live wallet fields read directly from save (not save.console)
+    if (f.k === '__coins')          inp.value = save.coins;
+    else if (f.k === '__diamonds')  inp.value = save.diamonds;
+    else                            inp.value = C[f.k];
     inp.addEventListener('change', ()=>{
       let v = parseFloat(inp.value);
-      if (isNaN(v)) v = defaultConsole()[f.k];
+      if (isNaN(v)) v = (f.k === '__coins') ? save.coins
+                     : (f.k === '__diamonds') ? save.diamonds
+                     : defaultConsole()[f.k];
       v = Math.max(f.min, Math.min(f.max, v));
-      C[f.k] = v;
-      inp.value = v;
+      if (f.k === '__coins')         save.coins = v|0;
+      else if (f.k === '__diamonds') save.diamonds = v|0;
+      else                           C[f.k] = v;
+      inp.value = (f.k === '__coins' || f.k === '__diamonds') ? (v|0) : v;
       writeSave();
     });
     row.appendChild(lab); row.appendChild(inp);
@@ -7341,7 +7926,7 @@ document.getElementById('console-reset').addEventListener('click', ()=>{
 });
 
 // ─── PIXEL RESOLUTION ────────────────────────────────────────────────────────
-const PIXEL_SCALE_MIN = 0.5, PIXEL_SCALE_MAX = 3.0;
+const PIXEL_SCALE_MIN = 0.5, PIXEL_SCALE_MAX = 10.0;
 function applyResolution() {
   const s = clamp(save.pixelScale || 1, PIXEL_SCALE_MIN, PIXEL_SCALE_MAX);
   canvas.width = Math.round(W * s);
