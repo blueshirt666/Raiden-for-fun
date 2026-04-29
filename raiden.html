@@ -315,9 +315,9 @@ function loadSave() {
         };
       }
       if (typeof d.tier === 'string' && TIER_MUL[d.tier]) save.tier = d.tier;
-      if (typeof d.moveSensX === 'number') save.moveSensX = d.moveSensX;
-      if (typeof d.moveSensY === 'number') save.moveSensY = d.moveSensY;
-      if (typeof d.pixelScale === 'number') save.pixelScale = d.pixelScale;
+      if (typeof d.moveSensX === 'number') save.moveSensX = clamp(d.moveSensX, 0.3, 4.0);
+      if (typeof d.moveSensY === 'number') save.moveSensY = clamp(d.moveSensY, 0.3, 4.0);
+      if (typeof d.pixelScale === 'number') save.pixelScale = clamp(d.pixelScale, 0.5, 3.0);
       if (typeof d.bgmVol === 'number') save.bgmVol = clamp(d.bgmVol, 0, 1);
       if (typeof d.sfxVol === 'number') save.sfxVol = clamp(d.sfxVol, 0, 1);
       if (d.endlessState && typeof d.endlessState === 'object') save.endlessState = d.endlessState;
@@ -4228,19 +4228,21 @@ function updateBoss() {
       if (boss.y <= 80) { boss.y = 80; ds.state='idle'; ds.timer=0; }
     }
   }
-  // Phase 2 (rage <40%): summon mobs every ~4s
+  // Phase 2 (rage <40%): summon reinforcements — first wave at 1s after rage,
+  // then every ~3s while rage active.
   if (boss.phase === 2) {
-    if (!boss.summonTimer) boss.summonTimer = 0;
-    boss.summonTimer++;
-    if (boss.summonTimer >= 240 && enemies.length < MAX_ENEMIES - 4) {
-      boss.summonTimer = 0;
+    boss.summonTimer = (boss.summonTimer | 0) + 1;
+    const due = boss.summonTimer === 60 ||
+                (boss.summonTimer > 60 && (boss.summonTimer - 60) % 180 === 0);
+    if (due && enemies.length < MAX_ENEMIES - 6) {
       const types = ['scout','dart','swarmlet','speeder','zigzag'];
-      const t = types[rndInt(0, types.length-1)];
-      for (let i=-1;i<=1;i++) {
-        if (enemies.length < MAX_ENEMIES) enemies.push(mkEnemy(t, boss.x + i*40, boss.y + 50));
+      const tt = types[rndInt(0, types.length-1)];
+      for (let i = -1; i <= 1; i++) {
+        if (enemies.length < MAX_ENEMIES) {
+          enemies.push(mkEnemy(tt, clamp(boss.x + i * 40, 30, W - 30), boss.y + 50));
+        }
       }
-      addFT('召 唤 援 军', boss.x, boss.y-30, '#ff6688');
-      triggerShake(6, 14);
+      addFT('召 唤 援 军', boss.x, boss.y - 30, '#ff6688');
     }
   }
   // Clamp
@@ -4544,10 +4546,10 @@ function drawBoss() {
   b.lastX = b.x; b.lastY = b.y;
   b.bank  = clamp((b.bank ||0) * 0.78 + dxB * 0.14, -0.7, 0.7);
   b.pitch = clamp((b.pitch||0) * 0.78 + dyB * 0.14, -0.5, 0.5);
-  // Boss banner (spawn 2s / rage 3s). Rage stays SOLID (no flicker); spawn still pulses.
+  // Boss banner (spawn 2s / rage 3s). Both stay SOLID (no flicker per spec).
   if (b.bannerTime > 0) {
     const isRage = b.bannerLabel && b.bannerLabel.indexOf('狂') >= 0;
-    const flash = isRage ? 1.0 : (Math.sin(b.bannerTime * 0.5) * 0.35 + 0.55);
+    const flash = 1.0;
     const baseCol = isRage ? '#ff0033' : '#ffaa00';
     cx.save();
     // Diagonal stripe pattern background
@@ -5892,25 +5894,6 @@ function drawHUD() {
   cx.fillStyle='#ffcc00';cx.font="11px 'Courier New'";cx.textAlign='right';
   cx.fillText('💎'+sessionDiamonds,W-8,13);cx.fillText('🪙'+sessionCoins,W-8,29);
   cx.textAlign='left';
-  // Equipped rune badges (top-right, under coin/diamond row)
-  const eq = save.equippedRunes || [];
-  for (let i = 0; i < eq.length; i++) {
-    const def = RUNE_DEFS.find(r => r.key === eq[i]);
-    if (!def) continue;
-    const lv = save.runes[def.key] || 0;
-    const bx = W - 8 - 56 + i * 56;
-    const by = 38;
-    cx.fillStyle = 'rgba(0,0,20,0.65)';
-    cx.fillRect(bx, by, 52, 18);
-    cx.strokeStyle = def.col;
-    cx.lineWidth = 1;
-    cx.strokeRect(bx + 0.5, by + 0.5, 51, 17);
-    cx.fillStyle = def.col;
-    cx.font = "bold 10px 'Courier New', monospace";
-    cx.textAlign = 'left';
-    cx.fillText(def.icon + ' ' + def.name.slice(0,2) + ' Lv' + lv, bx + 3, by + 13);
-  }
-  cx.textAlign='left';
 
   for(const p of players) {
     const isR=p.pNum===1;
@@ -5942,6 +5925,24 @@ function drawHUD() {
       } else {
         cx.fillStyle = '#334455';
         cx.fillText('僚机'+(i+1)+' —', px, ly);
+      }
+    }
+    // Equipped runes — 2 lines under the wingman block (player 1 only)
+    if (p.pNum === 1) {
+      const eq = save.equippedRunes || [];
+      cx.font="9px 'Courier New', monospace";
+      for (let i = 0; i < 2; i++) {
+        const ly = yb + 62 + i * 11;
+        const key = eq[i];
+        const def = key ? RUNE_DEFS.find(r => r.key === key) : null;
+        if (def) {
+          const lv = save.runes[def.key] || 0;
+          cx.fillStyle = def.col;
+          cx.fillText(def.icon + ' ' + def.name.slice(0, 2) + ' Lv' + lv, px, ly);
+        } else {
+          cx.fillStyle = '#334455';
+          cx.fillText('符文' + (i + 1) + ' —', px, ly);
+        }
       }
     }
     cx.textAlign='left';
@@ -6342,25 +6343,24 @@ function clickTitle(mx,my) {
       save.selTrail = next; writeSave(); SFX.buySuccess(); return;
     }
   }
-  // Quick rune slots (cycle through owned & leveled runes)
+  // Quick rune slots — always cycles to a real rune (never produces all-empty).
+  // To unequip, use the shop's runes tab.
   for (let s = 0; s < 2; s++) {
     const sx = W/2 + 24 + s * 60, sy = 416;
     if (mx >= sx && mx <= sx + 56 && my >= sy && my <= sy + 38) {
       const ownedRunes = RUNE_DEFS.filter(r => (save.runes[r.key] || 0) > 0).map(r => r.key);
       if (!ownedRunes.length) { SFX.buyFail(); return; }
-      const eq = save.equippedRunes || (save.equippedRunes = []);
-      const cur = eq[s];
+      // Snapshot eq into 2 fixed slots so the slot index stays stable
+      const eq = [
+        (save.equippedRunes && save.equippedRunes[0]) || null,
+        (save.equippedRunes && save.equippedRunes[1]) || null,
+      ];
       const otherSlot = eq[1 - s];
-      // Build cycle list: null + each owned rune not equipped in the other slot
-      const candidates = [null];
-      for (const k of ownedRunes) {
-        if (k !== otherSlot) candidates.push(k);
-      }
-      const ci = candidates.indexOf(cur);
-      const nextC = candidates[(ci + 1) % candidates.length];
-      if (nextC === null) eq.splice(s, 1);
-      else eq[s] = nextC;
-      // Compact eq array (no holes)
+      const candidates = ownedRunes.filter(k => k !== otherSlot);
+      if (!candidates.length) { SFX.buyFail(); return; }
+      const cur = eq[s];
+      const ci = cur ? candidates.indexOf(cur) : -1;
+      eq[s] = candidates[(ci + 1) % candidates.length];
       save.equippedRunes = eq.filter(x => x);
       writeSave();
       SFX.buySuccess();
@@ -7472,11 +7472,10 @@ function drawPause() {
   cx.textAlign='center';
   cx.fillText('音 乐 设 置', W/2, 460);
 
-  // BGM toggle (left half)
-  drawButton(60, 478, 170, 36, bgmEnabled?'🎵 音乐: 开':'🎵 音乐: 关', bgmEnabled);
-
-  // Track dropdown (right half)
-  drawDropdown(250, 478, 170, 36, BGM_TRACK_NAMES, bgmTrack, bgmDropdownOpen);
+  // Volume sliders + track dropdown
+  drawVolumeSlider(70, 480, 180, '背景', 'bgmVol');
+  drawVolumeSlider(70, 510, 180, '音效', 'sfxVol');
+  drawDropdown(290, 488, 150, 36, BGM_TRACK_NAMES, bgmTrack, bgmDropdownOpen);
 
   cx.fillStyle='#666';
   cx.font="11px 'Courier New', monospace";
@@ -7602,9 +7601,9 @@ function clickPause(mx,my) {
       return;
     }
   }
-  // Dropdown open: handle item picks first (covers area below header)
+  // Dropdown open: handle item picks first
   if (bgmDropdownOpen) {
-    const lx=250, ly=478+36+2, lw=170, itemH=DROPDOWN_ITEM_H, visH=DROPDOWN_VISIBLE_H;
+    const lx=290, ly=488+36+2, lw=150, itemH=DROPDOWN_ITEM_H, visH=DROPDOWN_VISIBLE_H;
     if (mx>=lx && mx<=lx+lw && my>=ly && my<=ly+visH) {
       const localY = (my - ly) + bgmDropdownScroll;
       const idx = Math.floor(localY / itemH);
@@ -7617,21 +7616,18 @@ function clickPause(mx,my) {
       bgmDropdownOpen = false;
       return;
     }
-    // Click outside list (and outside header) closes
-    if (!(mx>=250 && mx<=420 && my>=478 && my<=514)) {
+    if (!(mx>=290 && mx<=440 && my>=488 && my<=524)) {
       bgmDropdownOpen = false;
     }
   }
   // Sensitivity sliders
   if (hitSensSlider(mx, my, 70, 392, 340, 'moveSensX')) return;
   if (hitSensSlider(mx, my, 70, 422, 340, 'moveSensY')) return;
-  // BGM toggle
-  if (mx>=60 && mx<=230 && my>=478 && my<=514) {
-    toggleBGM();
-    return;
-  }
-  // Track dropdown header → toggle open/close
-  if (mx>=250 && mx<=420 && my>=478 && my<=514) {
+  // Volume sliders
+  if (hitVolumeSlider(mx, my, 70, 480, 180, 'bgmVol', t => setBgmVol(t))) return;
+  if (hitVolumeSlider(mx, my, 70, 510, 180, 'sfxVol', t => setSfxVol(t))) return;
+  // Track dropdown header
+  if (mx>=290 && mx<=440 && my>=488 && my<=524) {
     bgmDropdownOpen = !bgmDropdownOpen;
     return;
   }
@@ -8113,22 +8109,32 @@ document.addEventListener('keyup',e=>{keys[e.key]=false;});
 // Slider drag tracking — when mouse is held over a slider, dragging updates value continuously
 let _draggingSlider = null;   // {x, y, w, key, type:'sens'|'res'}
 function pickSliderUnder(mx, my) {
-  if (screen !== 'titleSettings') return null;
-  // Resolution slider at (70, 142, 340)
-  if (my >= 142 - 6 && my <= 142 + 22 && mx >= 70 - 12 && mx <= 70 + 340 + 12) {
-    return { x:70, y:142, w:340, type:'res' };
+  // Title settings sliders
+  if (screen === 'titleSettings') {
+    if (my >= 142 - 6 && my <= 142 + 22 && mx >= 70 - 12 && mx <= 70 + 340 + 12) {
+      return { x:70, y:142, w:340, type:'res' };
+    }
+    if (my >= 240 - 6 && my <= 240 + 22 && mx >= 70 - 12 && mx <= 70 + 340 + 12) {
+      return { x:70, y:240, w:340, type:'sens', key:'moveSensX' };
+    }
+    if (my >= 270 - 6 && my <= 270 + 22 && mx >= 70 - 12 && mx <= 70 + 340 + 12) {
+      return { x:70, y:270, w:340, type:'sens', key:'moveSensY' };
+    }
+    if (my >= 338 - 6 && my <= 338 + 22 && mx >= 70 - 12 && mx <= 70 + 220 + 12) {
+      return { x:70, y:338, w:220, type:'vol', key:'bgmVol' };
+    }
+    if (my >= 366 - 6 && my <= 366 + 22 && mx >= 70 - 12 && mx <= 70 + 220 + 12) {
+      return { x:70, y:366, w:220, type:'vol', key:'sfxVol' };
+    }
   }
-  if (my >= 240 - 6 && my <= 240 + 22 && mx >= 70 - 12 && mx <= 70 + 340 + 12) {
-    return { x:70, y:240, w:340, type:'sens', key:'moveSensX' };
-  }
-  if (my >= 270 - 6 && my <= 270 + 22 && mx >= 70 - 12 && mx <= 70 + 340 + 12) {
-    return { x:70, y:270, w:340, type:'sens', key:'moveSensY' };
-  }
-  if (my >= 338 - 6 && my <= 338 + 22 && mx >= 70 - 12 && mx <= 70 + 220 + 12) {
-    return { x:70, y:338, w:220, type:'vol', key:'bgmVol' };
-  }
-  if (my >= 366 - 6 && my <= 366 + 22 && mx >= 70 - 12 && mx <= 70 + 220 + 12) {
-    return { x:70, y:366, w:220, type:'vol', key:'sfxVol' };
+  // Pause-page volume sliders
+  if (screen === 'pause') {
+    if (my >= 480 - 6 && my <= 480 + 22 && mx >= 70 - 12 && mx <= 70 + 180 + 12) {
+      return { x:70, y:480, w:180, type:'vol', key:'bgmVol' };
+    }
+    if (my >= 510 - 6 && my <= 510 + 22 && mx >= 70 - 12 && mx <= 70 + 180 + 12) {
+      return { x:70, y:510, w:180, type:'vol', key:'sfxVol' };
+    }
   }
   return null;
 }
@@ -8264,7 +8270,7 @@ document.getElementById('btn-pause').addEventListener('click',()=>{
 document.getElementById('btn-invincible').addEventListener('click',()=>{invincible=!invincible;document.getElementById('btn-invincible').classList.toggle('active',invincible);refreshInfBomb();if(invincible&&endlessMode)endlessInvincibleUsed=true;});
 // Speed button. Internally 1x = half-step (game runs at 0.5 of old pace),
 // so labels match user expectation while overall feel is calmer.
-const SPEED_CYCLE = [1, 2, 3, 4];          // 显示标签
+const SPEED_CYCLE = [0.5, 1, 2, 3, 10];    // 显示标签 (去掉 4x, 增加 0.5x + 10x)
 const SPEED_INTERNAL_MUL = 0.5;             // 1x label → 0.5 internal tick
 const speedBtn = document.getElementById('btn-speed');
 let gameSpeedLabel = 1;
