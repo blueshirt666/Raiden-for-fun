@@ -6326,11 +6326,20 @@ function drawHUD() {
 }
 
 // ─── TITLE SCREEN ────────────────────────────────────────────────────────────
-// Title layout — full-name mode tabs + right column of icon buttons
+// Layout regions (single source of truth so click + draw stay in sync):
+//   y=  60–135 : title art + brand subtitle
+//   y= 160–340 : plane showcase + side arrows
+//   y= 345–375 : skin name + page indicator
+//   y= 392–436 : 4-card quick equip strip (Map / Trail / Rune-A / Rune-B)
+//   y= 458–528 : two large mode tabs
+//   y= 545–565 : control hint
+const TITLE_EQUIP = { y: 392, h: 44, cardW: 100, gap: 8 };
+const TITLE_EQUIP_X = (W - (TITLE_EQUIP.cardW * 4 + TITLE_EQUIP.gap * 3)) / 2;  // = 28
 const titleBtns=[
-  {x:60, y:470, w:170, h:64, text:'关卡模式',  act:'solo'},
-  {x:250,y:470, w:170, h:64, text:'无尽模式',  act:'endless'},
+  {x: 60, y:458, w:172, h:70, text:'关卡模式',  act:'solo'},
+  {x:248, y:458, w:172, h:70, text:'无尽模式',  act:'endless'},
 ];
+function titleEquipCardX(i){ return TITLE_EQUIP_X + i*(TITLE_EQUIP.cardW + TITLE_EQUIP.gap); }
 // Shop / Codex / Settings now use DOM side-bar buttons (#btn-shop / #btn-codex / #btn-pause).
 let showcaseIdx = 0;
 
@@ -6520,120 +6529,125 @@ function drawTitle() {
   cx.moveTo(W-20, 145); cx.lineTo(W-140, 145); cx.lineTo(W-150, 155);
   cx.stroke();
 
-  // ─── Plane showcase (center, larger) ──────────────────
+  // ─── Plane showcase (center) ──────────────────
   clampShowcase();
   const owned = ownedPlaneIndices();
   const skinIdx = owned[showcaseIdx];
   const skin = PLANE_SKINS[skinIdx];
   // Halo behind plane
-  const halo = cx.createRadialGradient(W/2, 250, 20, W/2, 250, 110);
+  const halo = cx.createRadialGradient(W/2, 248, 20, W/2, 248, 110);
   halo.addColorStop(0, skin[4][0]+'66');
   halo.addColorStop(1, 'transparent');
   cx.fillStyle = halo;
-  cx.fillRect(0, 160, W, 200);
+  cx.fillRect(0, 165, W, 195);
   // Big plane
-  drawVectorPlane(skin[3], skin[4], cx, W/2, 250, 2.6, false, 0);
+  drawVectorPlane(skin[3], skin[4], cx, W/2, 248, 2.6, false, 0);
   // Skin name + index
   cx.fillStyle = '#aaeeff';
   cx.font = "bold 16px 'Courier New', monospace";
-  cx.fillText(skin[0], W/2, 360);
+  cx.textAlign = 'center';
+  cx.fillText(skin[0], W/2, 350);
   cx.fillStyle = '#557799';
   cx.font = "11px 'Courier New', monospace";
-  cx.fillText('★ 出战机 · '+(showcaseIdx+1)+' / '+owned.length+' ★', W/2, 380);
+  cx.fillText('★ 出战机 · '+(showcaseIdx+1)+' / '+owned.length+' ★', W/2, 372);
 
-  // ─── Quick map switcher (left of trail) — same box style ───────────────
+  // ─── Quick equip strip: 4 equal cards (Map / Trail / Rune-A / Rune-B) ──
+  const trailIdx = save.selTrail || 0;
+  const trailDef = TRAIL_DEFS[trailIdx];
+  const ey = TITLE_EQUIP.y, eh = TITLE_EQUIP.h, ew = TITLE_EQUIP.cardW;
+  const drawCard = (i, accent, lit) => {
+    const x = titleEquipCardX(i);
+    cx.fillStyle = lit ? '#0a2030' : '#0a1828';
+    cx.fillRect(x, ey, ew, eh);
+    cx.strokeStyle = accent;
+    cx.lineWidth = lit ? 2 : 1;
+    cx.strokeRect(x + 0.5, ey + 0.5, ew - 1, eh - 1);
+    return x;
+  };
+  // Card 0 — Map
   {
-    const sx = W/2 - 206, sy = 416;
     const isRandom = !!save.bgRandom;
     const bgIdx = (typeof save.selBG === 'number') ? save.selBG : 0;
     const bgDef = BG_SKINS[bgIdx];
     const accent = isRandom ? '#ffaa44' : '#88ccff';
-    cx.fillStyle = '#0a2030';
-    cx.fillRect(sx, sy, 86, 38);
-    cx.strokeStyle = accent;
-    cx.lineWidth = 2;
-    cx.strokeRect(sx + 0.5, sy + 0.5, 85, 37);
-    // Mini-globe thumbnail (left side)
-    const tcx = sx + 14, tcy = sy + 19;
-    const mg = cx.createRadialGradient(tcx-3, tcy-3, 1, tcx, tcy, 10);
+    const x = drawCard(0, accent, true);
+    const tcx = x + 16, tcy = ey + eh/2;
+    const mg = cx.createRadialGradient(tcx-3, tcy-3, 1, tcx, tcy, 11);
     mg.addColorStop(0, '#ffffff');
     mg.addColorStop(0.45, accent);
     mg.addColorStop(1, accent + '00');
     cx.fillStyle = mg;
-    cx.beginPath(); cx.arc(tcx, tcy, 9, 0, Math.PI*2); cx.fill();
+    cx.beginPath(); cx.arc(tcx, tcy, 11, 0, Math.PI*2); cx.fill();
     if (isRandom) {
-      cx.fillStyle = '#000';
-      cx.font = "bold 9px 'Courier New', monospace";
-      cx.textAlign = 'center';
-      cx.fillText('?', tcx, tcy + 3);
+      cx.fillStyle = '#000'; cx.font = "bold 10px 'Courier New', monospace";
+      cx.textAlign = 'center'; cx.fillText('?', tcx, tcy + 3);
     }
     cx.fillStyle = accent;
-    cx.font = "bold 10px 'Courier New', monospace";
-    cx.textAlign = 'left';
-    cx.fillText('地  图', sx + 28, sy + 16);
+    cx.font = "bold 10px 'Courier New', monospace"; cx.textAlign = 'left';
+    cx.fillText('地  图', x + 32, ey + 18);
     cx.font = "bold 11px 'Courier New', monospace";
     const label = isRandom ? '随  机' : (bgDef ? bgDef[0] : '—');
-    cx.fillText(label.length > 6 ? label.slice(0,6) : label, sx + 28, sy + 30);
+    cx.fillText(label.length > 6 ? label.slice(0,6) : label, x + 32, ey + 33);
   }
-  // ─── Quick trail switcher (under plane) — same box style as runes ──────
-  const trailIdx = save.selTrail || 0;
-  const trailDef = TRAIL_DEFS[trailIdx];
+  // Card 1 — Trail
   {
-    const sx = W/2 - 116, sy = 416;
-    cx.fillStyle = '#0a2030';
-    cx.fillRect(sx, sy, 86, 38);
-    cx.strokeStyle = trailDef[4];
-    cx.lineWidth = 2;
-    cx.strokeRect(sx + 0.5, sy + 0.5, 85, 37);
-    // Thumbnail: small filled disc with trail color
-    const tcx = sx + 14, tcy = sy + 19;
-    const tg = cx.createRadialGradient(tcx, tcy, 1, tcx, tcy, 9);
-    tg.addColorStop(0, '#ffffff');
-    tg.addColorStop(0.4, trailDef[4]);
-    tg.addColorStop(1, trailDef[4] + '00');
-    cx.fillStyle = tg;
-    cx.beginPath(); cx.arc(tcx, tcy, 9, 0, Math.PI*2); cx.fill();
-    // Name
+    const x = drawCard(1, trailDef[4], true);
+    const tcx = x + 16, tcy = ey + eh/2;
+    const tg2 = cx.createRadialGradient(tcx, tcy, 1, tcx, tcy, 11);
+    tg2.addColorStop(0, '#ffffff');
+    tg2.addColorStop(0.4, trailDef[4]);
+    tg2.addColorStop(1, trailDef[4] + '00');
+    cx.fillStyle = tg2;
+    cx.beginPath(); cx.arc(tcx, tcy, 11, 0, Math.PI*2); cx.fill();
     cx.fillStyle = trailDef[4];
-    cx.font = "bold 10px 'Courier New', monospace";
-    cx.textAlign = 'left';
-    cx.fillText('残  影', sx + 28, sy + 16);
+    cx.font = "bold 10px 'Courier New', monospace"; cx.textAlign = 'left';
+    cx.fillText('残  影', x + 32, ey + 18);
     cx.font = "bold 11px 'Courier New', monospace";
-    cx.fillText(trailDef[0], sx + 28, sy + 30);
+    cx.fillText(trailDef[0].length > 6 ? trailDef[0].slice(0,6) : trailDef[0], x + 32, ey + 33);
   }
-  // ─── Quick rune equip slots (under plane) — no caption ─────────────────
+  // Cards 2 & 3 — Rune slots
   for (let s = 0; s < 2; s++) {
-    const sx = W/2 + 24 + s * 60, sy = 416;
     const eqKey = (save.equippedRunes || [])[s];
     const def = eqKey ? RUNE_DEFS.find(r => r.key === eqKey) : null;
-    cx.fillStyle = def ? '#0a2a3a' : '#0a1828';
-    cx.fillRect(sx, sy, 56, 38);
-    cx.strokeStyle = def ? def.col : '#335577';
-    cx.lineWidth = def ? 2 : 1;
-    cx.strokeRect(sx + 0.5, sy + 0.5, 55, 37);
+    const accent = def ? def.col : '#335577';
+    const x = drawCard(2 + s, accent, !!def);
+    const tcx = x + 16, tcy = ey + eh/2;
     if (def) {
       const lv = save.runes[def.key] || 0;
+      const rg2 = cx.createRadialGradient(tcx, tcy, 1, tcx, tcy, 11);
+      rg2.addColorStop(0, '#ffffff');
+      rg2.addColorStop(0.4, def.col);
+      rg2.addColorStop(1, def.col + '00');
+      cx.fillStyle = rg2;
+      cx.beginPath(); cx.arc(tcx, tcy, 11, 0, Math.PI*2); cx.fill();
+      cx.fillStyle = '#0a1828';
+      cx.font = "bold 12px sans-serif"; cx.textAlign = 'center';
+      cx.fillText(def.icon, tcx, tcy + 4);
       cx.fillStyle = def.col;
-      cx.font = "bold 14px sans-serif";
-      cx.textAlign = 'center';
-      cx.fillText(def.icon, sx + 28, sy + 18);
-      cx.font = "9px 'Courier New', monospace";
-      cx.fillText(def.name.slice(0,2) + ' Lv' + lv, sx + 28, sy + 32);
+      cx.font = "bold 10px 'Courier New', monospace"; cx.textAlign = 'left';
+      cx.fillText('符文 ' + (s+1), x + 32, ey + 18);
+      cx.font = "bold 10px 'Courier New', monospace";
+      cx.fillText(def.name.slice(0,2) + ' Lv' + lv, x + 32, ey + 33);
     } else {
+      cx.fillStyle = '#446688';
+      cx.beginPath(); cx.arc(tcx, tcy, 10, 0, Math.PI*2); cx.stroke();
       cx.fillStyle = '#557799';
-      cx.font = "11px 'Courier New', monospace";
-      cx.textAlign = 'center';
-      cx.fillText('—', sx + 28, sy + 24);
+      cx.font = "bold 10px 'Courier New', monospace"; cx.textAlign = 'left';
+      cx.fillText('符文 ' + (s+1), x + 32, ey + 18);
+      cx.font = "10px 'Courier New', monospace";
+      cx.fillText('点击装备', x + 32, ey + 33);
     }
   }
   cx.textAlign = 'left';
-  // Arrows (only if more than one owned)
+  // Plane navigation arrows (only if multiple planes owned)
   if (owned.length > 1) {
     const aA = 0.7 + Math.sin(frame*0.1)*0.25;
     cx.fillStyle = `rgba(0,255,255,${aA})`;
     cx.font = "bold 36px 'Courier New', monospace";
-    cx.fillText('‹', 60, 260);
-    cx.fillText('›', W-60, 260);
+    cx.textAlign = 'center';
+    cx.fillText('‹', 50, 260);
+    cx.fillText('›', W-50, 260);
+    cx.textAlign = 'left';
   }
 
   // ─── Mode tabs (with medal/trash inside the box) ──────
@@ -6701,20 +6715,38 @@ function drawTitle() {
   }
   cx.textAlign = 'left';
 
-  // (Shop / Codex moved to DOM side-bar; medal & trash render inline in their tabs above.)
+  // ─── Currency badge (top-right corner) ─────────────────────────────────
+  // Pulled out of the bottom so the lower half can be devoted to mode tabs.
+  {
+    const bx = W - 152, by = 18, bw = 134, bh = 30;
+    const g = cx.createLinearGradient(bx, by, bx, by + bh);
+    g.addColorStop(0, '#0a1c2e');
+    g.addColorStop(1, '#050d18');
+    cx.fillStyle = g;
+    cx.fillRect(bx, by, bw, bh);
+    cx.strokeStyle = '#33557a'; cx.lineWidth = 1;
+    cx.strokeRect(bx + 0.5, by + 0.5, bw - 1, bh - 1);
+    cx.fillStyle = '#ffcc44';
+    cx.font = "bold 12px 'Courier New', monospace";
+    cx.textAlign = 'left';
+    cx.fillText('🪙 ' + save.coins, bx + 10, by + 19);
+    cx.fillStyle = '#88ccff';
+    cx.fillText('💎 ' + save.diamonds, bx + 76, by + 19);
+  }
 
-  // Footer
-  cx.fillStyle='#ffcc00';
-  cx.font="13px 'Courier New', monospace";
-  cx.textAlign='center';
-  cx.fillText('🪙 '+save.coins+'   💎 '+save.diamonds, W/2, 564);
-  cx.textAlign='left';
+  // Hint line below the mode tabs (replaces orphan footer)
+  cx.fillStyle = '#557799';
+  cx.font = "11px 'Courier New', monospace";
+  cx.textAlign = 'center';
+  cx.fillText('点击模式开始 · 侧栏可访问商城 / 图鉴 / 设置', W/2, 552);
+  cx.textAlign = 'left';
 }
 
 function clickTitle(mx,my) {
   // Trash icon (inside the bottom-right corner of 无尽模式 tab box)
   if (save.endlessState) {
-    const tx = 250 + 170 - 22, ty = 470 + 64 - 15;
+    const eb = titleBtns[1]; // endless tab
+    const tx = eb.x + eb.w - 22, ty = eb.y + eb.h - 18;
     const dx = mx - tx, dy = my - ty;
     if (dx*dx + dy*dy < 18*18) {
       clearEndlessSnapshot();
@@ -6722,75 +6754,72 @@ function clickTitle(mx,my) {
       return;
     }
   }
-  // Trail quick-equip box (same style as rune slots) — click cycles forward
-  if (mx >= W/2 - 116 && mx <= W/2 - 30 && my >= 416 && my <= 454) {
-    const ownedTrails = TRAIL_DEFS.map((d, i) => save.trails && save.trails[i] ? i : -1).filter(x => x >= 0);
-    if (!ownedTrails.length) { SFX.buyFail(); return; }
-    const cur = ownedTrails.indexOf(save.selTrail || 0);
-    const next = ownedTrails[(cur + 1) % ownedTrails.length];
-    save.selTrail = next;
-    writeSave();
-    SFX.buySuccess();
-    return;
-  }
-  // Quick rune slots — always cycles to a real rune (never produces all-empty).
-  // To unequip, use the shop's runes tab.
-  for (let s = 0; s < 2; s++) {
-    const sx = W/2 + 24 + s * 60, sy = 416;
-    if (mx >= sx && mx <= sx + 56 && my >= sy && my <= sy + 38) {
-      const ownedRunes = RUNE_DEFS.filter(r => (save.runes[r.key] || 0) > 0).map(r => r.key);
-      if (!ownedRunes.length) { SFX.buyFail(); return; }
-      // Snapshot eq into 2 fixed slots so the slot index stays stable
-      const eq = [
-        (save.equippedRunes && save.equippedRunes[0]) || null,
-        (save.equippedRunes && save.equippedRunes[1]) || null,
-      ];
-      const otherSlot = eq[1 - s];
-      const candidates = ownedRunes.filter(k => k !== otherSlot);
-      if (!candidates.length) { SFX.buyFail(); return; }
-      const cur = eq[s];
-      const ci = cur ? candidates.indexOf(cur) : -1;
-      eq[s] = candidates[(ci + 1) % candidates.length];
-      save.equippedRunes = eq.filter(x => x);
-      writeSave();
-      SFX.buySuccess();
+  // Quick equip strip (4 cards: Map / Trail / Rune-A / Rune-B)
+  const ey = TITLE_EQUIP.y, eh = TITLE_EQUIP.h, ew = TITLE_EQUIP.cardW;
+  if (my >= ey && my <= ey + eh) {
+    for (let i = 0; i < 4; i++) {
+      const cx0 = titleEquipCardX(i);
+      if (mx < cx0 || mx > cx0 + ew) continue;
+      if (i === 0) {
+        // Map quick switch (cycles owned + random sentinel)
+        const ownedBgs = BG_SKINS.map((_, k) => save.bgs && save.bgs[k] ? k : -1).filter(x => x >= 0);
+        if (!ownedBgs.length) { SFX.buyFail(); return; }
+        const order = ownedBgs.concat([-1]);
+        const cur = (typeof save.selBG === 'number' && save.bgRandom !== true) ? save.selBG : -1;
+        const ci = order.indexOf(save.bgRandom ? -1 : cur);
+        const nextRaw = order[(ci + 1) % order.length];
+        if (nextRaw === -1) {
+          save.bgRandom = true;
+          save.selBG = ownedBgs[Math.floor(Math.random() * ownedBgs.length)];
+        } else {
+          save.bgRandom = false;
+          save.selBG = nextRaw;
+        }
+        writeSave(); SFX.buySuccess();
+      } else if (i === 1) {
+        // Trail cycle
+        const ownedTrails = TRAIL_DEFS.map((d, k) => save.trails && save.trails[k] ? k : -1).filter(x => x >= 0);
+        if (!ownedTrails.length) { SFX.buyFail(); return; }
+        const cur = ownedTrails.indexOf(save.selTrail || 0);
+        const next = ownedTrails[(cur + 1) % ownedTrails.length];
+        save.selTrail = next;
+        writeSave(); SFX.buySuccess();
+      } else {
+        // Rune slot (i = 2 or 3 → s = 0 or 1)
+        const s = i - 2;
+        const ownedRunes = RUNE_DEFS.filter(r => (save.runes[r.key] || 0) > 0).map(r => r.key);
+        if (!ownedRunes.length) { SFX.buyFail(); return; }
+        const eq = [
+          (save.equippedRunes && save.equippedRunes[0]) || null,
+          (save.equippedRunes && save.equippedRunes[1]) || null,
+        ];
+        const otherSlot = eq[1 - s];
+        const candidates = ownedRunes.filter(k => k !== otherSlot);
+        if (!candidates.length) { SFX.buyFail(); return; }
+        const cur = eq[s];
+        const ci = cur ? candidates.indexOf(cur) : -1;
+        eq[s] = candidates[(ci + 1) % candidates.length];
+        save.equippedRunes = eq.filter(x => x);
+        writeSave(); SFX.buySuccess();
+      }
       return;
     }
   }
   // Plane arrows (left/right of showcase)
   const owned = ownedPlaneIndices();
   if (owned.length > 1) {
-    if (mx>=30 && mx<=90 && my>=220 && my<=300) {
+    if (mx>=20 && mx<=80 && my>=215 && my<=295) {
       showcaseIdx = (showcaseIdx - 1 + owned.length) % owned.length;
       save.selP1 = owned[showcaseIdx];
       writeSave(); SFX.buySuccess();
       return;
     }
-    if (mx>=W-90 && mx<=W-30 && my>=220 && my<=300) {
+    if (mx>=W-80 && mx<=W-20 && my>=215 && my<=295) {
       showcaseIdx = (showcaseIdx + 1) % owned.length;
       save.selP1 = owned[showcaseIdx];
       writeSave(); SFX.buySuccess();
       return;
     }
-  }
-  // Map quick switch (left of trail box) — same box style, click cycles + random
-  if (mx >= W/2 - 206 && mx <= W/2 - 120 && my >= 416 && my <= 454) {
-    const ownedBgs = BG_SKINS.map((_, i) => save.bgs && save.bgs[i] ? i : -1).filter(x => x >= 0);
-    if (!ownedBgs.length) { SFX.buyFail(); return; }
-    // Cycle: -1 means random; ordering = [...ownedBgs, -1]
-    const order = ownedBgs.concat([-1]);
-    const cur = (typeof save.selBG === 'number' && save.bgRandom !== true) ? save.selBG : -1;
-    const ci = order.indexOf(save.bgRandom ? -1 : cur);
-    const nextRaw = order[(ci + 1) % order.length];
-    if (nextRaw === -1) {
-      save.bgRandom = true;
-      save.selBG = ownedBgs[Math.floor(Math.random() * ownedBgs.length)];
-    } else {
-      save.bgRandom = false;
-      save.selBG = nextRaw;
-    }
-    writeSave(); SFX.buySuccess();
-    return;
   }
   // Mode tabs
   for (const btn of titleBtns) {
