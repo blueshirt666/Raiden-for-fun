@@ -199,6 +199,8 @@ const RUNE_DEFS = [
     base:0.06, max:0.35, desc:'子弹概率双倍伤害, 显示暴击效果' },
   { key:'decap',  name:'斩首符文', icon:'🗡', col:'#ff4488',
     base:0.01, max:0.10, desc:'对小怪小概率秒杀, Boss 不适用' },
+  { key:'dodge',  name:'闪避符文', icon:'💨', col:'#aaffee',
+    base:0.05, max:0.40, desc:'被子弹击中时有概率完全闪避' },
 ];
 function runeProb(key) {
   const lv = (save.runes && save.runes[key]) || 0;
@@ -238,7 +240,7 @@ function defaultSave() {
     endlessState: null,
     endlessLeaderboard: [],
     console: defaultConsole(),
-    runes: { burn:0, poison:0, freeze:0, plague:0, crit:0, decap:0 },
+    runes: { burn:0, poison:0, freeze:0, plague:0, crit:0, decap:0, dodge:0 },
     equippedRunes: [],
     trails: Array(20).fill(false).map((_,i) => i === 0),
     selTrail: 0,
@@ -1213,86 +1215,148 @@ function drawScreenMissiles() {
     }
   }
 }
-// ─── BLACK HOLES (master / endless 30+) ─────────────────────────────────────
-// Fixed at a screen point (does NOT scroll with the terrain). 10s lifetime at 1x speed.
-const BH_LIFE_FRAMES = 600;            // 10s @ 60fps
-const BH_PULL_RADIUS = 110;            // pull starts here
-const BH_DAMAGE_RADIUS = 22;           // close-contact = lethal
+// ─── BLACK HOLES ─────────────────────────────────────────────────────────────
+// HP-based: only disappears when destroyed. Drifts slowly. Absorbs ALL bullets
+// (player + enemy) — no projectile ever passes through. Player can enter safely
+// but the closer to the center the slower they move.
+const BH_PULL_RADIUS = 130;
+const BH_CORE_RADIUS = 24;
 function shouldEnableBlackHoles() {
-  if (endlessMode) return level >= 30;
-  // Stage mode: only the highest tier (大师 / 地狱)
-  return currentTier() === 'hell';
+  if (endlessMode) return level >= 20;       // Endless from lv 20
+  return currentTier() === 'hell';           // Stage: master / 地狱 难度
+}
+function maxBlackHolesNow() {
+  // Cap = up to 3, scaled by level
+  if (endlessMode) {
+    if (level >= 50) return 3;
+    if (level >= 30) return 2;
+    return 1;
+  }
+  return 1;
 }
 function trySpawnBlackHole() {
-  if (blackHoles.length >= 2) return;
-  // Avoid clustering on the player and on existing holes
+  if (blackHoles.length >= maxBlackHolesNow()) return;
   const margin = 70;
   for (let attempt = 0; attempt < 12; attempt++) {
-    const x = rnd(margin, W - margin), y = rnd(margin, H - 200);
+    const x = rnd(margin, W - margin), y = rnd(margin, H - 220);
     const p = players[0];
     if (p && Math.hypot(p.x - x, p.y - y) < 140) continue;
-    const tooClose = blackHoles.some(h => Math.hypot(h.x - x, h.y - y) < 160);
+    const tooClose = blackHoles.some(h => Math.hypot(h.x - x, h.y - y) < 180);
     if (tooClose) continue;
-    blackHoles.push({ x, y, life: BH_LIFE_FRAMES, maxLife: BH_LIFE_FRAMES, r: 22, spinT: 0 });
+    // HP = 1/2 of current-level boss baseline
+    const hp = currentBossBaselineHp() * 0.5;
+    blackHoles.push({
+      x, y,
+      vx: rnd(-0.25, 0.25), vy: rnd(-0.15, 0.25),
+      hp, maxHp: hp,
+      r: BH_CORE_RADIUS,
+      spinT: 0,
+    });
     addFT('黑洞已生成', x, y - 36, '#cc88ff');
     return;
   }
 }
 function updateBlackHoles() {
   if (!shouldEnableBlackHoles() || screen !== 'game') return;
-  // Spawn every ~14s while under cap
-  const interval = endlessMode ? Math.max(420, 1000 - (level - 30) * 12) : 900;
+  // Spawn pacing: every ~22s while under cap
+  const interval = endlessMode ? Math.max(560, 1400 - (level - 20) * 10) : 1100;
   if (frame - lastBlackHoleSpawn > interval) {
     lastBlackHoleSpawn = frame;
     trySpawnBlackHole();
   }
   for (const h of blackHoles) {
-    h.life--;
     h.spinT++;
-    // Pull players (not held in place — sucked toward center)
+    // Drift slowly, occasionally nudging direction
+    if (h.spinT % 90 === 0) { h.vx = rnd(-0.3, 0.3); h.vy = rnd(-0.2, 0.3); }
+    h.x += h.vx; h.y += h.vy;
+    // Stay on-screen by gentle reflection
+    if (h.x < 50)         { h.x = 50;         h.vx = Math.abs(h.vx); }
+    if (h.x > W - 50)     { h.x = W - 50;     h.vx = -Math.abs(h.vx); }
+    if (h.y < 50)         { h.y = 50;         h.vy = Math.abs(h.vy); }
+    if (h.y > H - 220)    { h.y = H - 220;    h.vy = -Math.abs(h.vy); }
+    // Player: pulled in but takes NO damage; movement gets harder near the core.
     for (const p of players) {
       if (p.dead) continue;
       const dx = h.x - p.x, dy = h.y - p.y;
       const d = Math.hypot(dx, dy);
       if (d < BH_PULL_RADIUS && d > 0.1) {
         const k = (1 - d / BH_PULL_RADIUS);
-        p.x += (dx / d) * k * 1.4;
-        p.y += (dy / d) * k * 1.4;
-        if (d < BH_DAMAGE_RADIUS && p.invTimer <= 0 && !invincible) {
-          // 6 frame damage cooldown
-          if (!h._lastHitFrame || frame - h._lastHitFrame > 24) {
-            h._lastHitFrame = frame;
-            hitPlayer(p);
-          }
-        }
+        // Slight pull toward center
+        p.x += (dx / d) * k * 0.9;
+        p.y += (dy / d) * k * 0.9;
+        // Movement-damping field — flagged here, applied in updatePlayer.
+        const dampNew = clamp(1 - k * 0.95, 0.05, 1);
+        p._bhDamp = Math.min(p._bhDamp || 1, dampNew);
       }
     }
-    // Pull enemies too — flavor; weaker than player pull
+    // Enemies — light pull (flavor only)
     for (const e of enemies) {
       if (!e.alive) continue;
       const dx = h.x - e.x, dy = h.y - e.y;
       const d = Math.hypot(dx, dy);
       if (d < BH_PULL_RADIUS) {
-        const k = (1 - d / BH_PULL_RADIUS) * 0.6;
+        const k = (1 - d / BH_PULL_RADIUS) * 0.5;
         e.x += (dx / (d || 1)) * k;
         e.y += (dy / (d || 1)) * k;
-        if (d < BH_DAMAGE_RADIUS) { e.hp -= e.maxHp * 0.04; if (e.hp <= 0) killEnemy(e); }
       }
     }
-    // Pull enemy bullets — looks dramatic
+    // Player bullets — fully absorbed; no penetration. Dealing damage on contact.
+    for (const b of bullets) {
+      if (!b.alive || b.isLaserBeam) continue;
+      const dx = h.x - b.x, dy = h.y - b.y;
+      const d = Math.hypot(dx, dy);
+      if (d < BH_PULL_RADIUS) {
+        // Pull toward core
+        const k = (1 - d / BH_PULL_RADIUS) * 0.55;
+        b.vx += (dx / (d || 1)) * k;
+        b.vy += (dy / (d || 1)) * k;
+      }
+      if (d < h.r + 6) {
+        // Damage the black hole and consume the bullet
+        h.hp -= b.dmg || 1;
+        b.alive = false;
+        // Tiny absorption sparkle
+        explosions.push({
+          x: b.x, y: b.y, vx: 0, vy: 0,
+          life: 12, maxLife: 12, size: 3, color: '#cc88ff'
+        });
+      }
+    }
+    // Lasers also chip the black hole (they don't penetrate either)
+    for (const b of bullets) {
+      if (!b.alive || !b.isLaserBeam) continue;
+      if (Math.abs(b.x - h.x) < b.w/2 + h.r && h.y < b.h) {
+        h.hp -= b.dmg * 0.8;
+      }
+    }
+    // Enemy bullets — ALSO absorbed (drama; protects player from crossfire near hole)
     for (const b of enemyBullets) {
       if (!b.alive) continue;
       const dx = h.x - b.x, dy = h.y - b.y;
       const d = Math.hypot(dx, dy);
-      if (d < BH_PULL_RADIUS * 0.7) {
-        const k = (1 - d / (BH_PULL_RADIUS * 0.7)) * 0.5;
+      if (d < BH_PULL_RADIUS * 0.8) {
+        const k = (1 - d / (BH_PULL_RADIUS * 0.8)) * 0.55;
         b.vx += (dx / (d || 1)) * k;
         b.vy += (dy / (d || 1)) * k;
-        if (d < 14) b.alive = false;
       }
+      if (d < h.r + 4) b.alive = false;
+    }
+    if (h.hp <= 0) {
+      // Implode: shockwave + reward
+      addFT('黑洞坍塌', h.x, h.y - 30, '#ffccff');
+      for (let i = 0; i < 18; i++) {
+        const ag = (i/18) * Math.PI * 2;
+        explosions.push({
+          x: h.x, y: h.y, vx: Math.cos(ag) * 4, vy: Math.sin(ag) * 4,
+          life: 26, maxLife: 26, size: 4, color: i%2 ? '#ff88ff' : '#aaccff'
+        });
+      }
+      score += Math.round(h.maxHp * 0.5);
+      triggerShake(8, 14);
+      h._dead = true;
     }
   }
-  blackHoles = blackHoles.filter(h => h.life > 0);
+  blackHoles = blackHoles.filter(h => !h._dead);
 }
 function drawBlackHoles() {
   for (const h of blackHoles) {
@@ -1329,8 +1393,8 @@ function drawBlackHoles() {
       cx.lineTo(h.x + Math.cos(a + 0.4) * r2, h.y + Math.sin(a + 0.4) * r2);
       cx.stroke();
     }
-    // Countdown ring (life remaining)
-    const lifeT = h.life / h.maxLife;
+    // HP ring (remaining durability; depletes as bullets feed it)
+    const lifeT = Math.max(0, h.hp / h.maxHp);
     cx.strokeStyle = '#ffaa44';
     cx.lineWidth = 2;
     cx.beginPath();
@@ -2950,7 +3014,12 @@ function updatePlayer(p, keys) {
   }
   const sX = (typeof save.moveSensX === 'number') ? save.moveSensX : 1;
   const sY = (typeof save.moveSensY === 'number') ? save.moveSensY : 1;
-  p.x+=dx*p.speed*sX; p.y+=dy*p.speed*sY;
+  // Black hole gravity-well — closer to a hole's core = slower input response.
+  // _bhDamp is reset to 1 each frame after movement; updateBlackHoles writes a
+  // smaller value when the player is inside a hole's pull radius.
+  const bhDamp = (typeof p._bhDamp === 'number') ? p._bhDamp : 1;
+  p.x+=dx*p.speed*sX*bhDamp; p.y+=dy*p.speed*sY*bhDamp;
+  p._bhDamp = 1;  // reset for next frame
   p.x=clamp(p.x,12,W-12); p.y=clamp(p.y,12,H-12);
   p.px=p.x|0; p.py=p.y|0;
   // Banking + pitch — eased toward dx/dy for wing-roll + nose-up/down feel
@@ -3366,9 +3435,17 @@ function drawBullets() {
       continue;
     }
     if(b.wave||b.crystal||b.homing) {
-      const rg=cx.createRadialGradient(b.px,b.py,0,b.px,b.py,b.w*1.8);
+      // Crystal bullets get a tighter halo so the screen doesn't wash out;
+      // wave/homing keep the showy bloom.
+      const rad = b.crystal ? b.w * 1.05 : b.w * 1.8;
+      const rg=cx.createRadialGradient(b.px,b.py,0,b.px,b.py,rad);
       rg.addColorStop(0,'#ffffffcc'); rg.addColorStop(.4,b.color); rg.addColorStop(1,b.color+'00');
-      cx.fillStyle=rg; cx.beginPath(); cx.arc(b.px,b.py,b.w*1.8,0,Math.PI*2); cx.fill();
+      cx.fillStyle=rg; cx.beginPath(); cx.arc(b.px,b.py,rad,0,Math.PI*2); cx.fill();
+      // Solid crystalline core for crisp readability
+      if (b.crystal) {
+        cx.fillStyle = '#ffffff';
+        cx.fillRect((b.px - b.w*0.35)|0, (b.py - b.h*0.35)|0, Math.max(2, b.w*0.7|0), Math.max(2, b.h*0.7|0));
+      }
       continue;
     }
     if(b.lightning) {
@@ -3432,27 +3509,27 @@ function doBomb(p) {
 
 // ─── ENEMIES (20 types) ──────────────────────────────────────────────────────
 const ENEMY_CFG = {
-  basic:    {hp:50, spd:1.5,pts:100,w:20,h:18,col:'#ff4444',cv:1},
-  zigzag:   {hp:75, spd:2,  pts:150,w:18,h:16,col:'#ff8800',cv:2},
-  bomber:   {hp:130,spd:1,  pts:300,w:28,h:22,col:'#aa44ff',cv:3},
-  gunship:  {hp:170,spd:1.2,pts:250,w:30,h:24,col:'#44aaff',cv:2},
-  tank:     {hp:300,spd:0.7,pts:400,w:36,h:28,col:'#44ff44',cv:4},
-  speeder:  {hp:35, spd:3.5,pts:80, w:14,h:12,col:'#ffff00',cv:1},
-  carrier:  {hp:420,spd:0.5,pts:600,w:50,h:40,col:'#ff44aa',cv:5},
+  basic:    {hp:80, spd:1.5,pts:100,w:20,h:18,col:'#ff4444',cv:1},
+  zigzag:   {hp:120,spd:2,  pts:150,w:18,h:16,col:'#ff8800',cv:2},
+  bomber:   {hp:200,spd:1,  pts:300,w:28,h:22,col:'#aa44ff',cv:3},
+  gunship:  {hp:260,spd:1.2,pts:250,w:30,h:24,col:'#44aaff',cv:2},
+  tank:     {hp:460,spd:0.7,pts:400,w:36,h:28,col:'#44ff44',cv:4},
+  speeder:  {hp:60, spd:3.5,pts:80, w:14,h:12,col:'#ffff00',cv:1},
+  carrier:  {hp:650,spd:0.5,pts:600,w:50,h:40,col:'#ff44aa',cv:5},
   // Additional 13 types
-  dart:     {hp:42, spd:3,  pts:90, w:14,h:18,col:'#ffaaaa',cv:1},
-  saucer:   {hp:130,spd:0.9,pts:280,w:30,h:18,col:'#aaffaa',cv:2},
-  scout:    {hp:25, spd:4.2,pts:60, w:12,h:12,col:'#ffffaa',cv:1},
-  sniper:   {hp:170,spd:0.4,pts:320,w:24,h:24,col:'#ff66ff',cv:2},
-  mortar:   {hp:110,spd:0.6,pts:240,w:24,h:22,col:'#cc8855',cv:2},
-  swarmlet: {hp:18, spd:2.6,pts:40, w:10,h:10,col:'#ff77aa',cv:1},
-  hive:     {hp:300,spd:0.7,pts:480,w:36,h:30,col:'#cc44ff',cv:4},
-  turret:   {hp:260,spd:0.0,pts:280,w:24,h:24,col:'#888888',cv:2},
-  stealth:  {hp:80, spd:1.6,pts:220,w:22,h:18,col:'#553388',cv:2},
-  splitter: {hp:110,spd:1.1,pts:240,w:24,h:22,col:'#88ddff',cv:2},
-  minelayer:{hp:200,spd:0.7,pts:330,w:26,h:22,col:'#aaaa44',cv:3},
-  jet:      {hp:55, spd:5,  pts:110,w:14,h:22,col:'#88ccff',cv:1},
-  elite:    {hp:550,spd:0.9,pts:700,w:38,h:32,col:'#ff2244',cv:5},
+  dart:     {hp:65, spd:3,  pts:90, w:14,h:18,col:'#ffaaaa',cv:1},
+  saucer:   {hp:200,spd:0.9,pts:280,w:30,h:18,col:'#aaffaa',cv:2},
+  scout:    {hp:40, spd:4.2,pts:60, w:12,h:12,col:'#ffffaa',cv:1},
+  sniper:   {hp:260,spd:0.4,pts:320,w:24,h:24,col:'#ff66ff',cv:2},
+  mortar:   {hp:170,spd:0.6,pts:240,w:24,h:22,col:'#cc8855',cv:2},
+  swarmlet: {hp:30, spd:2.6,pts:40, w:10,h:10,col:'#ff77aa',cv:1},
+  hive:     {hp:460,spd:0.7,pts:480,w:36,h:30,col:'#cc44ff',cv:4},
+  turret:   {hp:400,spd:0.0,pts:280,w:24,h:24,col:'#888888',cv:2},
+  stealth:  {hp:120,spd:1.6,pts:220,w:22,h:18,col:'#553388',cv:2},
+  splitter: {hp:170,spd:1.1,pts:240,w:24,h:22,col:'#88ddff',cv:2},
+  minelayer:{hp:300,spd:0.7,pts:330,w:26,h:22,col:'#aaaa44',cv:3},
+  jet:      {hp:85, spd:5,  pts:110,w:14,h:22,col:'#88ccff',cv:1},
+  elite:    {hp:850,spd:0.9,pts:700,w:38,h:32,col:'#ff2244',cv:5},
   // Ramming-only types: no bullets, only deal contact damage
   asteroid: {hp:80, spd:1.0,pts:120,w:32,h:32,col:'#888899',cv:2},
   ramship:  {hp:50, spd:2.4,pts:140,w:22,h:22,col:'#aa44ff',cv:2},
@@ -3462,14 +3539,29 @@ const ENEMY_CFG = {
   eliteClone: {hp:120,spd:1.2,pts:600,w:24,h:24,col:'#aaccff',cv:4},  // 克隆玩家武器(削弱)
 };
 
+// Computed boss HP at the current level — used by black holes and large asteroids
+// so their durability scales 1:1 with whatever the boss would be.
+function currentBossBaselineHp() {
+  const C = save.console || defaultConsole();
+  const cappedLv = Math.min(level, ENDLESS_DIFF_CAP);
+  // Take a representative bar count of 5 (mid-fight) and the average boss base 800.
+  const baseHp = (800 + cappedLv * 150) * 5 * (C.bossHpMul || 1);
+  return baseHp;
+}
+
 function mkEnemy(type, x, y) {
   const c=ENEMY_CFG[type]||ENEMY_CFG.basic;
   const diff=getDiff();
   const C = save.console || defaultConsole();
   const sp = c.spd*(0.7+level*0.03)*C.enemySpeedMul;
+  // Asteroid: HP = 1/2 of current-level boss baseline (per spec). Slow vertical drop.
+  let hp = c.hp * diff.hpMult;
+  if (type === 'asteroid') {
+    hp = currentBossBaselineHp() * 0.5;
+  }
   return {
     type,x,y,px:x|0,py:y|0,
-    hp:c.hp*diff.hpMult, maxHp:c.hp*diff.hpMult,
+    hp, maxHp: hp,
     speed:sp, pts:c.pts, w:c.w, h:c.h, col:c.col, cv:c.cv,
     alive:true, moveTimer:0, vx:rnd(-1,1), vy:sp,
     splitChild:false,
@@ -3604,11 +3696,36 @@ function updateEnemy(e) {
       e.y+=e.speed; // pure speed, no shooting
       break;
     case 'asteroid':
-      // 旋转下落, 不发子弹, 撞击伤害
-      e.y += e.speed;
-      e.x += Math.sin(e.moveTimer*0.025) * 0.6;
-      e.spin = (e.spin || 0) + 0.04;
+      // 缓慢垂直下落, 不发子弹, 撞击伤害 (大陨石)
+      e.y += e.speed * 0.7;
+      e.x += Math.sin(e.moveTimer*0.018) * 0.4;
+      e.spin = (e.spin || 0) + 0.025;
       break;
+    case 'mirrorClone': {
+      // Mirror clone — moves like a player, fires player-style bullets at the real player
+      const target = players.find(p => !p.dead);
+      if (target) {
+        // Drift toward the player but stay in the upper 60% of the screen
+        const dx = target.x - e.x;
+        e.x += Math.sign(dx) * Math.min(Math.abs(dx) * 0.02, 1.4);
+        if (e.y < 90) e.y += 1.4;
+        else e.y += Math.sin(e.moveTimer * 0.04) * 0.6;
+      }
+      // Fire at half player rate
+      e.fireCD = (e.fireCD || 0) - 1;
+      if (e.fireCD <= 0) {
+        e.fireCD = 36;
+        const wl = e.weaponLevel || 1;
+        for (let i = -1; i <= 1; i++) {
+          enemyBullets.push({
+            x: e.x + i * 6, y: e.y + 14, px: e.x|0, py: (e.y+14)|0,
+            vx: i * 0.5, vy: 4 + wl * 0.3,
+            alive: true, color: e.col || '#88ccff'
+          });
+        }
+      }
+      break;
+    }
     case 'eliteTank':
       // 慢速重装, 锁屏中段, 不开火, 撞击伤害
       if (e.y < H * 0.32) e.y += e.speed * 1.4;
@@ -3715,6 +3832,20 @@ function drawEnemy(e) {
   const x=e.px, y=e.py;
   // Off-screen cull — skip work entirely
   if (x < -e.w || x > W + e.w || y < -e.h || y > H + e.h) return;
+  // Mirror clone — render the player's plane silhouette flipped vertically + tinted red.
+  if (e.type === 'mirrorClone') {
+    const skin = e.skin || PLANE_SKINS[save.selP1 || 0];
+    cx.save();
+    cx.translate(x, y);
+    cx.scale(1, -1);   // flip so the plane points down at the player
+    drawVectorPlane(skin[3], ['#aa2244', '#ff66aa', '#88224a', '#ff88cc'], cx, 0, 0, 0.85, false, 0, 0, 0);
+    cx.restore();
+    // Red glitch ring marker
+    cx.strokeStyle = `rgba(255,80,140,${0.5 + Math.sin(frame*0.18)*0.3})`;
+    cx.lineWidth = 1.5;
+    cx.beginPath(); cx.arc(x, y, 18, 0, Math.PI*2); cx.stroke();
+    return;
+  }
   // Track horizontal velocity for banking
   if (typeof e.lastX !== 'number') e.lastX = e.x;
   const dxDelta = e.x - e.lastX;
@@ -4521,7 +4652,15 @@ function spawnBoss() {
   // 难度封顶: 关卡分量取 min(level, ENDLESS_DIFF_CAP), 之后保持地狱难度
   const cappedLv = Math.min(level, ENDLESS_DIFF_CAP);
   const barCount = clamp(Math.round((1 + Math.floor((cappedLv-1)/2)) * (C.bossBarMul||1)), 1, 9);
-  const hp = (def.hp + cappedLv*150) * barCount * C.bossHpMul;
+  // ─── Boss tier (阶) — same boss reappears stronger every cycle ──────────
+  // 12 levels per boss cycle in endless. Tier 1 = first encounter, +10% per re-appearance.
+  if (!save.bossTiers) save.bossTiers = {};
+  const tier = (save.bossTiers[idx] || 0) + 1;
+  save.bossTiers[idx] = tier;
+  writeSave();
+  const tierMul = Math.pow(1.10, tier - 1);
+  const tierLabel = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十'][Math.min(tier-1, 9)] || (tier + '');
+  const hp = (def.hp + cappedLv*150) * barCount * C.bossHpMul * tierMul;
   boss = {
     bossType: idx,
     x: W/2, y: -80, px:W/2|0, py:-80,
@@ -4530,10 +4669,14 @@ function spawnBoss() {
     w:80, h:60, alive:true,
     phase:0, moveTimer:0, shootTimer:0,
     vx: 1.5, entryDone:false,
-    pts: 5000 + cappedLv*500,
+    pts: Math.round((5000 + cappedLv*500) * tierMul),
     extra:0, extra2:0,
-    color: def.color, acc: def.acc, name: def.name,
-    bannerTime: 120, bannerLabel: 'WARNING · BOSS',  // 2s spawn banner
+    color: def.color, acc: def.acc,
+    name: tier > 1 ? (tierLabel + '阶 ' + def.name) : def.name,
+    tier,
+    fireRateBoost: tierMul,   // higher tier = slightly more aggressive fire
+    bannerTime: 120,
+    bannerLabel: tier > 1 ? ('WARNING · ' + tierLabel + '阶 BOSS') : 'WARNING · BOSS',
   };
 }
 
@@ -5589,9 +5732,13 @@ function collectPickups() {
             }
             break;
           case 'life':
-            p.lives++; addFT('+1UP',pk.x,pk.y,'#ff4444'); SFX.pickupLife(); break;
+            if (p.lives >= 10) { addFT('生命已满',pk.x,pk.y,'#ff8888'); SFX.buyFail(); }
+            else { p.lives++; addFT('+1UP',pk.x,pk.y,'#ff4444'); SFX.pickupLife(); }
+            break;
           case 'bomb':
-            p.bombs++; addFT('+BOMB',pk.x,pk.y,'#4444ff'); break;
+            if (p.bombs >= 10) { addFT('核弹已满',pk.x,pk.y,'#8888ff'); SFX.buyFail(); }
+            else { p.bombs++; addFT('+BOMB',pk.x,pk.y,'#4444ff'); }
+            break;
           case 'shield':
             p.shield=420; p.shieldHits=3;
             addFT('SHIELD x3',pk.x,pk.y,'#00ffcc'); SFX.pickupShield(); break;
@@ -5959,6 +6106,13 @@ function checkCollisions() {
 
 function hitPlayer(p) {
   if(p.invTimer>0) return;
+  // Dodge rune — full evasion roll happens BEFORE shields/lives consume.
+  if (isRuneEquipped('dodge') && Math.random() < runeProb('dodge')) {
+    p.invTimer = 14;
+    addFT('💨 闪避', p.x, p.y - 14, '#aaffee');
+    SFX.hitPlayer();
+    return;
+  }
   if(p.shield>0){
     p.shieldHits=(p.shieldHits||1)-1;
     if(p.shieldHits<=0){p.shield=0;p.shieldHits=0;}
@@ -6101,6 +6255,38 @@ function killBoss() {
     }
   }
   SFX.levelUp(); addFT('LEVEL '+level,W/2,H/2-20,'#ffff00');
+  // ─── Hidden mirror level (镜像隐藏关) ──────────────────────────────────
+  // 8% chance after lv 3 (endless or stage). Spawns clones of the player's plane
+  // with same wingmen but at 50% strength. Replaces normal wave for this level.
+  if (level >= 4 && Math.random() < 0.08) {
+    mirrorLevel = true;
+    addFT('⚠ 镜像关卡', W/2, H/2 + 20, '#ff88ff');
+  } else {
+    mirrorLevel = false;
+  }
+}
+let mirrorLevel = false;
+// Spawn a single mirror clone — visually identical to the player but acts as enemy.
+function spawnMirrorClone() {
+  const p = players[0];
+  if (!p) return;
+  const skinIdx = save.selP1 || 0;
+  const skin = PLANE_SKINS[skinIdx];
+  // Use a custom enemy "stub" with the player's plane silhouette + half stats.
+  const e = mkEnemy('basic', rnd(60, W - 60), -30);
+  e.type = 'mirrorClone';
+  e.skinIdx = skinIdx;
+  e.skin = skin;
+  e.weapon = p.weapon || 0;
+  e.weaponLevel = Math.max(1, Math.floor((p.weaponLevel || 1) * 0.5));
+  e.col = skin[4][0];
+  e.w = 22; e.h = 22;
+  // HP = 50% of an "elite" baseline that scales with level
+  const baseHp = 200 + level * 60;
+  e.hp = baseHp * 0.5; e.maxHp = e.hp;
+  e.pts = 350;
+  e.fireCD = 0;
+  enemies.push(e);
 }
 
 // ─── EXPLOSIONS ──────────────────────────────────────────────────────────────
@@ -6146,11 +6332,11 @@ const WAVE_POOLS = [
   ['zigzag','dart','jet','saucer','bomber','splitter'],
   ['zigzag','bomber','splitter','gunship','minelayer','stealth'],
   ['bomber','gunship','minelayer','stealth','sniper','mortar'],
-  ['gunship','minelayer','sniper','mortar','tank','hive','swarmlet','asteroid'],
-  ['gunship','tank','hive','swarmlet','sniper','elite','turret','asteroid','ramship','eliteHomer'],
+  ['gunship','minelayer','sniper','mortar','tank','hive','swarmlet'],
+  ['gunship','tank','hive','swarmlet','sniper','elite','turret','ramship','eliteHomer'],
   ['tank','elite','turret','sniper','mortar','carrier','splitter','ramship','eliteHomer','eliteClone'],
-  ['elite','tank','carrier','turret','sniper','minelayer','hive','jet','asteroid','ramship','eliteTank','eliteHomer','eliteClone'],
-  ['elite','tank','carrier','turret','sniper','mortar','minelayer','hive','stealth','asteroid','ramship','eliteTank','eliteHomer','eliteClone'],
+  ['elite','tank','carrier','turret','sniper','minelayer','hive','jet','ramship','eliteTank','eliteHomer','eliteClone'],
+  ['elite','tank','carrier','turret','sniper','mortar','minelayer','hive','stealth','ramship','eliteTank','eliteHomer','eliteClone'],
   ['elite','tank','carrier','turret','sniper','mortar','minelayer','hive','stealth','splitter','dart','jet','asteroid','ramship','eliteTank','eliteHomer','eliteClone'],
 ];
 
@@ -6237,11 +6423,20 @@ function updateWaves() {
       const idx2 = Math.max(0, idx-1);
       pool = WAVE_POOLS[idx].concat(WAVE_POOLS[idx2]);
     }
+    // Endless lv 5+ — sprinkle in giant asteroids as a hazard, but keep them rare.
+    if (level >= 5) {
+      pool = pool.concat(['asteroid']);
+    }
   } else {
     pool = poolForLevel(level);
   }
 
-  if(waveTimer%d.spawnRate===0 && enemies.length < MAX_ENEMIES) {
+  if (mirrorLevel) {
+    // Mirror level: only mirror clones spawn; pace is steadier
+    if (waveTimer % Math.max(120, d.spawnRate * 2) === 0 && enemies.length < MAX_ENEMIES - 4) {
+      spawnMirrorClone();
+    }
+  } else if(waveTimer%d.spawnRate===0 && enemies.length < MAX_ENEMIES) {
     const type=pool[rndInt(0,pool.length-1)];
     const count=rndInt(1,d.enemyCount+1);
     for(let i=0;i<count;i++) setTimeout(()=>{
@@ -6716,9 +6911,9 @@ function drawTitle() {
   cx.textAlign = 'left';
 
   // ─── Currency badge (top-right corner) ─────────────────────────────────
-  // Pulled out of the bottom so the lower half can be devoted to mode tabs.
+  // Wider frame so 7-digit coins / 4-digit diamonds never overflow the box.
   {
-    const bx = W - 152, by = 18, bw = 134, bh = 30;
+    const bw = 200, bh = 32, bx = W - bw - 14, by = 16;
     const g = cx.createLinearGradient(bx, by, bx, by + bh);
     g.addColorStop(0, '#0a1c2e');
     g.addColorStop(1, '#050d18');
@@ -6726,12 +6921,12 @@ function drawTitle() {
     cx.fillRect(bx, by, bw, bh);
     cx.strokeStyle = '#33557a'; cx.lineWidth = 1;
     cx.strokeRect(bx + 0.5, by + 0.5, bw - 1, bh - 1);
-    cx.fillStyle = '#ffcc44';
     cx.font = "bold 12px 'Courier New', monospace";
     cx.textAlign = 'left';
-    cx.fillText('🪙 ' + save.coins, bx + 10, by + 19);
+    cx.fillStyle = '#ffcc44';
+    cx.fillText('🪙 ' + save.coins, bx + 10, by + 20);
     cx.fillStyle = '#88ccff';
-    cx.fillText('💎 ' + save.diamonds, bx + 76, by + 19);
+    cx.fillText('💎 ' + save.diamonds, bx + 110, by + 20);
   }
 
   // Hint line below the mode tabs (replaces orphan footer)
@@ -6967,6 +7162,7 @@ const CODEX_TABS = [
   {id:'bosses',  label:'Boss'},
   {id:'wingmen', label:'僚机'},
   {id:'runes',   label:'符文'},
+  {id:'trails',  label:'残影'},
   {id:'pickups', label:'道具'},
 ];
 let codexTab = 'weapons';
@@ -7070,6 +7266,7 @@ function drawCodex() {
   else if (codexTab==='bosses')  totalContentH = drawCodexBosses(bodyY - codexScroll);
   else if (codexTab==='wingmen') totalContentH = drawCodexWingmen(bodyY - codexScroll);
   else if (codexTab==='runes')   totalContentH = drawCodexRunes(bodyY - codexScroll);
+  else if (codexTab==='trails')  totalContentH = drawCodexTrails(bodyY - codexScroll);
   else if (codexTab==='pickups') totalContentH = drawCodexPickups(bodyY - codexScroll);
   cx.restore();
 
@@ -7092,6 +7289,40 @@ function drawCodex() {
 }
 let codexContentH = 0;
 
+// Crisp pickup-style weapon thumbnail — looks like the in-game ★/W drop
+function drawWeaponThumb(weaponIdx, cxC, cyC, col) {
+  // Soft halo (dim, not blurry W#)
+  const halo = cx.createRadialGradient(cxC, cyC, 1, cxC, cyC, 16);
+  halo.addColorStop(0, col + 'aa');
+  halo.addColorStop(0.5, col + '44');
+  halo.addColorStop(1, col + '00');
+  cx.fillStyle = halo;
+  cx.beginPath(); cx.arc(cxC, cyC, 16, 0, Math.PI*2); cx.fill();
+  // Crisp star body (mirrors pickup look)
+  cx.save();
+  cx.translate(cxC, cyC);
+  cx.fillStyle = col;
+  cx.strokeStyle = '#ffffff';
+  cx.lineWidth = 1;
+  cx.beginPath();
+  for (let k = 0; k < 10; k++) {
+    const r = (k % 2 === 0) ? 11 : 4.5;
+    const a = -Math.PI/2 + k * (Math.PI / 5);
+    const x = Math.cos(a) * r, y = Math.sin(a) * r;
+    if (k === 0) cx.moveTo(x, y); else cx.lineTo(x, y);
+  }
+  cx.closePath();
+  cx.fill(); cx.stroke();
+  // Inner number — readable on top of the star
+  cx.fillStyle = '#ffffff';
+  cx.font = "bold 9px 'Courier New', monospace";
+  cx.textAlign = 'center';
+  cx.textBaseline = 'middle';
+  cx.fillText(String(weaponIdx + 1), 0, 1);
+  cx.textBaseline = 'alphabetic';
+  cx.restore();
+}
+
 function drawCodexWeapons(startY) {
   const rowH = 80;
   cx.textAlign='left';
@@ -7102,23 +7333,15 @@ function drawCodexWeapons(startY) {
     cx.fillRect(16, ry, W-32, rowH-8);
     cx.fillStyle = col;
     cx.fillRect(16, ry, 4, rowH-8);
-    // Thumbnail: bullet glow disc with weapon color
+    // Thumbnail panel
     cx.fillStyle = '#04101a';
     cx.fillRect(26, ry+4, 44, rowH-16);
     cx.strokeStyle = col + '88'; cx.lineWidth = 0.6;
     cx.strokeRect(26.5, ry+4.5, 43, rowH-17);
-    const tcx = 48, tcy = ry + (rowH-8)/2;
-    const wg = cx.createRadialGradient(tcx, tcy, 1, tcx, tcy, 14);
-    wg.addColorStop(0, '#ffffff'); wg.addColorStop(0.4, col); wg.addColorStop(1, col + '00');
-    cx.fillStyle = wg;
-    cx.beginPath(); cx.arc(tcx, tcy, 14, 0, Math.PI*2); cx.fill();
-    cx.fillStyle = col;
-    cx.font="bold 11px 'Courier New', monospace";
-    cx.textAlign='center';
-    cx.fillText('W' + (i+1), tcx, tcy + 4);
-    cx.textAlign='left';
+    drawWeaponThumb(i, 48, ry + (rowH-8)/2, col);
     cx.fillStyle = col;
     cx.font="bold 14px 'Courier New', monospace";
+    cx.textAlign='left';
     cx.fillText(n, 80, ry+20);
     cx.fillStyle = '#88ccee';
     cx.font="10px 'Courier New', monospace";
@@ -7277,20 +7500,36 @@ function drawCodexRunes(startY) {
     cx.fillRect(16, ry, W-32, rowH-8);
     cx.fillStyle = r.col;
     cx.fillRect(16, ry, 4, rowH-8);
-    // Thumbnail with glowing rune disc
+    // Crisp rune sigil — solid disc with hex frame, then opaque emoji icon on top.
     cx.fillStyle = '#04101a';
     cx.fillRect(26, ry+4, 56, rowH-16);
     cx.strokeStyle = r.col + '88'; cx.lineWidth = 0.6;
     cx.strokeRect(26.5, ry+4.5, 55, rowH-17);
     const tcx = 54, tcy = ry + (rowH-8)/2;
-    const rg = cx.createRadialGradient(tcx, tcy, 1, tcx, tcy, 18);
-    rg.addColorStop(0, '#ffffff'); rg.addColorStop(0.4, r.col); rg.addColorStop(1, r.col + '00');
-    cx.fillStyle = rg;
+    // Soft outer halo (small radius so it doesn't blur the icon)
+    const halo = cx.createRadialGradient(tcx, tcy, 4, tcx, tcy, 18);
+    halo.addColorStop(0, r.col + '55');
+    halo.addColorStop(1, r.col + '00');
+    cx.fillStyle = halo;
     cx.beginPath(); cx.arc(tcx, tcy, 18, 0, Math.PI*2); cx.fill();
-    cx.fillStyle = r.col;
-    cx.font = "bold 18px sans-serif";
+    // Hex frame
+    cx.fillStyle = '#0a1828';
+    cx.beginPath();
+    for (let k = 0; k < 6; k++) {
+      const a = -Math.PI/2 + k * (Math.PI/3);
+      const px = tcx + Math.cos(a) * 14, py = tcy + Math.sin(a) * 14;
+      if (k === 0) cx.moveTo(px, py); else cx.lineTo(px, py);
+    }
+    cx.closePath();
+    cx.fill();
+    cx.strokeStyle = r.col; cx.lineWidth = 1.5; cx.stroke();
+    // Crisp emoji centered (no gradient fill behind it = no smudge)
+    cx.font = "bold 20px 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif";
     cx.textAlign = 'center';
-    cx.fillText(r.icon, tcx, tcy + 6);
+    cx.textBaseline = 'middle';
+    cx.fillStyle = r.col;
+    cx.fillText(r.icon, tcx, tcy + 1);
+    cx.textBaseline = 'alphabetic';
     cx.textAlign = 'left';
     // Name
     cx.fillStyle = r.col;
@@ -7310,6 +7549,55 @@ function drawCodexRunes(startY) {
     cx.fillText(owned > 0 ? ('已拥有 Lv ' + owned) : '未拥有 (商城购买)', W - 144, ry+58);
   }
   return RUNE_DEFS.length * rowH + 20;
+}
+
+function drawCodexTrails(startY) {
+  const rowH = 56;
+  cx.textAlign = 'left';
+  for (let i = 0; i < TRAIL_DEFS.length; i++) {
+    const def = TRAIL_DEFS[i];
+    const ry = startY + i * rowH + 6;
+    const owned = !!(save.trails && save.trails[i]);
+    const isSel = save.selTrail === i;
+    cx.fillStyle = isSel ? 'rgba(60,30,80,0.55)' : 'rgba(20,40,60,0.45)';
+    cx.fillRect(16, ry, W - 32, rowH - 8);
+    cx.fillStyle = def[4];
+    cx.fillRect(16, ry, 4, rowH - 8);
+    // Animated dot trail preview (similar to shop card)
+    cx.fillStyle = '#04101a';
+    cx.fillRect(26, ry + 4, 90, rowH - 16);
+    cx.strokeStyle = def[4] + '88'; cx.lineWidth = 0.6;
+    cx.strokeRect(26.5, ry + 4.5, 89, rowH - 17);
+    const baseY = ry + (rowH - 8) / 2;
+    for (let p = 0; p < 6; p++) {
+      const tt = ((frame + p * 5) % 30) / 30;
+      const a = 1 - tt;
+      cx.globalAlpha = a * 0.85;
+      cx.fillStyle = def[4];
+      const dotX = 30 + tt * 80;
+      cx.beginPath();
+      cx.arc(dotX, baseY, 4 - tt * 2, 0, Math.PI * 2);
+      cx.fill();
+    }
+    cx.globalAlpha = 1;
+    // Name + status + cost
+    cx.fillStyle = def[4];
+    cx.font = "bold 13px 'Courier New', monospace";
+    cx.fillText(def[0], 128, ry + 22);
+    cx.fillStyle = '#cccccc';
+    cx.font = "10px 'Courier New', monospace";
+    cx.fillText('样式: ' + def[3], 128, ry + 38);
+    cx.font = "bold 10px 'Courier New', monospace";
+    if (owned) {
+      cx.fillStyle = isSel ? '#ffcc44' : '#88ff88';
+      cx.fillText(isSel ? '★ 当前装备 ★' : '已拥有', W - 110, ry + 22);
+    } else {
+      cx.fillStyle = def[2] === 'd' ? '#88ccff' : (def[2] === 'g' ? '#ffcc44' : '#aaaaaa');
+      const costLabel = def[2] === 'free' ? '默认' : (def[2] === 'd' ? '💎' : '🪙') + def[1];
+      cx.fillText(costLabel, W - 110, ry + 22);
+    }
+  }
+  return TRAIL_DEFS.length * rowH + 20;
 }
 
 function drawCodexPickups(startY) {
@@ -8415,6 +8703,9 @@ function startGame(_unused, endless, startLv) {
   screenMissiles=[]; lastMissileSpawn=0; blackHoles=[];
   score=0; level=Math.max(1,(startLv|0)||1); waveTimer=0; killCount=0; bossActive=false; boss=null; bombFlash=0;
   sessionCoins=0; sessionDiamonds=0; finalScore=0; frame=0;
+  // Boss tiers reset every fresh run so encounters scale with the boss-appearance count
+  // within THIS playthrough (stage = full reset, endless resume keeps progression).
+  if (!endlessMode || !save.endlessState) save.bossTiers = {};
   players.push(createPlayer(1,save.selP1));
   // Random-map mode: pick a fresh owned bg per run (does not persist as selection)
   if (save.bgRandom) {
@@ -8880,13 +9171,15 @@ function drawGameField() {
   for(const e of enemies) drawEnemy(e);
   drawBoss();
   drawBullets();
-  drawEnemyBullets();
   drawPickups();
   drawExplosions();
   drawWingmen();
   for(const p of players) drawPlayer(p);
   drawScreenMissiles();
   drawBlackHoles();
+  // Enemy bullets render LAST among gameplay layers so they always sit on top
+  // and are never visually covered by enemies, the player, or pickups.
+  drawEnemyBullets();
   drawFTs();
   cx.restore();
   // HUD + joystick visual outside shake transform
