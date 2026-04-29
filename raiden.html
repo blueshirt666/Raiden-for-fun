@@ -32,7 +32,9 @@ canvas { display:block; width:100%; height:100%; image-rendering:auto; }
 }
 #btn-speed:hover { background:#332200; border-color:#ffcc44; }
 #btn-infbomb {
-  position:absolute; right:-52px; top:172px; width:44px; height:44px;
+  /* Sits below codex (top:226 + 44 + 8 gap = 280) so it appears as the 5th
+     side-bar slot whenever invincible mode is on. */
+  position:absolute; right:-52px; top:280px; width:44px; height:44px;
   background:#221122; border:2px solid #ff44ff; color:#ffaaff;
   font-size:18px; cursor:pointer;
   display:flex; align-items:center; justify-content:center;
@@ -1148,6 +1150,9 @@ let paused = false;
 let invincible = false;
 let twoPlayer = false;
 let endlessMode = false;
+let bossMode = false;          // pure boss-rush: only bosses spawn, 1 then 2 etc.
+let bossModeCycle = 0;         // 0 = single boss per fight, 1 = two bosses, 2+ = same
+let boss2 = null;              // second boss in dual-boss fights
 
 let sessionCoins = 0;
 let sessionDiamonds = 0;
@@ -3397,8 +3402,13 @@ function updatePlayer(p, keys) {
   // Bomb: keyboard on desktop (P1 = Space, P2 = K); mobile uses double-tap
   if (!IS_MOBILE) {
     const bombKey=p.pNum===1?(keys[' ']||keys['Spacebar']):(keys['k']||keys['K']);
-    if (bombKey&&!p._bombHeld&&p.bombs>0) {
-      p._bombHeld=true; p.bombs--; doBomb(p); SFX.bomb();
+    if (bombKey && !p._bombHeld) {
+      // Invincible mode → infinite bombs (no stock consumed); otherwise need stock.
+      if (invincible) {
+        p._bombHeld = true; doBomb(p); SFX.bomb();
+      } else if (p.bombs > 0) {
+        p._bombHeld = true; p.bombs--; doBomb(p); SFX.bomb();
+      }
     }
     if (!bombKey) p._bombHeld=false;
   }
@@ -3893,6 +3903,17 @@ function doBomb(p) {
     spawnExplosion(boss.x,boss.y,'huge');
     addFT('-'+dmg, boss.x, boss.y-30, '#ffff44');
     if(boss.hp<=0) killBoss();
+  }
+  if (boss2 && boss2.alive) {
+    const dmg2 = Math.ceil(boss2.maxHp / 3);
+    boss2.hp -= dmg2;
+    spawnExplosion(boss2.x, boss2.y, 'huge');
+    addFT('-' + dmg2, boss2.x, boss2.y-30, '#ffff44');
+    if (boss2.hp <= 0) {
+      const _o = boss; boss = boss2; boss._isSecondary = true; killBoss();
+      if (!boss || !boss.alive) boss2 = null; else boss2 = boss;
+      boss = _o;
+    }
   }
   // Black holes take ~1/3 of MAX hp too — bombs destabilize them.
   for (const h of blackHoles) {
@@ -5144,6 +5165,12 @@ const BOSS_DEFS = [
 // Endless 难度上限 (hell plateau) — 到此分以上难度不再升, 但内容随机化
 const ENDLESS_DIFF_CAP = 100;
 function bossIndex() {
+  // Boss mode: cycle 0 = sequential 0..12 (level 1..13);
+  //            cycle 1+ = random pair per level (this returns first; second from spawnSecondBoss)
+  if (bossMode) {
+    if (bossModeCycle === 0) return clamp(level-1, 0, BOSS_DEFS.length-1);
+    return rndInt(0, BOSS_DEFS.length-1);
+  }
   // Endless past lv 13 — random pick from the full pool (includes clone boss)
   if (endlessMode && level > BOSS_DEFS.length) {
     return rndInt(0, BOSS_DEFS.length-1);
@@ -5191,6 +5218,70 @@ function spawnBoss() {
     bannerTime: 120,
     bannerLabel: tier > 1 ? ('WARNING · ' + tierLabel + '阶 BOSS') : 'WARNING · BOSS',
   };
+  // Boss mode — keep first boss on the LEFT half so the second can join on the right.
+  if (bossMode && bossModeCycle >= 1) {
+    boss.x = W * 0.32;
+    boss.anchorX = boss.x;
+  }
+}
+
+// Spawn a SECOND boss for boss-rush dual fights.
+function spawnSecondBoss() {
+  const C = save.console || defaultConsole();
+  // Pick a different boss than boss.bossType
+  let idx = rndInt(0, BOSS_DEFS.length - 1);
+  if (boss && idx === boss.bossType) idx = (idx + 1) % BOSS_DEFS.length;
+  const def = BOSS_DEFS[idx];
+  const cappedLv = Math.min(level, ENDLESS_DIFF_CAP);
+  const barCount = clamp(Math.round((1 + Math.floor((cappedLv-1)/2)) * (C.bossBarMul||1)), 1, 9);
+  const tier = (save.bossTiers && save.bossTiers[idx] || 0) + 1;
+  if (!save.bossTiers) save.bossTiers = {};
+  save.bossTiers[idx] = tier;
+  writeSave();
+  const tierMul = Math.pow(1.10, tier - 1);
+  const tierLabel = ['一','二','三','四','五','六','七','八','九','十'][Math.min(tier-1,9)] || (tier+'');
+  const eachBossHp  = (C.bossHpEach   && typeof C.bossHpEach[idx]  === 'number') ? C.bossHpEach[idx]  : 1;
+  const eachBossBar = (C.bossBarEach  && typeof C.bossBarEach[idx] === 'number') ? C.bossBarEach[idx] : 1;
+  const finalBars = clamp(Math.round(barCount * eachBossBar), 1, 12);
+  // Dual-boss fights apply 0.7× HP per boss to keep total HP roughly fair.
+  const hp = (def.hp + cappedLv*150) * finalBars * C.bossHpMul * tierMul * eachBossHp * 0.7;
+  boss2 = {
+    bossType: idx,
+    x: W * 0.68, y: -80, px:(W*0.68)|0, py:-80,
+    hp, maxHp: hp,
+    barCount: finalBars,
+    w:80, h:60, alive:true,
+    phase:0, moveTimer:0, shootTimer:0,
+    vx: -1.5, entryDone:false,
+    pts: Math.round((4000 + cappedLv*400) * tierMul),
+    extra:0, extra2:0,
+    color: def.color, acc: def.acc,
+    name: tier > 1 ? (tierLabel + '阶 ' + def.name) : def.name,
+    tier,
+    fireRateBoost: tierMul,
+    bannerTime: 120,
+    bannerLabel: '双 BOSS · ' + def.name,
+    anchorX: W * 0.68,
+  };
+}
+
+function startBossMode() {
+  bossMode = true; endlessMode = false; twoPlayer = false;
+  players=[]; wingmen=[]; bullets=[]; enemyBullets=[]; enemies=[]; pickups=[]; explosions=[]; floatingTexts=[];
+  screenMissiles=[]; lastMissileSpawn=0; blackHoles=[];
+  score=0; level=1; waveTimer=0; killCount=0; bossActive=false; boss=null; boss2=null; bombFlash=0;
+  sessionCoins=0; sessionDiamonds=0; finalScore=0; frame=0;
+  bossModeCycle = 0;
+  save.bossTiers = {};
+  players.push(createPlayer(1, save.selP1));
+  if (save.bgRandom) {
+    const ownedBgs = BG_SKINS.map((_, i) => save.bgs && save.bgs[i] ? i : -1).filter(x => x >= 0);
+    if (ownedBgs.length) save.selBG = ownedBgs[Math.floor(Math.random() * ownedBgs.length)];
+  }
+  initBGStars(BG_SKINS[save.selBG][3]);
+  screen = 'game';
+  if (bgmEnabled) startBGM();
+  addFT('BOSS 模式 · 第 1 / 13 战', W/2, H/2 - 30, '#ff66aa');
 }
 
 function updateBoss() {
@@ -6661,6 +6752,16 @@ function checkCollisions() {
         applyRuneOnHit(boss, b);
         boss.hp-=b.dmg; if(boss.hp<=0)killBoss();
       }
+      if (boss2 && boss2.alive && Math.abs(boss2.x - b.x) < b.w/2 + 44 && boss2.y < b.h) {
+        applyRuneOnHit(boss2, b);
+        boss2.hp -= b.dmg;
+        if (boss2.hp <= 0) {
+          // Swap and kill boss2 cleanly
+          const _o = boss; boss = boss2; boss._isSecondary = true; killBoss();
+          if (!boss || !boss.alive) boss2 = null; else boss2 = boss;
+          boss = _o;
+        }
+      }
       continue;
     }
     for(const e of enemies) {
@@ -6689,6 +6790,15 @@ function checkCollisions() {
       boss.hp-=b.dmg; b.alive=false; SFX.hitEnemy();
       if(boss.hp<=0) killBoss();
     }
+    if (b.alive && boss2 && boss2.alive && Math.abs(b.x - boss2.x) < 44 && Math.abs(b.y - boss2.y) < 34) {
+      applyRuneOnHit(boss2, b);
+      boss2.hp -= b.dmg; b.alive = false; SFX.hitEnemy();
+      if (boss2.hp <= 0) {
+        const _o = boss; boss = boss2; boss._isSecondary = true; killBoss();
+        if (!boss || !boss.alive) boss2 = null; else boss2 = boss;
+        boss = _o;
+      }
+    }
   }
   for(const p of players) {
     if(p.dead||p.invTimer>0||invincible) continue;
@@ -6710,6 +6820,10 @@ function checkCollisions() {
     if(boss&&boss.alive){
       const dx=boss.x-hcx, dy=boss.y-hcy;
       if (Math.abs(dx)<48 && Math.abs(dy)<38) hitPlayer(p);
+    }
+    if (boss2 && boss2.alive) {
+      const dx2 = boss2.x - hcx, dy2 = boss2.y - hcy;
+      if (Math.abs(dx2) < 48 && Math.abs(dy2) < 38) hitPlayer(p);
     }
   }
 }
@@ -6827,6 +6941,17 @@ function killEnemy(e) {
 
 function killBoss() {
   if(!boss||!boss.alive) return;
+  // Secondary boss (boss2 swapped in via updateBosses) — clear it without
+  // advancing the level. The primary will handle level transition when it dies.
+  if (boss._isSecondary) {
+    boss.alive = false;
+    score += boss.pts || 0;
+    spawnExplosion(boss.x, boss.y, 'large');
+    addFT('+'+(boss.pts||0), boss.x, boss.y-18, '#ff88ff');
+    sessionCoins += 50;
+    SFX.bossDefeat();
+    return;
+  }
   const wasLvl = level;
   boss.alive=false; score+=boss.pts; bossActive=false;
   triggerShake(18, 50);
@@ -6846,6 +6971,31 @@ function killBoss() {
   for(const e of enemies){if(e.alive)spawnExplosion(e.x,e.y,'small');e.alive=false;}
   for(const eb of enemyBullets) eb.alive=false;
   boss=null;
+  // Boss-rush mode: boss-only progression. Wait for boss2 if present.
+  if (bossMode) {
+    if (boss2 && boss2.alive) {
+      // Primary died first — leave the run going so player must finish boss2 too.
+      // The secondary will be killed via the per-bullet path; level advances on its death.
+      addFT('再战 BOSS 2!', W/2, H/2 - 20, '#ff88ff');
+      // Reset bossActive so wave loop won't try to spawn a new primary mid-fight
+      bossActive = true;
+      return;
+    }
+    // Both bosses (or single) gone — advance.
+    level++; waveTimer = 0;
+    if (level > 13) {
+      // Cycle complete — bump to dual mode
+      bossModeCycle = Math.max(1, bossModeCycle + 1);
+      level = 1;
+      save.bossTiers = {};      // reset tier counter so next cycle starts fresh
+      addFT('全员击破 · 第 ' + (bossModeCycle + 1) + ' 轮 · 双 BOSS 模式', W/2, H/2-30, '#ffff44');
+    } else {
+      const totalSlot = bossModeCycle === 0 ? 13 : level;
+      addFT('BOSS ' + level + ' / ' + totalSlot, W/2, H/2-20, '#ff66aa');
+    }
+    SFX.levelUp();
+    return;
+  }
   // Stage mode lvl 12 boss → tier victory + medal; otherwise advance
   if (!endlessMode && wasLvl >= 12) {
     setTimeout(()=>{
@@ -6997,6 +7147,13 @@ function getDiff() {
 function updateWaves() {
   waveTimer++;
   if(bossActive) return;
+
+  // Boss-rush mode — skip waves entirely, spawn boss(es) the moment we land here.
+  if (bossMode) {
+    spawnBoss();
+    if (bossModeCycle >= 1) spawnSecondBoss();
+    return;
+  }
 
   // Boss trigger: kill quota met → enter boss IMMEDIATELY (clear any stragglers)
   const C = save.console || defaultConsole();
@@ -7167,9 +7324,11 @@ function drawHUD() {
 //   y= 540–565 : control hint
 const TITLE_EQUIP = { y: 384, h: 40, cardW: 100, gap: 8 };
 const TITLE_EQUIP_X = (W - (TITLE_EQUIP.cardW * 4 + TITLE_EQUIP.gap * 3)) / 2;  // = 28
+// Three mode tabs: 关卡 / 无尽 / Boss — re-laid out so they fit the W=480 canvas.
 const titleBtns=[
-  {x: 60, y:446, w:172, h:70, text:'关卡模式',  act:'solo'},
-  {x:248, y:446, w:172, h:70, text:'无尽模式',  act:'endless'},
+  {x: 16, y:446, w:140, h:70, text:'关卡模式',  act:'solo'},
+  {x:170, y:446, w:140, h:70, text:'无尽模式',  act:'endless'},
+  {x:324, y:446, w:140, h:70, text:'BOSS 模式', act:'bossMode'},
 ];
 function titleEquipCardX(i){ return TITLE_EQUIP_X + i*(TITLE_EQUIP.cardW + TITLE_EQUIP.gap); }
 // Shop / Codex / Settings now use DOM side-bar buttons (#btn-shop / #btn-codex / #btn-pause).
@@ -7520,12 +7679,12 @@ function drawTitle() {
     cx.moveTo(btn.x+3, btn.y+3); cx.lineTo(btn.x+btn.w-3, btn.y+3);
     cx.moveTo(btn.x+3, btn.y+3); cx.lineTo(btn.x+3, btn.y+btn.h-3);
     cx.stroke();
-    // Tab label
+    // Tab label — auto-sized for narrower 3-tab layout
     const label = btn.text;
     cx.fillStyle = isActive ? '#aaffff' : '#aaccee';
-    cx.font = "bold 20px 'Courier New', monospace";
+    cx.font = "bold 16px 'Courier New', monospace";
     cx.textAlign = 'center';
-    cx.fillText(label, btn.x + btn.w/2, btn.y + btn.h/2 + 7);
+    cx.fillText(label, btn.x + btn.w/2, btn.y + btn.h/2 + 6);
     // Medal disc inside 关卡 tab corner (real medal art)
     if (btn.act === 'solo' && topKey) {
       drawMedalIcon(btn.x + btn.w - 22, btn.y + btn.h - 18, true, topKey);
@@ -7658,6 +7817,7 @@ function clickTitle(mx,my) {
     if (mx>=btn.x && mx<=btn.x+btn.w && my>=btn.y && my<=btn.y+btn.h) {
       if (btn.act === 'solo') screen = 'tierSelect';
       else if (btn.act === 'endless') startGame(false, true);
+      else if (btn.act === 'bossMode') startBossMode();
       return;
     }
   }
@@ -9416,6 +9576,7 @@ function clearEndlessSnapshot() {
 // ─── GAME INIT ───────────────────────────────────────────────────────────────
 function startGame(_unused, endless, startLv) {
   twoPlayer=false; endlessMode=!!endless;
+  bossMode=false; bossModeCycle=0; boss2=null; bossActive=false;
   players=[]; wingmen=[]; bullets=[]; enemyBullets=[]; enemies=[]; pickups=[]; explosions=[]; floatingTexts=[];
   screenMissiles=[]; lastMissileSpawn=0; blackHoles=[];
   score=0; level=Math.max(1,(startLv|0)||1); waveTimer=0; killCount=0; bossActive=false; boss=null; bombFlash=0;
@@ -9859,6 +10020,16 @@ function update() {
   updateEnemyBullets();
   for(const e of enemies) updateEnemy(e);
   updateBoss();
+  // Update boss2 by swapping it into the boss slot temporarily
+  if (boss2 && boss2.alive) {
+    const _orig = boss;
+    boss = boss2;
+    boss._isSecondary = true;
+    updateBoss();
+    if (boss) boss._isSecondary = false;
+    boss2 = (boss && boss.alive) ? boss : null;
+    boss = _orig;
+  }
   updateScreenMissiles();
   updateBlackHoles();
   updatePickups();
@@ -9893,6 +10064,12 @@ function drawGameField() {
   if(bombFlash>0){cx.fillStyle=`rgba(255,255,255,${bombFlash/22*0.7})`;cx.fillRect(0,0,W,H);}
   for(const e of enemies) drawEnemy(e);
   drawBoss();
+  if (boss2 && boss2.alive) {
+    const _orig = boss;
+    boss = boss2;
+    drawBoss();
+    boss = _orig;
+  }
   drawBullets();
   drawPickups();
   drawExplosions();
