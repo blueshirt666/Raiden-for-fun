@@ -177,6 +177,21 @@ const PLANE_SKINS = [
   ['白虎·西方',25, 'd',    9, ['#dddddd','#ffffff','#888888','#ffaaaa']],
   ['朱雀·南方',25, 'd',    10,['#ff4400','#ffcc44','#cc2200','#ff8822']],
   ['玄武·北方',25, 'd',    11,['#1a3355','#aaccee','#0a2244','#88aacc']],
+  // 骷髅战机
+  ['骷髅死神',30, 'd',    12,['#dcdcdc','#ff2200','#666666','#ff4422']],
+  // 12 生肖机甲(机械感金属配色, 每个生肖独立外观)
+  ['鼠·机偷',  18, 'd',    6, ['#5a5a6a','#aaaacc','#3a3a4a','#88ccff']],   // mouse / 灰金属潜行
+  ['牛·重铠',  18, 'd',    9, ['#7a4422','#ffaa55','#552200','#ff8844']],   // ox / 铜赤重甲
+  ['虎·斩刃',  18, 'd',    11,['#ffaa22','#222222','#aa6600','#ff4422']],   // tiger / 虎纹+黑虎刃
+  ['兔·跳影',  18, 'd',    7, ['#eeddff','#ffffff','#aaaadd','#ff88aa']],   // rabbit / 月白闪电
+  ['龙·天枢',  20, 'd',    8, ['#00ccaa','#aaffee','#006688','#88ffcc']],   // dragon / 翡翠龙鳞
+  ['蛇·毒鳞',  18, 'd',    2, ['#226633','#88ee44','#114422','#aaff44']],   // snake / 暗绿毒鳞
+  ['马·疾风',  18, 'd',    1, ['#cc4444','#ffaa66','#882222','#ff8844']],   // horse / 红棕疾风
+  ['羊·云螺',  18, 'd',    5, ['#eeeeee','#ffffff','#aaaaaa','#ffe0aa']],   // goat / 云白螺角
+  ['猴·机灵',  18, 'd',    4, ['#aa66ff','#ffeebb','#553388','#ffaa44']],   // monkey / 紫金灵巧
+  ['鸡·锐喙',  18, 'd',    10,['#ffcc00','#ff4400','#aa8800','#ff8800']],   // rooster / 金红锐喙
+  ['犬·守夜',  18, 'd',    0, ['#5588cc','#ddeeff','#224477','#aaccee']],   // dog / 蓝白守卫
+  ['猪·铁壁',  18, 'd',    3, ['#cc88aa','#ffddee','#884466','#ffaaee']],   // pig / 粉铁壁垒
 ];
 
 // BG_SKINS: [name, price, currency, bgType]
@@ -272,6 +287,7 @@ function defaultConsole() {
     bulletSpeedMul: 1.0,    // player bullet velocity multiplier
     starMaxDuration: 5,     // LV MAX seconds when picking star at Lv5
     reviveBombs: 5,         // bombs granted on revive
+    reviveInvSec: 3,        // invincibility seconds after a revive (also after natural respawn)
     // Enemy
     enemyHpMul: 1.0,        // global enemy HP multiplier
     enemySpeedMul: 1.0,     // enemy move speed multiplier
@@ -288,6 +304,16 @@ function defaultConsole() {
     coinMul: 1.0,           // coin reward multiplier
     diamondMul: 1.0,        // diamond reward multiplier
     bossKillMul: 1.0,       // boss-kill threshold multiplier (more kills needed)
+    // Black hole tuning
+    bhHpMul: 1.0,           // ×blackhole HP (final = base × this)
+    bhPullMul: 1.0,          // ×blackhole pull strength
+    bhMaxCount: 3,          // hard cap on simultaneous holes
+    bhSpawnIntervalMul: 1.0, // ×spawn interval (>1 slower)
+    // Map-missile (ICBM) tuning
+    missileWarnSec: 3.0,    // warning red-line duration (seconds @ 1×)
+    missileFireSec: 0.47,   // beam sweep duration (seconds)
+    missileMaxAxis: 5,      // max same-axis warnings (cap)
+    missileSpawnIntervalMul: 1.0, // ×spawn interval
     // Rune strength multipliers (1.0 = stock; >1 amplifies proc rate, capped at 1.0)
     runeProcMul: 1.0,       // global rune proc-rate multiplier
     burnDmgMul: 1.0,        // burn DoT %hp/tick multiplier
@@ -1155,8 +1181,16 @@ function capArray(arr, max) {
 }
 
 // ─── SCREEN MISSILES (横向/纵向贯穿屏幕导弹) ──────────────────────────────────
-const MISSILE_WARN_FRAMES = 180;   // 3s 红线警告
-const MISSILE_FIRE_FRAMES = 28;    // ~0.45s 致命光束
+const MISSILE_WARN_FRAMES = 180;   // 3s 红线警告 (default; runtime uses console value)
+const MISSILE_FIRE_FRAMES = 28;    // ~0.45s 致命光束 (default; runtime uses console value)
+function missileWarnFrames() {
+  const C = save.console || defaultConsole();
+  return Math.max(20, Math.round((C.missileWarnSec || 3.0) * 60));
+}
+function missileFireFrames() {
+  const C = save.console || defaultConsole();
+  return Math.max(6, Math.round((C.missileFireSec || 0.47) * 60));
+}
 const MISSILE_GAP = 110;           // 同轴最小间距, 保证有路可走
 function shouldEnableScreenMissiles() {
   if (!endlessMode) {
@@ -1181,17 +1215,20 @@ function maxConcurrentMissiles() {
   return clamp(1 + Math.floor(lvScale * 2), 1, 3);
 }
 function maxSameAxisMissiles() {
-  // How many warnings can stack on the SAME row (or same column).
-  // High endless levels can stack 3+ on the same axis simultaneously.
+  const C = save.console || defaultConsole();
+  const cap = (typeof C.missileMaxAxis === 'number') ? C.missileMaxAxis : 5;
+  let n;
   if (endlessMode) {
-    if (level < 25) return 2;
-    if (level < 45) return 3;
-    if (level < 70) return 4;
-    return 5;
+    if (level < 25) n = 2;
+    else if (level < 45) n = 3;
+    else if (level < 70) n = 4;
+    else n = 5;
+  } else {
+    if (currentTier() === 'hell')    n = 3;
+    else if (currentTier() === 'veteran') n = 2;
+    else n = 2;
   }
-  if (currentTier() === 'hell')    return 3;
-  if (currentTier() === 'veteran') return 2;
-  return 2;
+  return Math.min(cap, n);
 }
 function trySpawnScreenMissile() {
   if (screenMissiles.length >= maxConcurrentMissiles()) return;
@@ -1206,7 +1243,7 @@ function trySpawnScreenMissile() {
     // Cap same-axis warnings to keep at least one safe corridor available.
     const sameAxisCount = screenMissiles.filter(m => m.axis === axis).length;
     if (sameAxisCount >= maxSameAxisMissiles()) return;
-    screenMissiles.push({ axis, pos, warnT: MISSILE_WARN_FRAMES, fireT: 0 });
+    screenMissiles.push({ axis, pos, warnT: missileWarnFrames(), fireT: 0, fireMax: missileFireFrames() });
     return;
   }
 }
@@ -1214,9 +1251,11 @@ function updateScreenMissiles() {
   if (!shouldEnableScreenMissiles() || screen !== 'game') return;
   // Endless: late-game can fire bursts of multiple missiles per spawn tick
   // so 3+ rows / columns appear nearly simultaneously.
-  const interval = endlessMode
+  const Cm = save.console || defaultConsole();
+  const baseInterval = endlessMode
     ? Math.max(90, 540 - (level - 30) * 9)
     : (currentTier() === 'hell' ? 360 : 540);
+  const interval = baseInterval * (Cm.missileSpawnIntervalMul || 1);
   if (frame - lastMissileSpawn > interval) {
     lastMissileSpawn = frame;
     trySpawnScreenMissile();
@@ -1232,8 +1271,8 @@ function updateScreenMissiles() {
     }
     m.fireT++;
     // Damage tracks the ICBM HEAD position across the screen, not the full line
-    if (m.fireT > 0 && m.fireT < MISSILE_FIRE_FRAMES) {
-      const t = m.fireT / MISSILE_FIRE_FRAMES;
+    if (m.fireT > 0 && m.fireT < (m.fireMax || MISSILE_FIRE_FRAMES)) {
+      const t = m.fireT / (m.fireMax || MISSILE_FIRE_FRAMES);
       const headX = m.axis === 'h' ? -40 + (W + 80) * t : m.pos;
       const headY = m.axis === 'h' ? m.pos             : -40 + (H + 80) * t;
       for (const p of players) {
@@ -1246,7 +1285,7 @@ function updateScreenMissiles() {
       }
     }
   }
-  screenMissiles = screenMissiles.filter(m => m.fireT < MISSILE_FIRE_FRAMES);
+  screenMissiles = screenMissiles.filter(m => m.fireT < (m.fireMax || MISSILE_FIRE_FRAMES));
 }
 // Render an ICBM body at the given location with rotation matching axis direction.
 function drawICBM(x, y, ang) {
@@ -1309,9 +1348,9 @@ function drawScreenMissiles() {
       if (m.axis === 'h') cx.fillText('⚠ ICBM ' + sec + 's', W - 50, m.pos + 4);
       else                cx.fillText('⚠ ICBM ' + sec + 's', m.pos, 50);
       cx.textAlign = 'left';
-    } else if (m.fireT < MISSILE_FIRE_FRAMES) {
+    } else if (m.fireT < (m.fireMax || MISSILE_FIRE_FRAMES)) {
       // Solid ICBM body sweeps along the axis at high speed.
-      const t = m.fireT / MISSILE_FIRE_FRAMES;        // 0 → 1
+      const t = m.fireT / (m.fireMax || MISSILE_FIRE_FRAMES);        // 0 → 1
       // Hot trail behind the missile (faded)
       cx.save();
       cx.globalAlpha = 0.35 + (1 - t) * 0.4;
@@ -1341,13 +1380,14 @@ function shouldEnableBlackHoles() {
   return currentTier() === 'hell';           // Stage: master / 地狱 难度
 }
 function maxBlackHolesNow() {
-  // Cap = up to 3 simultaneously at very high endless levels
+  const C = save.console || defaultConsole();
+  const cap = (typeof C.bhMaxCount === 'number') ? C.bhMaxCount : 3;
   if (endlessMode) {
-    if (level >= 45) return 3;
-    if (level >= 30) return 2;
-    return 1;
+    if (level >= 45) return Math.min(3, cap);
+    if (level >= 30) return Math.min(2, cap);
+    return Math.min(1, cap);
   }
-  return 1;
+  return Math.min(1, cap);
 }
 function trySpawnBlackHole() {
   if (blackHoles.length >= maxBlackHolesNow()) return;
@@ -1359,7 +1399,8 @@ function trySpawnBlackHole() {
     const tooClose = blackHoles.some(h => Math.hypot(h.x - x, h.y - y) < 180);
     if (tooClose) continue;
     // HP = 0.4× current-level boss baseline (was 0.5×, reduced 20% per spec)
-    const hp = currentBossBaselineHp() * 0.4;
+    const C = save.console || defaultConsole();
+    const hp = currentBossBaselineHp() * 0.4 * (C.bhHpMul || 1);
     blackHoles.push({
       x, y,
       vx: rnd(-0.25, 0.25), vy: rnd(-0.15, 0.25),
@@ -1375,7 +1416,9 @@ function updateBlackHoles() {
   if (!shouldEnableBlackHoles() || screen !== 'game') return;
   // Spawn pacing — high endless levels: holes appear quickly so the cap of 3
   // is hit and stays hit (constant pressure).
-  const interval = endlessMode ? Math.max(240, 1400 - (level - 20) * 18) : 1100;
+  const C0 = save.console || defaultConsole();
+  const baseInt = endlessMode ? Math.max(240, 1400 - (level - 20) * 18) : 1100;
+  const interval = baseInt * (C0.bhSpawnIntervalMul || 1);
   if (frame - lastBlackHoleSpawn > interval) {
     lastBlackHoleSpawn = frame;
     trySpawnBlackHole();
@@ -1392,6 +1435,7 @@ function updateBlackHoles() {
     if (h.y < 50)         { h.y = 50;         h.vy = Math.abs(h.vy); }
     if (h.y > H - 220)    { h.y = H - 220;    h.vy = -Math.abs(h.vy); }
     // Player: pulled in but takes NO damage; player can muscle out with input.
+    const _bhPullMul = (save.console && typeof save.console.bhPullMul === 'number') ? save.console.bhPullMul : 1;
     for (const p of players) {
       if (p.dead) continue;
       const dx = h.x - p.x, dy = h.y - p.y;
@@ -1400,7 +1444,7 @@ function updateBlackHoles() {
         // Softer pull — peaks at ~0.7 px/frame, so player input (>4 px/frame)
         // can easily counter and escape.
         const k = (1 - d / BH_PULL_RADIUS);
-        const pullStrength = Math.pow(k, 1.8) * 0.85;
+        const pullStrength = Math.pow(k, 1.8) * 0.85 * _bhPullMul;
         p.x += (dx / d) * pullStrength;
         p.y += (dy / d) * pullStrength;
         // Movement-damping field — keeps player feeling the field but never frozen.
@@ -2149,150 +2193,287 @@ function drawVectorPlane(shapeIdx, colors, cx2, px, py, sc, flip, bank, pitch, t
     cx2.stroke();
 
   } else if (shapeIdx === 8) {
-    // 青龙 — 蛇形龙身，带龙首龙角
-    cx2.fillStyle = wcD;
-    // 龙翼（背鳍状）
-    cx2.beginPath(); cx2.moveTo(-3,-4); cx2.lineTo(-22, 4); cx2.lineTo(-26, 12); cx2.lineTo(-10, 6); cx2.closePath(); cx2.fill();
-    cx2.beginPath(); cx2.moveTo( 3,-4); cx2.lineTo( 22, 4); cx2.lineTo( 26, 12); cx2.lineTo( 10, 6); cx2.closePath(); cx2.fill();
-    // 起伏龙身段
-    const bg = cx2.createLinearGradient(-6,-22, 6,18);
-    bg.addColorStop(0, bcL); bg.addColorStop(0.5, bc); bg.addColorStop(1, bcD);
+    // 青龙 — 苍龙重铸: 长蛇形机身 + 多层鳞翼 + 玄武双管 + 龙首角冠
+    // Outer wing fan (layered, swept-back)
+    cx2.fillStyle = wcD + 'cc';
+    cx2.beginPath();
+    cx2.moveTo(-4, -6); cx2.lineTo(-30, 0); cx2.lineTo(-32, 14); cx2.lineTo(-22, 16); cx2.lineTo(-6, 10);
+    cx2.closePath(); cx2.fill();
+    cx2.beginPath();
+    cx2.moveTo( 4, -6); cx2.lineTo( 30, 0); cx2.lineTo( 32, 14); cx2.lineTo( 22, 16); cx2.lineTo( 6, 10);
+    cx2.closePath(); cx2.fill();
+    // Inner glowing wing edge
+    cx2.fillStyle = wc;
+    cx2.beginPath();
+    cx2.moveTo(-4, -6); cx2.lineTo(-22, 4); cx2.lineTo(-22, 12); cx2.lineTo(-6, 8);
+    cx2.closePath(); cx2.fill();
+    cx2.beginPath();
+    cx2.moveTo( 4, -6); cx2.lineTo( 22, 4); cx2.lineTo( 22, 12); cx2.lineTo( 6, 8);
+    cx2.closePath(); cx2.fill();
+    // Sinuous fuselage
+    const bg = cx2.createLinearGradient(-6,-24, 6,20);
+    bg.addColorStop(0, bcL); bg.addColorStop(0.4, bc); bg.addColorStop(1, bcD);
     cx2.fillStyle = bg;
     cx2.beginPath();
-    cx2.moveTo(0,-22);
-    cx2.bezierCurveTo(-7,-12, -8, 0, -5, 18);
-    cx2.lineTo(5, 18);
-    cx2.bezierCurveTo(8, 0, 7,-12, 0,-22);
+    cx2.moveTo(0,-24);
+    cx2.bezierCurveTo(-8, -12, -9, 0, -6, 20);
+    cx2.lineTo(6, 20);
+    cx2.bezierCurveTo(9, 0, 8, -12, 0, -24);
     cx2.closePath(); cx2.fill();
-    // 龙鳞 (panel)
-    cx2.strokeStyle = bcD; cx2.lineWidth = 0.6;
-    for (let yy = -16; yy <= 14; yy += 4) {
-      cx2.beginPath(); cx2.arc(0, yy, 4, Math.PI*0.1, Math.PI*0.9); cx2.stroke();
+    // Glowing scale spine (3 emerald gems down the back)
+    for (const sy of [-12, -2, 8]) {
+      const sg = cx2.createRadialGradient(0, sy, 0.5, 0, sy, 4);
+      sg.addColorStop(0, '#ffffff'); sg.addColorStop(0.5, wc); sg.addColorStop(1, wc + '00');
+      cx2.fillStyle = sg;
+      cx2.beginPath(); cx2.arc(0, sy, 4, 0, Math.PI*2); cx2.fill();
     }
-    // 龙角
+    // Layered scales
+    cx2.strokeStyle = bcD; cx2.lineWidth = 0.6;
+    for (let yy = -18; yy <= 16; yy += 3.5) {
+      cx2.beginPath(); cx2.arc(0, yy, 5, Math.PI*0.05, Math.PI*0.95); cx2.stroke();
+    }
+    // Dragon horns (taller & swept)
     cx2.fillStyle = wc;
-    cx2.beginPath(); cx2.moveTo(-4,-22); cx2.lineTo(-9,-30); cx2.lineTo(-5,-22); cx2.closePath(); cx2.fill();
-    cx2.beginPath(); cx2.moveTo( 4,-22); cx2.lineTo( 9,-30); cx2.lineTo( 5,-22); cx2.closePath(); cx2.fill();
-    // 龙眼
+    cx2.beginPath(); cx2.moveTo(-4,-22); cx2.lineTo(-12,-32); cx2.lineTo(-6,-22); cx2.closePath(); cx2.fill();
+    cx2.beginPath(); cx2.moveTo( 4,-22); cx2.lineTo( 12,-32); cx2.lineTo( 6,-22); cx2.closePath(); cx2.fill();
+    // Crown horn (center)
     cx2.fillStyle = '#ffff00';
-    cx2.beginPath(); cx2.arc(0,-14,2.4,0,Math.PI*2); cx2.fill();
-    // 双管炮
+    cx2.beginPath(); cx2.moveTo(0,-26); cx2.lineTo(-2,-30); cx2.lineTo(2,-30); cx2.closePath(); cx2.fill();
+    // Dragon eye (single, glowing)
+    const eg = cx2.createRadialGradient(0, -14, 0, 0, -14, 4);
+    eg.addColorStop(0, '#ffffff'); eg.addColorStop(0.4, '#ffff00'); eg.addColorStop(1, '#ff8800');
+    cx2.fillStyle = eg;
+    cx2.beginPath(); cx2.arc(0, -14, 3, 0, Math.PI*2); cx2.fill();
+    // Twin barrel cannon
     cx2.fillStyle = '#1a1a1a';
-    cx2.fillRect(-2,-20,1.5,8); cx2.fillRect(0.5,-20,1.5,8);
+    cx2.fillRect(-2.5,-22, 1.8, 9); cx2.fillRect(0.7,-22, 1.8, 9);
 
   } else if (shapeIdx === 9) {
-    // 白虎 — 宽肩猛虎机, 双爪武装
+    // 白虎 — 凶猛战机: 大V翼 + 双肩巨爪炮 + 锐利虎纹 + 红宝石战甲
+    // Big V-wing
     cx2.fillStyle = wcD;
-    // 爪子翼
-    cx2.beginPath(); cx2.moveTo(-4,-2); cx2.lineTo(-26, 2); cx2.lineTo(-22, 16); cx2.lineTo(-6, 8); cx2.closePath(); cx2.fill();
-    cx2.beginPath(); cx2.moveTo( 4,-2); cx2.lineTo( 26, 2); cx2.lineTo( 22, 16); cx2.lineTo( 6, 8); cx2.closePath(); cx2.fill();
-    // 虎纹爪
-    cx2.fillStyle = '#222';
-    for (let i = -25; i <= -10; i += 4) cx2.fillRect(i, 6, 2, 4);
-    for (let i =  11; i <=  25; i += 4) cx2.fillRect(i, 6, 2, 4);
-    // 宽体机身
-    const bg = cx2.createLinearGradient(-8,-20, 8, 18);
+    cx2.beginPath();
+    cx2.moveTo(-5, -4); cx2.lineTo(-30, 4); cx2.lineTo(-26, 18); cx2.lineTo(-8, 10);
+    cx2.closePath(); cx2.fill();
+    cx2.beginPath();
+    cx2.moveTo( 5, -4); cx2.lineTo( 30, 4); cx2.lineTo( 26, 18); cx2.lineTo( 8, 10);
+    cx2.closePath(); cx2.fill();
+    // Inner wing highlights
+    cx2.fillStyle = wc + 'aa';
+    cx2.beginPath();
+    cx2.moveTo(-8, -2); cx2.lineTo(-22, 8); cx2.lineTo(-20, 14); cx2.lineTo(-8, 8);
+    cx2.closePath(); cx2.fill();
+    cx2.beginPath();
+    cx2.moveTo( 8, -2); cx2.lineTo( 22, 8); cx2.lineTo( 20, 14); cx2.lineTo( 8, 8);
+    cx2.closePath(); cx2.fill();
+    // Tiger stripe claws
+    cx2.fillStyle = '#1a1a1a';
+    for (let i = -27; i <= -12; i += 4) cx2.fillRect(i, 8, 2.4, 5);
+    for (let i =  13; i <=  27; i += 4) cx2.fillRect(i, 8, 2.4, 5);
+    // Wide armored fuselage
+    const bg = cx2.createLinearGradient(-9,-22, 9, 20);
     bg.addColorStop(0, bcL); bg.addColorStop(0.5, bc); bg.addColorStop(1, bcD);
     cx2.fillStyle = bg;
     cx2.beginPath();
-    cx2.moveTo(0,-20); cx2.lineTo(-8,-8); cx2.lineTo(-9, 12); cx2.lineTo(-3, 18); cx2.lineTo(3, 18); cx2.lineTo(9, 12); cx2.lineTo(8,-8); cx2.closePath();
+    cx2.moveTo(0,-22); cx2.lineTo(-9,-10); cx2.lineTo(-10, 14); cx2.lineTo(-3, 20); cx2.lineTo(3, 20); cx2.lineTo(10, 14); cx2.lineTo(9,-10); cx2.closePath();
     cx2.fill();
-    // 黑色虎纹条
+    // Bold tiger stripes (jagged)
     cx2.fillStyle = '#1a1a1a';
-    cx2.fillRect(-6, -4, 12, 1.2);
-    cx2.fillRect(-6,  2, 12, 1.2);
-    cx2.fillRect(-6,  8, 12, 1.2);
-    // 双红色眼/驾驶舱
-    cx2.fillStyle = '#ff4422';
-    cx2.beginPath(); cx2.arc(-3,-10,1.8,0,Math.PI*2); cx2.fill();
-    cx2.beginPath(); cx2.arc( 3,-10,1.8,0,Math.PI*2); cx2.fill();
-    // 双管
+    for (const sy of [-4, 2, 8]) {
+      cx2.beginPath();
+      cx2.moveTo(-7, sy); cx2.lineTo(-3, sy-1.6); cx2.lineTo(0, sy); cx2.lineTo(3, sy-1.6); cx2.lineTo(7, sy);
+      cx2.lineTo(7, sy+1.4); cx2.lineTo(3, sy+0.4); cx2.lineTo(0, sy+1.4); cx2.lineTo(-3, sy+0.4); cx2.lineTo(-7, sy+1.4);
+      cx2.closePath(); cx2.fill();
+    }
+    // Forehead 王 sigil mark
+    cx2.fillStyle = '#ff2200';
+    cx2.fillRect(-3, -16, 6, 1);
+    cx2.fillRect(-1.2, -17, 2.4, 3);
+    cx2.fillRect(-3, -13.5, 6, 1);
+    // Glowing red eyes
+    const eg2 = cx2.createRadialGradient(-3, -10, 0, -3, -10, 3);
+    eg2.addColorStop(0, '#ffffff'); eg2.addColorStop(0.4, '#ff4422'); eg2.addColorStop(1, '#ff4422' + '00');
+    cx2.fillStyle = eg2;
+    cx2.beginPath(); cx2.arc(-3,-10, 3, 0, Math.PI*2); cx2.fill();
+    const eg2b = cx2.createRadialGradient(3, -10, 0, 3, -10, 3);
+    eg2b.addColorStop(0, '#ffffff'); eg2b.addColorStop(0.4, '#ff4422'); eg2b.addColorStop(1, '#ff4422' + '00');
+    cx2.fillStyle = eg2b;
+    cx2.beginPath(); cx2.arc( 3,-10, 3, 0, Math.PI*2); cx2.fill();
+    // Twin shoulder cannons (longer, beefier)
     cx2.fillStyle = '#1a1a1a';
-    cx2.fillRect(-3,-20,2,7); cx2.fillRect(1,-20,2,7);
+    cx2.fillRect(-4,-22, 2.5, 9); cx2.fillRect(1.5,-22, 2.5, 9);
+    cx2.fillStyle = '#ffaa44';
+    cx2.fillRect(-3.5,-22, 1.5, 1); cx2.fillRect(2,-22, 1.5, 1);
 
   } else if (shapeIdx === 10) {
-    // 朱雀 — 凤凰展翼，火焰点缀
-    // 大型展开翼
-    cx2.fillStyle = wcD;
+    // 朱雀 — 涅槃凤凰: 巨型展翼 + 火羽 + 双层凤冠 + 烈焰尾焰
+    // Outer giant wings (3 layers)
+    cx2.fillStyle = wcD + 'aa';
     cx2.beginPath();
-    cx2.moveTo(-3, 0); cx2.lineTo(-28, -4); cx2.lineTo(-30, 6); cx2.lineTo(-22, 14); cx2.lineTo(-4, 8);
+    cx2.moveTo(-3, -2); cx2.lineTo(-32, -8); cx2.lineTo(-34, 8); cx2.lineTo(-26, 18); cx2.lineTo(-4, 10);
     cx2.closePath(); cx2.fill();
     cx2.beginPath();
-    cx2.moveTo( 3, 0); cx2.lineTo( 28, -4); cx2.lineTo( 30, 6); cx2.lineTo( 22, 14); cx2.lineTo( 4, 8);
+    cx2.moveTo( 3, -2); cx2.lineTo( 32, -8); cx2.lineTo( 34, 8); cx2.lineTo( 26, 18); cx2.lineTo( 4, 10);
     cx2.closePath(); cx2.fill();
-    // 翼上火焰羽
+    // Inner wing
     cx2.fillStyle = '#ffaa00';
+    cx2.beginPath();
+    cx2.moveTo(-3, 0); cx2.lineTo(-22, -4); cx2.lineTo(-22, 8); cx2.lineTo(-4, 6);
+    cx2.closePath(); cx2.fill();
+    cx2.beginPath();
+    cx2.moveTo( 3, 0); cx2.lineTo( 22, -4); cx2.lineTo( 22, 8); cx2.lineTo( 4, 6);
+    cx2.closePath(); cx2.fill();
+    // Wing flame feathers
+    cx2.fillStyle = '#ffcc44';
     for (let s of [-1,1]) {
       cx2.beginPath();
-      cx2.moveTo(s*22,-2); cx2.lineTo(s*26,-8); cx2.lineTo(s*18,-2); cx2.closePath();
+      cx2.moveTo(s*24,-4); cx2.lineTo(s*30,-12); cx2.lineTo(s*20,-2); cx2.closePath();
+      cx2.fill();
+      cx2.beginPath();
+      cx2.moveTo(s*16,-2); cx2.lineTo(s*20,-8); cx2.lineTo(s*14, 0); cx2.closePath();
       cx2.fill();
     }
-    // 凤凰流线机身
-    const bg = cx2.createLinearGradient(-6,-22, 6,18);
+    // Streamlined phoenix fuselage
+    const bg = cx2.createLinearGradient(-7,-24, 7,20);
     bg.addColorStop(0, '#ffeeaa'); bg.addColorStop(0.4, bc); bg.addColorStop(1, bcD);
     cx2.fillStyle = bg;
     cx2.beginPath();
-    cx2.moveTo(0,-22); cx2.lineTo(-5,-12); cx2.lineTo(-6, 12); cx2.lineTo(-2, 18); cx2.lineTo(2, 18); cx2.lineTo(6, 12); cx2.lineTo(5,-12); cx2.closePath();
+    cx2.moveTo(0,-24); cx2.lineTo(-6,-12); cx2.lineTo(-7, 14); cx2.lineTo(-2, 20); cx2.lineTo(2, 20); cx2.lineTo(7, 14); cx2.lineTo(6,-12); cx2.closePath();
     cx2.fill();
-    // 凤凰冠
+    // Phoenix crown — three-pronged
     cx2.fillStyle = '#ffcc44';
     cx2.beginPath();
-    cx2.moveTo(0,-22); cx2.lineTo(-3,-28); cx2.lineTo(0,-25); cx2.lineTo(3,-28); cx2.closePath();
-    cx2.fill();
-    // 尾焰
+    cx2.moveTo(0,-24); cx2.lineTo(-5,-32); cx2.lineTo(-2,-26);
+    cx2.lineTo(0,-30); cx2.lineTo(2,-26); cx2.lineTo(5,-32); cx2.lineTo(0,-24);
+    cx2.closePath(); cx2.fill();
+    // Crown gem
+    const gg = cx2.createRadialGradient(0,-26, 0, 0,-26, 3);
+    gg.addColorStop(0, '#ffffff'); gg.addColorStop(0.5, '#ffcc44'); gg.addColorStop(1, '#ff4422');
+    cx2.fillStyle = gg;
+    cx2.beginPath(); cx2.arc(0,-26, 2.4, 0, Math.PI*2); cx2.fill();
+    // Phoenix eye
+    cx2.fillStyle = '#ff4422';
+    cx2.beginPath(); cx2.arc(0,-12, 2.2, 0, Math.PI*2); cx2.fill();
+    // Layered tail flame (3 layers)
     cx2.fillStyle = '#ff5522';
     cx2.beginPath();
-    cx2.moveTo(-3, 18); cx2.lineTo(0, 24); cx2.lineTo(3, 18); cx2.closePath();
+    cx2.moveTo(-4, 20); cx2.lineTo(0, 28); cx2.lineTo(4, 20); cx2.closePath();
     cx2.fill();
     cx2.fillStyle = '#ffaa00';
     cx2.beginPath();
-    cx2.moveTo(-1.5, 18); cx2.lineTo(0, 22); cx2.lineTo(1.5, 18); cx2.closePath();
+    cx2.moveTo(-2.5, 20); cx2.lineTo(0, 25); cx2.lineTo(2.5, 20); cx2.closePath();
     cx2.fill();
-    // 炮
+    cx2.fillStyle = '#ffff44';
+    cx2.beginPath();
+    cx2.moveTo(-1, 20); cx2.lineTo(0, 23); cx2.lineTo(1, 20); cx2.closePath();
+    cx2.fill();
+    // Cannon
     cx2.fillStyle = '#1a1a1a';
-    cx2.fillRect(-1,-20,2,7);
+    cx2.fillRect(-1,-22,2,8);
 
   } else if (shapeIdx === 11) {
-    // 玄武 — 龟蛇合体, 重装防御机
-    // 蛇尾(后部)
+    // 玄武 — 玄武霸龟: 巨型八边龟壳 + 双蛇头双管 + 装甲鳍
+    // Snake tail with multiple coils
     cx2.strokeStyle = wcD;
-    cx2.lineWidth = 4;
+    cx2.lineWidth = 4.5;
     cx2.beginPath();
-    cx2.moveTo(0, 18); cx2.bezierCurveTo(-4, 22, 4, 26, 0, 30);
+    cx2.moveTo(0, 18);
+    cx2.bezierCurveTo(-6, 22, 6, 28, -2, 32);
+    cx2.bezierCurveTo(-6, 35, 4, 38, 0, 42);
     cx2.stroke();
-    // 龟壳(主体)
+    // Outer shell shadow
+    cx2.fillStyle = '#000000';
+    cx2.beginPath(); cx2.ellipse(0, 1, 17, 21, 0, 0, Math.PI*2); cx2.fill();
+    // Outer rim
     cx2.fillStyle = wcD;
+    cx2.beginPath(); cx2.ellipse(0, 0, 16, 20, 0, 0, Math.PI*2); cx2.fill();
+    // Main shell with gradient
+    const bg = cx2.createRadialGradient(-3, -3, 1, 0, 0, 16);
+    bg.addColorStop(0, bcL); bg.addColorStop(0.6, bc); bg.addColorStop(1, bcD);
+    cx2.fillStyle = bg;
     cx2.beginPath(); cx2.ellipse(0, 0, 14, 18, 0, 0, Math.PI*2); cx2.fill();
-    cx2.fillStyle = bc;
-    cx2.beginPath(); cx2.ellipse(0, 0, 12, 16, 0, 0, Math.PI*2); cx2.fill();
-    // 龟壳六边格
+    // Hex armor cells (5 large)
     cx2.strokeStyle = bcD;
+    cx2.lineWidth = 1;
+    cx2.fillStyle = wc + '44';
+    const hexCells = [[0,-9],[-7,-2],[7,-2],[-7,7],[7,7],[0,12]];
+    for (const [hx,hy] of hexCells) {
+      cx2.beginPath();
+      for (let k = 0; k < 6; k++) {
+        const a = -Math.PI/2 + (k/6) * Math.PI*2;
+        const px = hx + Math.cos(a) * 4;
+        const py = hy + Math.sin(a) * 4;
+        if (k === 0) cx2.moveTo(px, py); else cx2.lineTo(px, py);
+      }
+      cx2.closePath();
+      cx2.fill();
+      cx2.stroke();
+    }
+    // Center glowing rune
+    const cg = cx2.createRadialGradient(0, 0, 0, 0, 0, 4);
+    cg.addColorStop(0, '#ffffff'); cg.addColorStop(0.5, wc); cg.addColorStop(1, wc + '00');
+    cx2.fillStyle = cg;
+    cx2.beginPath(); cx2.arc(0, 0, 3.5, 0, Math.PI*2); cx2.fill();
+    // Twin snake heads (left + right) with glowing eyes
+    cx2.fillStyle = wcD;
+    cx2.beginPath(); cx2.ellipse(-7,-18, 3.5, 5, -0.3, 0, Math.PI*2); cx2.fill();
+    cx2.beginPath(); cx2.ellipse( 7,-18, 3.5, 5,  0.3, 0, Math.PI*2); cx2.fill();
+    cx2.fillStyle = '#ffaa44';
+    cx2.beginPath(); cx2.arc(-7,-19, 1, 0, Math.PI*2); cx2.fill();
+    cx2.beginPath(); cx2.arc( 7,-19, 1, 0, Math.PI*2); cx2.fill();
+    // Armored side fins (jagged)
+    cx2.fillStyle = bcD;
+    cx2.beginPath(); cx2.moveTo(-13, 0); cx2.lineTo(-24, 8); cx2.lineTo(-22, 14); cx2.lineTo(-15, 12); cx2.closePath(); cx2.fill();
+    cx2.beginPath(); cx2.moveTo( 13, 0); cx2.lineTo( 24, 8); cx2.lineTo( 22, 14); cx2.lineTo( 15, 12); cx2.closePath(); cx2.fill();
+    // Twin barrel cannons (from snake mouths)
+    cx2.fillStyle = '#1a1a1a';
+    cx2.fillRect(-8.5,-24, 2, 8);
+    cx2.fillRect( 6.5,-24, 2, 8);
+
+  } else if (shapeIdx === 12) {
+    // 骷髅战机 — Skull Reaper: 死神骷髅造型, 镰刀翼, 红眼骷髅头
+    // Scythe wings (curved)
+    cx2.fillStyle = wcD;
+    cx2.beginPath();
+    cx2.moveTo(-4, -2); cx2.lineTo(-26, -10); cx2.lineTo(-30, 4); cx2.lineTo(-22, 10); cx2.lineTo(-6, 6);
+    cx2.closePath(); cx2.fill();
+    cx2.beginPath();
+    cx2.moveTo( 4, -2); cx2.lineTo( 26, -10); cx2.lineTo( 30, 4); cx2.lineTo( 22, 10); cx2.lineTo( 6, 6);
+    cx2.closePath(); cx2.fill();
+    // Wing blade edges (red)
+    cx2.fillStyle = '#cc2222';
+    cx2.beginPath(); cx2.moveTo(-26,-10); cx2.lineTo(-29,-4); cx2.lineTo(-23,-7); cx2.closePath(); cx2.fill();
+    cx2.beginPath(); cx2.moveTo( 26,-10); cx2.lineTo( 29,-4); cx2.lineTo( 23,-7); cx2.closePath(); cx2.fill();
+    // Bone-white fuselage
+    const bg = cx2.createLinearGradient(-7,-22, 7,20);
+    bg.addColorStop(0, '#f0e8dc'); bg.addColorStop(0.5, '#cccccc'); bg.addColorStop(1, '#666');
+    cx2.fillStyle = bg;
+    cx2.beginPath();
+    cx2.moveTo(0,-22); cx2.lineTo(-7,-12); cx2.lineTo(-8, 12); cx2.lineTo(-3, 18); cx2.lineTo(3, 18); cx2.lineTo(8, 12); cx2.lineTo(7,-12); cx2.closePath();
+    cx2.fill();
+    // Skull eye sockets (glowing red)
+    cx2.fillStyle = '#1a1a1a';
+    cx2.beginPath(); cx2.ellipse(-3,-12, 2.4, 3, 0, 0, Math.PI*2); cx2.fill();
+    cx2.beginPath(); cx2.ellipse( 3,-12, 2.4, 3, 0, 0, Math.PI*2); cx2.fill();
+    const eg = cx2.createRadialGradient(-3,-12, 0, -3,-12, 3);
+    eg.addColorStop(0, '#ffffff'); eg.addColorStop(0.4, '#ff2200'); eg.addColorStop(1, 'rgba(255,30,0,0)');
+    cx2.fillStyle = eg;
+    cx2.beginPath(); cx2.arc(-3,-12, 3, 0, Math.PI*2); cx2.fill();
+    const eg2 = cx2.createRadialGradient(3,-12, 0, 3,-12, 3);
+    eg2.addColorStop(0, '#ffffff'); eg2.addColorStop(0.4, '#ff2200'); eg2.addColorStop(1, 'rgba(255,30,0,0)');
+    cx2.fillStyle = eg2;
+    cx2.beginPath(); cx2.arc( 3,-12, 3, 0, Math.PI*2); cx2.fill();
+    // Teeth (small notches at the front)
+    cx2.fillStyle = '#1a1a1a';
+    for (let i = -3; i <= 3; i += 1.5) cx2.fillRect(i - 0.4, -7, 0.8, 1.5);
+    // Cross-bone wing struts
+    cx2.strokeStyle = '#888';
     cx2.lineWidth = 0.8;
     cx2.beginPath();
-    for (let yy of [-8, 0, 8]) {
-      for (let xx of [-6, 0, 6]) {
-        for (let k = 0; k < 6; k++) {
-          const a = (k/6)*Math.PI*2;
-          const px = xx + Math.cos(a) * 3;
-          const py = yy + Math.sin(a) * 3;
-          if (k === 0) cx2.moveTo(px, py); else cx2.lineTo(px, py);
-        }
-        cx2.closePath();
-      }
-    }
+    cx2.moveTo(-6, 0); cx2.lineTo(-22, 4);
+    cx2.moveTo( 6, 0); cx2.lineTo( 22, 4);
     cx2.stroke();
-    // 蛇头 (前)
-    cx2.fillStyle = wc;
-    cx2.beginPath(); cx2.ellipse(0, -18, 4, 6, 0, 0, Math.PI*2); cx2.fill();
-    // 蛇眼
-    cx2.fillStyle = '#ffaa44';
-    cx2.beginPath(); cx2.arc(-1.5,-19, 1.2, 0, Math.PI*2); cx2.fill();
-    cx2.beginPath(); cx2.arc( 1.5,-19, 1.2, 0, Math.PI*2); cx2.fill();
-    // 翼鳍 (微小)
-    cx2.fillStyle = bcD;
-    cx2.beginPath(); cx2.moveTo(-12,-2); cx2.lineTo(-22, 6); cx2.lineTo(-14, 10); cx2.closePath(); cx2.fill();
-    cx2.beginPath(); cx2.moveTo( 12,-2); cx2.lineTo( 22, 6); cx2.lineTo( 14, 10); cx2.closePath(); cx2.fill();
-    // 炮
+    // Cannon
     cx2.fillStyle = '#1a1a1a';
     cx2.fillRect(-1,-22, 2, 8);
 
@@ -2908,17 +3089,21 @@ function drawBackground() {
       fillPx('#ff8800',(lx+10)|0,(H-12)|0,40,4);
     }
   } else {
-    // Distant planets — multi-layer realistic render with day/night, cloud bands, moon
+    // Distant planets — far-away feel: ~55% transparent overall, more
+    // micro-detail (terminator, atmosphere rim, polar caps, more craters,
+    // city lights on dark side, dual rings, multi-moon).
+    cx.save();
+    cx.globalAlpha = 0.55;       // overall transparency for the whole planet layer
     for (const t of bgTerrain) {
       if (!t.r) continue;
       const px = t.x|0, py = t.y|0, r = t.r;
-      // Soft atmospheric outer glow
-      const gg = cx.createRadialGradient(px, py, r*0.7, px, py, r*1.9);
-      gg.addColorStop(0, t.glow + '55');
-      gg.addColorStop(0.6, t.glow + '22');
+      // Soft, larger atmospheric outer glow
+      const gg = cx.createRadialGradient(px, py, r*0.7, px, py, r*2.2);
+      gg.addColorStop(0, t.glow + '44');
+      gg.addColorStop(0.55, t.glow + '18');
       gg.addColorStop(1, t.glow + '00');
       cx.fillStyle = gg;
-      cx.beginPath(); cx.arc(px, py, r*1.9, 0, Math.PI*2); cx.fill();
+      cx.beginPath(); cx.arc(px, py, r*2.2, 0, Math.PI*2); cx.fill();
       // Planet base sphere (lit from upper-left)
       const bg = cx.createRadialGradient(px - r*0.4, py - r*0.45, r*0.05, px, py, r);
       bg.addColorStop(0, t.glow);
@@ -2927,82 +3112,124 @@ function drawBackground() {
       bg.addColorStop(1, '#040408');
       cx.fillStyle = bg;
       cx.beginPath(); cx.arc(px, py, r, 0, Math.PI*2); cx.fill();
-      // Surface bands or mottled features
+      // Surface bands & mottled details, all clipped to the sphere
       cx.save();
       cx.beginPath(); cx.arc(px, py, r, 0, Math.PI*2); cx.clip();
       const bandSeed = (r * 7) | 0;
-      cx.globalAlpha = 0.22;
-      for (let bi = -3; bi <= 3; bi++) {
-        const bandY = py + bi * (r * 0.32) + ((bandSeed + bi*13) % 5);
-        cx.fillStyle = bi % 2 === 0 ? shadeHex(t.core, 18) : shadeHex(t.core, -18);
-        cx.fillRect(px - r, bandY - r*0.08, r*2, r*0.12);
+      // Cloud bands
+      cx.globalAlpha = 0.18;
+      for (let bi = -4; bi <= 4; bi++) {
+        const bandY = py + bi * (r * 0.26) + ((bandSeed + bi*13) % 5);
+        cx.fillStyle = bi % 2 === 0 ? shadeHex(t.core, 22) : shadeHex(t.core, -22);
+        cx.fillRect(px - r, bandY - r*0.07, r*2, r*0.10);
       }
-      // Continental / cratered mottling
-      cx.globalAlpha = 0.35;
-      cx.fillStyle = shadeHex(t.core, -40);
-      for (let mi = 0; mi < 6; mi++) {
-        const ma = (bandSeed * 0.7 + mi * 1.04);
+      // Wispy cloud streaks (subtle white)
+      cx.globalAlpha = 0.10;
+      cx.fillStyle = '#ffffff';
+      for (let ci = 0; ci < 5; ci++) {
+        const cy = py + ((bandSeed + ci*23) % 11 - 5) * (r * 0.13);
+        cx.fillRect(px - r, cy, r*2, 1.4);
+      }
+      // Continental mottling (more, smaller)
+      cx.globalAlpha = 0.32;
+      cx.fillStyle = shadeHex(t.core, -45);
+      for (let mi = 0; mi < 10; mi++) {
+        const ma = (bandSeed * 0.7 + mi * 0.83);
         const md = r * 0.55;
         cx.beginPath();
         cx.ellipse(
           px + Math.cos(ma) * md * (((bandSeed + mi*5) % 7)/10 + 0.2),
           py + Math.sin(ma) * md * (((bandSeed + mi*3) % 5)/10 + 0.2),
-          r * 0.18, r * 0.10, ma, 0, Math.PI*2
+          r * (0.10 + ((bandSeed + mi) % 5) * 0.025),
+          r * (0.06 + ((bandSeed + mi*2) % 4) * 0.02),
+          ma, 0, Math.PI*2
         );
         cx.fill();
+      }
+      // Polar caps (top + bottom dome of lighter color)
+      cx.globalAlpha = 0.55;
+      cx.fillStyle = '#ffffff';
+      cx.beginPath();
+      cx.ellipse(px, py - r*0.85, r*0.55, r*0.18, 0, 0, Math.PI*2);
+      cx.fill();
+      cx.beginPath();
+      cx.ellipse(px, py + r*0.85, r*0.50, r*0.16, 0, 0, Math.PI*2);
+      cx.fill();
+      // Tiny pixel city lights on dark hemisphere (sparse, golden)
+      cx.globalAlpha = 0.65;
+      for (let ni = 0; ni < 14; ni++) {
+        const a = (bandSeed * 0.31 + ni * 0.71);
+        const cd = r * (0.55 + ((bandSeed + ni) % 5) * 0.06);
+        const lx = px + Math.cos(a) * cd, ly = py + Math.sin(a) * cd;
+        // only on the right (dark) side
+        if (lx - px < r*0.05) continue;
+        cx.fillStyle = ni % 3 === 0 ? '#ffd066' : '#ffaa44';
+        cx.fillRect(lx|0, ly|0, 1, 1);
       }
       cx.restore();
       // Day/night terminator (right side darkens)
       const term = cx.createRadialGradient(px - r*0.3, py - r*0.3, r*0.4, px + r*0.3, py + r*0.3, r);
       term.addColorStop(0, 'rgba(0,0,0,0)');
-      term.addColorStop(0.7, 'rgba(0,0,0,0.35)');
-      term.addColorStop(1, 'rgba(0,0,0,0.7)');
+      term.addColorStop(0.7, 'rgba(0,0,0,0.32)');
+      term.addColorStop(1, 'rgba(0,0,0,0.65)');
       cx.save();
       cx.beginPath(); cx.arc(px, py, r, 0, Math.PI*2); cx.clip();
       cx.fillStyle = term;
       cx.fillRect(px - r, py - r, r*2, r*2);
-      // Specular highlight
-      const spec = cx.createRadialGradient(px - r*0.45, py - r*0.5, 1, px - r*0.4, py - r*0.45, r*0.5);
-      spec.addColorStop(0, 'rgba(255,255,255,0.45)');
+      // Specular highlight (smaller, softer)
+      const spec = cx.createRadialGradient(px - r*0.45, py - r*0.5, 1, px - r*0.4, py - r*0.45, r*0.45);
+      spec.addColorStop(0, 'rgba(255,255,255,0.36)');
       spec.addColorStop(1, 'rgba(255,255,255,0)');
       cx.fillStyle = spec;
       cx.fillRect(px - r, py - r, r*2, r*2);
       cx.restore();
-      // Atmospheric rim
-      cx.strokeStyle = t.glow + 'aa';
-      cx.lineWidth = 1.2;
+      // Atmospheric rim (softer, double layer)
+      cx.strokeStyle = t.glow + '88';
+      cx.lineWidth = 1.4;
       cx.beginPath(); cx.arc(px, py, r-0.5, 0, Math.PI*2); cx.stroke();
-      // Optional ring
+      cx.strokeStyle = t.glow + '33';
+      cx.lineWidth = 3.5;
+      cx.beginPath(); cx.arc(px, py, r+1.5, 0, Math.PI*2); cx.stroke();
+      // Optional ring (now also a thin secondary inner ring)
       if (t.ring) {
         cx.save();
         cx.translate(px, py);
         cx.rotate(t.tilt);
-        // Outer ring band
-        cx.strokeStyle = t.glow + 'cc';
+        cx.strokeStyle = t.glow + 'aa';
         cx.lineWidth = 3;
-        cx.beginPath(); cx.ellipse(0, 0, r*1.7, r*0.5, 0, 0, Math.PI*2); cx.stroke();
+        cx.beginPath(); cx.ellipse(0, 0, r*1.85, r*0.55, 0, 0, Math.PI*2); cx.stroke();
         cx.strokeStyle = '#000000';
         cx.lineWidth = 1;
-        cx.beginPath(); cx.ellipse(0, 0, r*1.5, r*0.42, 0, 0, Math.PI*2); cx.stroke();
-        cx.strokeStyle = t.core + 'aa';
+        cx.beginPath(); cx.ellipse(0, 0, r*1.6, r*0.46, 0, 0, Math.PI*2); cx.stroke();
+        cx.strokeStyle = t.core + '88';
         cx.lineWidth = 2;
-        cx.beginPath(); cx.ellipse(0, 0, r*1.3, r*0.35, 0, 0, Math.PI*2); cx.stroke();
+        cx.beginPath(); cx.ellipse(0, 0, r*1.35, r*0.37, 0, 0, Math.PI*2); cx.stroke();
+        // Inner thin ring
+        cx.strokeStyle = t.glow + '66';
+        cx.lineWidth = 1;
+        cx.beginPath(); cx.ellipse(0, 0, r*1.18, r*0.32, 0, 0, Math.PI*2); cx.stroke();
         cx.restore();
       }
-      // Tiny moon (40% of planets get one)
-      if ((r % 3) === 0) {
-        const mr = r * 0.18;
-        const ma = (bandSeed * 0.13);
-        const mx = px + Math.cos(ma) * (r + mr*3 + 4);
-        const my = py + Math.sin(ma) * (r * 0.4);
+      // Up to 2 tiny moons of varying sizes
+      const moonCount = ((r % 3) === 0) ? 2 : ((r % 5) === 0) ? 1 : 0;
+      for (let mi = 0; mi < moonCount; mi++) {
+        const mr = r * (0.13 + mi * 0.08);
+        const ma = (bandSeed * 0.13 + mi * 1.7);
+        const mx = px + Math.cos(ma) * (r + mr*3 + 4 + mi*6);
+        const my = py + Math.sin(ma) * (r * 0.45);
         const mg = cx.createRadialGradient(mx - mr*0.3, my - mr*0.3, 1, mx, my, mr);
-        mg.addColorStop(0, '#dddddd');
-        mg.addColorStop(0.6, '#888888');
-        mg.addColorStop(1, '#222');
+        mg.addColorStop(0, '#cccccc');
+        mg.addColorStop(0.6, '#777777');
+        mg.addColorStop(1, '#1a1a1a');
         cx.fillStyle = mg;
         cx.beginPath(); cx.arc(mx, my, mr, 0, Math.PI*2); cx.fill();
+        // 1-2 dark craters per moon
+        cx.fillStyle = 'rgba(0,0,0,0.45)';
+        cx.beginPath(); cx.arc(mx - mr*0.25, my - mr*0.1, mr*0.18, 0, Math.PI*2); cx.fill();
+        cx.beginPath(); cx.arc(mx + mr*0.15, my + mr*0.20, mr*0.13, 0, Math.PI*2); cx.fill();
       }
     }
+    cx.restore();   // close globalAlpha for planets
   }
 }
 
@@ -3112,7 +3339,9 @@ function updatePlayer(p, keys) {
     if (p.respawnTimer===0&&p.lives>0) {
       p.dead=false;
       p.x=p.pNum===1?W*0.65:W*0.35; p.y=H-120;
-      p.invTimer=120; p.shield=0;
+      const Cr = save.console || defaultConsole();
+      p.invTimer = Math.max(30, Math.round((Cr.reviveInvSec || 2) * 60));
+      p.shield=0;
     }
     return;
   }
@@ -3678,8 +3907,8 @@ function doBomb(p) {
 
 // ─── ENEMIES (20 types) ──────────────────────────────────────────────────────
 const ENEMY_CFG = {
-  basic:    {hp:80, spd:1.5,pts:100,w:20,h:18,col:'#ff4444',cv:1},
-  zigzag:   {hp:120,spd:2,  pts:150,w:18,h:16,col:'#ff8800',cv:2},
+  basic:    {hp:80, spd:1.5,pts:100,w:30,h:26,col:'#ff4444',cv:1},
+  zigzag:   {hp:120,spd:2,  pts:150,w:28,h:24,col:'#ff8800',cv:2},
   bomber:   {hp:200,spd:1,  pts:300,w:28,h:22,col:'#aa44ff',cv:3},
   gunship:  {hp:260,spd:1.2,pts:250,w:30,h:24,col:'#44aaff',cv:2},
   tank:     {hp:460,spd:0.7,pts:400,w:36,h:28,col:'#44ff44',cv:4},
@@ -3851,9 +4080,17 @@ function updateEnemy(e) {
       break;
     case 'hive':
       e.y+=e.speed*0.4;
-      if(e.moveTimer%180===0) {
-        for(let i=-1;i<=1;i++) {
-          if (enemies.length<60) enemies.push(mkEnemy('swarmlet',e.x+i*16,e.y+18));
+      // More aggressive swarmlet production: every 90 frames, 5-7 swarmlets in a cone
+      if (e.moveTimer % 90 === 0) {
+        const burst = 5 + rndInt(0, 2);
+        for (let i = 0; i < burst; i++) {
+          if (enemies.length >= MAX_ENEMIES - 2) break;
+          const ang = (i / (burst-1) - 0.5) * 1.4;   // -0.7..+0.7 rad fan
+          const dx = Math.sin(ang) * 18;
+          const c = mkEnemy('swarmlet', e.x + dx, e.y + 16);
+          // Give swarmlets a small lateral push so the cone reads as a burst
+          c.vx = Math.sin(ang) * 1.6;
+          enemies.push(c);
         }
       }
       break;
@@ -6528,7 +6765,8 @@ function doRevive() {
   const C = save.console || defaultConsole();
   for (const p of players) {
     p.lives = C.playerLives; p.dead = false; p.respawnTimer = 0;
-    p.invTimer = 180; p.shield = 240; p.shieldHits = 3;
+    p.invTimer = Math.max(30, Math.round((C.reviveInvSec || 3) * 60));
+    p.shield = 240; p.shieldHits = 3;
     p.x = p.pNum===1 ? W*0.65 : W*0.35; p.y = H-120;
     p.bombs = C.reviveBombs;
   }
@@ -9743,6 +9981,7 @@ const CONSOLE_TABS = [
     {k:'playerLives',    name:'初始生命',     min:1,  max:99, step:1,   desc:''},
     {k:'playerBombs',    name:'初始导弹数',   min:0,  max:99, step:1,   desc:''},
     {k:'reviveBombs',    name:'复活导弹数',   min:0,  max:99, step:1,   desc:''},
+    {k:'reviveInvSec',   name:'复活无敌秒数', min:0,  max:30, step:0.5, desc:'秒, 出生/复活后无敌'},
     {k:'weaponDmgMul',   name:'伤害倍率',     min:0.1,max:50, step:0.1, desc:'×'},
     {k:'fireRateMul',    name:'射速倍率',     min:0.05,max:5, step:0.05, desc:'×间隔(越小越快)'},
     {k:'bulletSpeedMul', name:'子弹速度倍率', min:0.5,max:10, step:0.1, desc:'×'},
@@ -9766,6 +10005,16 @@ const CONSOLE_TABS = [
     {k:'coinMul',     name:'金币倍率',       min:0,  max:100, step:0.1, desc:'×'},
     {k:'diamondMul',  name:'钻石倍率',       min:0,  max:100, step:0.1, desc:'×'},
     {k:'bossKillMul', name:'Boss 触发阈值倍率', min:0.05, max:5, step:0.05, desc:'×需击杀数'},
+  ]},
+  { id:'hazard', label:'陷阱', fields: [
+    {k:'bhHpMul',              name:'黑洞血量倍率',     min:0.05,max:50,  step:0.05,desc:'×0.4 同等 boss 血量'},
+    {k:'bhPullMul',            name:'黑洞引力倍率',     min:0,    max:10,  step:0.05,desc:'×拉力(0=关闭)'},
+    {k:'bhMaxCount',           name:'黑洞同屏上限',     min:0,    max:10,  step:1,   desc:'个'},
+    {k:'bhSpawnIntervalMul',   name:'黑洞生成间隔倍率', min:0.1,  max:20,  step:0.1, desc:'×间隔(>1 慢)'},
+    {k:'missileWarnSec',       name:'导弹警告秒数',     min:0.5,  max:15,  step:0.1, desc:'秒'},
+    {k:'missileFireSec',       name:'导弹光束秒数',     min:0.1,  max:5,   step:0.05,desc:'秒'},
+    {k:'missileMaxAxis',       name:'导弹同轴上限',     min:1,    max:10,  step:1,   desc:'同行/列警告数'},
+    {k:'missileSpawnIntervalMul',name:'导弹生成间隔倍率', min:0.1,  max:20,  step:0.1, desc:'×间隔'},
   ]},
   { id:'rune', label:'符文', fields: [
     {k:'runeProcMul',   name:'触发概率倍率',  min:0,  max:50, step:0.1, desc:'×概率(过高会被钳到100%)'},
