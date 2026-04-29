@@ -3087,11 +3087,196 @@ function drawBackground() {
     }
     fillPx('#003366',0,H-20,W,20);
   } else if (bgType==='volcanic') {
+    // Two volcanic peaks scrolling slowly — silhouette shape, glowing crater + lava streams
+    cx.save();
+    cx.globalAlpha = 0.85;
+    for (let v = 0; v < 2; v++) {
+      const vx = ((v*240 + (frame*0.15|0)) % (W+240)) - 120;
+      const baseY = H - 30;
+      const peakH = 130 + (v*23)%40;
+      // Mountain silhouette
+      cx.fillStyle = '#3a1010';
+      cx.beginPath();
+      cx.moveTo(vx - 70, baseY);
+      cx.lineTo(vx - 22, baseY - peakH + 14);
+      cx.lineTo(vx - 6, baseY - peakH);
+      cx.lineTo(vx + 8, baseY - peakH + 8);
+      cx.lineTo(vx + 28, baseY - peakH + 18);
+      cx.lineTo(vx + 80, baseY);
+      cx.closePath();
+      cx.fill();
+      // Glowing crater + rim
+      const cg = cx.createRadialGradient(vx, baseY - peakH + 6, 1, vx, baseY - peakH + 6, 22);
+      cg.addColorStop(0, '#ffff66'); cg.addColorStop(0.5, '#ff4400'); cg.addColorStop(1, 'rgba(255,40,0,0)');
+      cx.fillStyle = cg;
+      cx.beginPath(); cx.arc(vx, baseY - peakH + 6, 22, 0, Math.PI*2); cx.fill();
+      // Lava streams down two sides
+      cx.fillStyle = '#ff5522';
+      cx.beginPath();
+      cx.moveTo(vx - 4, baseY - peakH + 10);
+      cx.lineTo(vx - 16, baseY - peakH + 50);
+      cx.lineTo(vx - 24, baseY - 10);
+      cx.lineTo(vx - 18, baseY - 8);
+      cx.lineTo(vx - 10, baseY - peakH + 60);
+      cx.lineTo(vx - 1, baseY - peakH + 14);
+      cx.closePath(); cx.fill();
+      cx.beginPath();
+      cx.moveTo(vx + 4, baseY - peakH + 10);
+      cx.lineTo(vx + 18, baseY - peakH + 60);
+      cx.lineTo(vx + 28, baseY - 12);
+      cx.lineTo(vx + 22, baseY - 10);
+      cx.lineTo(vx + 12, baseY - peakH + 50);
+      cx.lineTo(vx + 1, baseY - peakH + 14);
+      cx.closePath(); cx.fill();
+    }
+    cx.restore();
+    // Lava ground stripes
     fillPx('#330000',0,H-40,W,40);
     for (let l=0;l<6;l++) {
       const lx=((l*80+frame*0.3)|0)%(W+80)-80;
       fillPx('#ff4400',lx,(H-8)|0,60,8);
       fillPx('#ff8800',(lx+10)|0,(H-12)|0,40,4);
+    }
+  } else if (bgType==='arctic') {
+    // Snow mountains with white peaks + drifting snowflakes
+    cx.save();
+    cx.globalAlpha = 0.85;
+    for (let m = 0; m < 4; m++) {
+      const mx = ((m*150 + (frame*0.12|0)) % (W+150)) - 75;
+      const baseY = H - 30;
+      const peakH = 90 + (m*23)%60;
+      // Mountain
+      cx.fillStyle = '#5a7080';
+      cx.beginPath();
+      cx.moveTo(mx - 70, baseY);
+      cx.lineTo(mx - 18, baseY - peakH + 18);
+      cx.lineTo(mx + 4, baseY - peakH);
+      cx.lineTo(mx + 22, baseY - peakH + 22);
+      cx.lineTo(mx + 70, baseY);
+      cx.closePath(); cx.fill();
+      // Snow cap
+      cx.fillStyle = '#ffffff';
+      cx.beginPath();
+      cx.moveTo(mx - 18, baseY - peakH + 18);
+      cx.lineTo(mx - 8, baseY - peakH + 30);
+      cx.lineTo(mx, baseY - peakH + 22);
+      cx.lineTo(mx + 4, baseY - peakH);
+      cx.lineTo(mx + 12, baseY - peakH + 22);
+      cx.lineTo(mx + 22, baseY - peakH + 22);
+      cx.closePath(); cx.fill();
+    }
+    cx.restore();
+    // Snow ground line
+    fillPx('#dde8ee',0,H-30,W,30);
+    // Snowflakes
+    for (let s = 0; s < 28; s++) {
+      const sx = (s*43 + frame*0.4) % W;
+      const sy = (s*97 + frame*(1.0 + (s%3)*0.3)) % H;
+      cx.fillStyle = 'rgba(255,255,255,0.7)';
+      cx.fillRect(sx|0, sy|0, 2, 2);
+    }
+  } else if (bgType==='ruins') {
+    // Ancient broken pillars + sand dunes
+    for (let s = 0; s < 3; s++) {
+      const dy = (frame*(0.4 + s*0.15)) % 80;
+      cx.fillStyle = '#221814';
+      cx.beginPath();
+      cx.moveTo(0, H - 30 + dy*0.05);
+      for (let dx = 0; dx < W; dx += 30) {
+        cx.lineTo(dx, H - 30 + Math.sin((dx + dy*4) * 0.04 + s) * 8);
+      }
+      cx.lineTo(W, H);
+      cx.lineTo(0, H);
+      cx.closePath();
+      cx.fill();
+    }
+    // Broken pillars
+    for (let p = 0; p < 3; p++) {
+      const px2 = ((p*180 + (frame*0.2|0)) % (W+180)) - 90;
+      const baseY = H - 35;
+      cx.fillStyle = '#332218';
+      cx.fillRect(px2 - 8, baseY - 100, 16, 100);
+      // Broken top
+      cx.beginPath();
+      cx.moveTo(px2 - 14, baseY - 100);
+      cx.lineTo(px2 - 8, baseY - 110);
+      cx.lineTo(px2 + 8, baseY - 105);
+      cx.lineTo(px2 + 14, baseY - 100);
+      cx.closePath();
+      cx.fill();
+      // Cracks
+      cx.strokeStyle = '#1a0e08';
+      cx.lineWidth = 1;
+      cx.beginPath();
+      cx.moveTo(px2 - 4, baseY - 80); cx.lineTo(px2 + 4, baseY - 60);
+      cx.moveTo(px2 + 2, baseY - 50); cx.lineTo(px2 - 3, baseY - 30);
+      cx.stroke();
+    }
+  } else if (bgType==='cyber') {
+    // Neon city silhouettes (atop existing grid)
+    for (let b = 0; b < 8; b++) {
+      const bx = ((b*60 + (frame*0.18|0)) % (W+60)) - 30;
+      const bh = 50 + (b*23)%80;
+      fillPx('#001a22', bx|0, (H-bh)|0, 36, bh);
+      // Neon stripes
+      cx.fillStyle = b%2===0 ? '#00ffcc' : '#ff00aa';
+      cx.fillRect(bx|0, (H-bh)|0, 36, 1.5);
+      cx.fillRect(bx|0, (H-bh+18)|0, 36, 1);
+      // Window blocks
+      for (let wy = H-bh+6; wy < H-6; wy += 10) {
+        for (let wx = bx+3; wx < bx+33; wx += 8) {
+          if (((wx+wy+frame/40)|0)%4 !== 0) {
+            cx.fillStyle = b%2===0 ? '#00ffcc' : '#ff44aa';
+            cx.fillRect(wx|0, wy|0, 3, 3);
+          }
+        }
+      }
+    }
+  } else if (bgType==='sunset') {
+    // Silhouette mountain ridge against orange sky
+    cx.save();
+    cx.fillStyle = '#3a1408';
+    cx.beginPath();
+    cx.moveTo(0, H);
+    for (let dx = 0; dx <= W; dx += 20) {
+      const dy = H - 60 - Math.sin(dx*0.04 + frame*0.005) * 20 - ((dx*7)%30);
+      cx.lineTo(dx, dy);
+    }
+    cx.lineTo(W, H);
+    cx.closePath(); cx.fill();
+    // Distant second ridge
+    cx.fillStyle = '#220804';
+    cx.beginPath();
+    cx.moveTo(0, H - 40);
+    for (let dx = 0; dx <= W; dx += 30) {
+      const dy = H - 35 - Math.sin(dx*0.025 + frame*0.003 + 1.6) * 14 - ((dx*5)%18);
+      cx.lineTo(dx, dy);
+    }
+    cx.lineTo(W, H);
+    cx.closePath(); cx.fill();
+    cx.restore();
+    // Setting sun glow band
+    const sg = cx.createRadialGradient(W*0.7, H*0.55, 4, W*0.7, H*0.55, 130);
+    sg.addColorStop(0, 'rgba(255,180,80,0.6)');
+    sg.addColorStop(0.5, 'rgba(255,80,30,0.25)');
+    sg.addColorStop(1, 'rgba(255,40,0,0)');
+    cx.fillStyle = sg;
+    cx.fillRect(0, 0, W, H);
+  } else if (bgType==='rift') {
+    // Floating geometric shards drifting up + cracks (shards rotate)
+    for (let s = 0; s < 6; s++) {
+      const sx = (s*97 + 200) % W;
+      const sy = (s*131 + frame*(0.4 + s*0.1)) % (H+80) - 40;
+      cx.save();
+      cx.translate(sx, sy);
+      cx.rotate(frame*0.005 + s);
+      cx.fillStyle = `rgba(${100+s*20}, 0, ${180+(s%3)*20}, 0.55)`;
+      const ssz = 6 + (s*3)%8;
+      cx.fillRect(-ssz, -ssz, ssz*2, ssz*2);
+      cx.strokeStyle = 'rgba(255,150,255,0.7)';
+      cx.lineWidth = 1;
+      cx.strokeRect(-ssz, -ssz, ssz*2, ssz*2);
+      cx.restore();
     }
   } else {
     // Distant planets — realistic far-away celestial bodies with biome-style
@@ -7036,10 +7221,27 @@ function killEnemy(e) {
   SFX[e.type==='carrier'||e.type==='tank'||e.type==='elite'?'killBig':'killBasic']();
 }
 
+// Helper: advance to next boss-mode level (used by both primary AND secondary
+// kill paths so dual-boss fights can finish even if boss2 dies last).
+function advanceBossModeLevel() {
+  level++; waveTimer = 0; bossActive = false;
+  if (level > 13) {
+    bossModeCycle = Math.max(1, bossModeCycle + 1);
+    level = 1;
+    save.bossTiers = {};
+    addFT('全员击破 · 第 ' + (bossModeCycle + 1) + ' 轮 · 双 BOSS 模式',
+          W/2, H/2-30, '#ffff44');
+  } else {
+    const totalSlot = bossModeCycle === 0 ? 13 : level;
+    addFT('BOSS ' + level + ' / ' + totalSlot, W/2, H/2-20, '#ff66aa');
+  }
+  SFX.levelUp();
+}
+
 function killBoss() {
   if(!boss||!boss.alive) return;
   // Secondary boss (boss2 swapped in via updateBosses) — clear it without
-  // advancing the level. The primary will handle level transition when it dies.
+  // advancing the level. If the primary is also gone, advance the level here.
   if (boss._isSecondary) {
     boss.alive = false;
     score += boss.pts || 0;
@@ -7047,6 +7249,14 @@ function killBoss() {
     addFT('+'+(boss.pts||0), boss.x, boss.y-18, '#ff88ff');
     sessionCoins += 50;
     SFX.bossDefeat();
+    // If both bosses are now dead in boss mode, advance the level here so
+    // a new boss spawns immediately. Caller will null-out boss2 after we return.
+    setTimeout(() => {
+      // Defer to end of frame so caller can finish its swap-back logic.
+      if (bossMode && (!boss || !boss.alive) && (!boss2 || !boss2.alive)) {
+        advanceBossModeLevel();
+      }
+    }, 0);
     return;
   }
   const wasLvl = level;
@@ -7071,26 +7281,14 @@ function killBoss() {
   // Boss-rush mode: boss-only progression. Wait for boss2 if present.
   if (bossMode) {
     if (boss2 && boss2.alive) {
-      // Primary died first — leave the run going so player must finish boss2 too.
-      // The secondary will be killed via the per-bullet path; level advances on its death.
+      // Primary died first — secondary still alive. Player must finish boss2.
+      // Keep bossActive=true so the wave loop won't re-spawn a primary mid-fight.
       addFT('再战 BOSS 2!', W/2, H/2 - 20, '#ff88ff');
-      // Reset bossActive so wave loop won't try to spawn a new primary mid-fight
       bossActive = true;
       return;
     }
-    // Both bosses (or single) gone — advance.
-    level++; waveTimer = 0;
-    if (level > 13) {
-      // Cycle complete — bump to dual mode
-      bossModeCycle = Math.max(1, bossModeCycle + 1);
-      level = 1;
-      save.bossTiers = {};      // reset tier counter so next cycle starts fresh
-      addFT('全员击破 · 第 ' + (bossModeCycle + 1) + ' 轮 · 双 BOSS 模式', W/2, H/2-30, '#ffff44');
-    } else {
-      const totalSlot = bossModeCycle === 0 ? 13 : level;
-      addFT('BOSS ' + level + ' / ' + totalSlot, W/2, H/2-20, '#ff66aa');
-    }
-    SFX.levelUp();
+    // Single boss (or both) gone — advance immediately.
+    advanceBossModeLevel();
     return;
   }
   // Stage mode lvl 12 boss → tier victory + medal; otherwise advance
@@ -7933,42 +8131,40 @@ function drawTitleSettings() {
   cx.font="11px 'Courier New', monospace";
   cx.fillText('音乐 · 灵敏度 · 画面分辨率 · 控制台', W/2, 80);
 
-  // Resolution (re-center after each slider call which may flip textAlign)
+  // Resolution
   cx.textAlign='center';
   cx.fillStyle='#ffcc00'; cx.font="bold 13px 'Courier New', monospace";
-  cx.fillText('画 面 分 辨 率', W/2, 124);
-  drawResSlider(70, 142, 340);
+  cx.fillText('画 面 分 辨 率', W/2, 110);
+  drawResSlider(70, 128, 340);
   cx.textAlign='center';
   cx.fillStyle='#557799'; cx.font="10px 'Courier New', monospace";
   const hwScale = (window.devicePixelRatio||1).toFixed(2);
-  cx.fillText('设备最大像素比 '+hwScale+'x · 拉到 3x 为最高', W/2, 178);
+  cx.fillText('设备最大像素比 '+hwScale+'x · 拉到 3x 为最高', W/2, 162);
 
   // Sensitivity
   cx.textAlign='center';
   cx.fillStyle='#ffcc00'; cx.font="bold 13px 'Courier New', monospace";
-  cx.fillText('遥 感 灵 敏 度', W/2, 220);
-  drawSensSlider(70, 240, 340, '横向', 'moveSensX');
-  drawSensSlider(70, 270, 340, '纵向', 'moveSensY');
+  cx.fillText('遥 感 灵 敏 度', W/2, 198);
+  drawSensSlider(70, 216, 340, '横向', 'moveSensX');
+  drawSensSlider(70, 244, 340, '纵向', 'moveSensY');
 
-  // Music — sliders first, then dropdown LAST so it can open downward into the
-  // empty area without ever covering the volume readouts or the console button.
+  // Music section — dropdown is now a normal DOWNWARD dropdown.
   cx.textAlign='center';
   cx.fillStyle='#ffcc00'; cx.font="bold 13px 'Courier New', monospace";
-  cx.fillText('音 乐 设 置', W/2, 320);
-  drawVolumeSlider(70, 336, 280, '背景', 'bgmVol');
-  drawVolumeSlider(70, 366, 280, '音效', 'sfxVol');
+  cx.fillText('音 乐 设 置', W/2, 282);
+  drawVolumeSlider(70, 300, 280, '背景', 'bgmVol');
+  drawVolumeSlider(70, 328, 280, '音效', 'sfxVol');
 
-  // Dev console as sub-page link (above the dropdown so an open list never hides it)
+  // Dev console as sub-page link
   cx.textAlign='center';
   cx.fillStyle='#ffcc00'; cx.font="bold 13px 'Courier New', monospace";
-  cx.fillText('开 发 者', W/2, 410);
-  drawButton(140, 424, 200, 36, '🛠 控  制  台', false);
+  cx.fillText('开 发 者', W/2, 366);
+  drawButton(140, 380, 200, 36, '🛠 控  制  台', false);
 
-  // BGM track dropdown — at the BOTTOM, so opening downward only fills the
-  // remaining empty area between it and the 返回 button (no overlap issue).
+  // BGM track dropdown — opens DOWNWARD into the empty area before 返回.
   cx.fillStyle='#ffcc00'; cx.font="bold 13px 'Courier New', monospace";
-  cx.fillText('选择音乐', W/2, 484);
-  drawDropdown(70, 498, 340, 30, BGM_TRACK_NAMES, bgmTrack, bgmDropdownOpen, true);
+  cx.fillText('选择音乐', W/2, 432);
+  drawDropdown(70, 446, 340, 30, BGM_TRACK_NAMES, bgmTrack, bgmDropdownOpen, false);
 
   drawButton(20, 655, 110, 36, '← 返回', false);
   cx.textAlign='left';
@@ -8027,7 +8223,7 @@ function clickTitleSettings(mx, my) {
     bgmDropdownOpen = false; screen='title'; return;
   }
   // Console sub-page entry (moved up to y=424 so the bottom dropdown can expand freely)
-  if (mx>=140 && mx<=340 && my>=424 && my<=460) {
+  if (mx>=140 && mx<=340 && my>=380 && my<=416) {
     bgmDropdownOpen = false;
     screen='console';
     renderConsole();
@@ -8036,7 +8232,8 @@ function clickTitleSettings(mx, my) {
   // Dropdown picks (header now spans 70..410, y=332..362)
   if (bgmDropdownOpen) {
     // Dropdown opens UPWARD from header at y=498. List sits at 316..496.
-    const lx=70, ly=316, lw=340, itemH=DROPDOWN_ITEM_H, visH=DROPDOWN_VISIBLE_H;
+    // Dropdown opens DOWNWARD from header at y=446. List sits at 478..658.
+    const lx=70, ly=478, lw=340, itemH=DROPDOWN_ITEM_H, visH=DROPDOWN_VISIBLE_H;
     if (mx>=lx && mx<=lx+lw && my>=ly && my<=ly+visH) {
       const localY = (my - ly) + bgmDropdownScroll;
       const idx = Math.floor(localY / itemH);
@@ -8046,16 +8243,16 @@ function clickTitleSettings(mx, my) {
       bgmDropdownOpen = false;
       return;
     }
-    if (!(mx>=70 && mx<=410 && my>=498 && my<=528)) bgmDropdownOpen = false;
+    if (!(mx>=70 && mx<=410 && my>=446 && my<=476)) bgmDropdownOpen = false;
   }
-  if (hitResSlider(mx, my, 70, 142, 340)) return;
-  if (hitSensSlider(mx, my, 70, 240, 340, 'moveSensX')) return;
-  if (hitSensSlider(mx, my, 70, 270, 340, 'moveSensY')) return;
-  // Volume sliders (full width, no dropdown collision)
-  if (hitVolumeSlider(mx, my, 70, 336, 280, 'bgmVol', t => setBgmVol(t))) return;
-  if (hitVolumeSlider(mx, my, 70, 366, 280, 'sfxVol', t => setSfxVol(t))) return;
-  // Dropdown header (track picker) — now at y=498
-  if (mx>=70 && mx<=410 && my>=498 && my<=528) { bgmDropdownOpen = !bgmDropdownOpen; return; }
+  if (hitResSlider(mx, my, 70, 128, 340)) return;
+  if (hitSensSlider(mx, my, 70, 216, 340, 'moveSensX')) return;
+  if (hitSensSlider(mx, my, 70, 244, 340, 'moveSensY')) return;
+  // Volume sliders
+  if (hitVolumeSlider(mx, my, 70, 300, 280, 'bgmVol', t => setBgmVol(t))) return;
+  if (hitVolumeSlider(mx, my, 70, 328, 280, 'sfxVol', t => setSfxVol(t))) return;
+  // Dropdown header (track picker) — now at y=446 opening downward
+  if (mx>=70 && mx<=410 && my>=446 && my<=476) { bgmDropdownOpen = !bgmDropdownOpen; return; }
 }
 
 // ─── CODEX (图鉴) ─────────────────────────────────────────────────────────────
@@ -9875,22 +10072,22 @@ document.addEventListener('keyup',e=>{keys[e.key]=false;});
 // Slider drag tracking — when mouse is held over a slider, dragging updates value continuously
 let _draggingSlider = null;   // {x, y, w, key, type:'sens'|'res'}
 function pickSliderUnder(mx, my) {
-  // Title settings sliders
+  // Title settings sliders (positions match drawTitleSettings)
   if (screen === 'titleSettings') {
-    if (my >= 142 - 6 && my <= 142 + 22 && mx >= 70 - 12 && mx <= 70 + 340 + 12) {
-      return { x:70, y:142, w:340, type:'res' };
+    if (my >= 128 - 6 && my <= 128 + 22 && mx >= 70 - 12 && mx <= 70 + 340 + 12) {
+      return { x:70, y:128, w:340, type:'res' };
     }
-    if (my >= 240 - 6 && my <= 240 + 22 && mx >= 70 - 12 && mx <= 70 + 340 + 12) {
-      return { x:70, y:240, w:340, type:'sens', key:'moveSensX' };
+    if (my >= 216 - 6 && my <= 216 + 22 && mx >= 70 - 12 && mx <= 70 + 340 + 12) {
+      return { x:70, y:216, w:340, type:'sens', key:'moveSensX' };
     }
-    if (my >= 270 - 6 && my <= 270 + 22 && mx >= 70 - 12 && mx <= 70 + 340 + 12) {
-      return { x:70, y:270, w:340, type:'sens', key:'moveSensY' };
+    if (my >= 244 - 6 && my <= 244 + 22 && mx >= 70 - 12 && mx <= 70 + 340 + 12) {
+      return { x:70, y:244, w:340, type:'sens', key:'moveSensY' };
     }
-    if (my >= 336 - 6 && my <= 336 + 22 && mx >= 70 - 12 && mx <= 70 + 280 + 12) {
-      return { x:70, y:336, w:280, type:'vol', key:'bgmVol' };
+    if (my >= 300 - 6 && my <= 300 + 22 && mx >= 70 - 12 && mx <= 70 + 280 + 12) {
+      return { x:70, y:300, w:280, type:'vol', key:'bgmVol' };
     }
-    if (my >= 366 - 6 && my <= 366 + 22 && mx >= 70 - 12 && mx <= 70 + 280 + 12) {
-      return { x:70, y:366, w:280, type:'vol', key:'sfxVol' };
+    if (my >= 328 - 6 && my <= 328 + 22 && mx >= 70 - 12 && mx <= 70 + 280 + 12) {
+      return { x:70, y:328, w:280, type:'vol', key:'sfxVol' };
     }
   }
   // Pause-page sliders (sensitivity + volume — match drawPause coords)
