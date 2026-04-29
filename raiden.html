@@ -3573,8 +3573,11 @@ function updateEnemyBullets() {
       if (b.x < -60 || b.x > W + 60 || b.y < -60 || b.y > H + 60) b.alive = false;
       continue;
     }
-    b.x+=b.vx*ENEMY_BULLET_SPD_GLOBAL;
-    b.y+=b.vy*ENEMY_BULLET_SPD_GLOBAL;
+    // 'fast' bullets (e.g. sniper rounds) skip the global slowdown so they
+    // read as truly high-velocity projectiles.
+    const sm = b.fast ? 1 : ENEMY_BULLET_SPD_GLOBAL;
+    b.x+=b.vx*sm;
+    b.y+=b.vy*sm;
     b.px=b.x|0;b.py=b.y|0;
     if(b.x<-10||b.x>W+10||b.y<-10||b.y>H+20)b.alive=false;
   }
@@ -3813,9 +3816,24 @@ function updateEnemy(e) {
       e.y+=e.speed; e.x+=Math.sin(e.moveTimer*0.12)*2.5;
       break;
     case 'sniper':
-      // Glide to top zone, then aimed laser-like burst
+      // Glide to top zone, then aimed laser-like burst.
+      // Sniper rounds bypass the global enemy-bullet slowdown so they read as
+      // genuinely fast (true sniper feel) — vy is aimed and ≈ 9.5 px/frame.
       e.y+=e.speed; if(e.y>110) e.y=110;
-      if(e.moveTimer%((140*fireMul)|0)===90) fireEB(e,0,4.5);
+      if (e.moveTimer % ((140*fireMul)|0) === 90) {
+        const t = players.find(p => !p.dead);
+        if (t) {
+          const dx = t.x - e.x, dy = t.y - e.y, d = Math.sqrt(dx*dx + dy*dy) || 1;
+          const sp = 9.5;   // raw speed BEFORE the global ENEMY_BULLET_SPD_GLOBAL multiplier
+          enemyBullets.push({
+            x: e.x, y: e.y + e.h/2, px: e.x|0, py: (e.y + e.h/2)|0,
+            vx: dx/d * sp, vy: dy/d * sp,
+            alive: true, color: '#ff66ff',
+            fast: true,         // skip global 0.7× slowdown in updateEnemyBullets
+            w: 5, h: 9,
+          });
+        }
+      }
       break;
     case 'mortar':
       // Lobs slow arcing shells — can be shot down (cancelable)
@@ -9512,10 +9530,11 @@ function syncPauseBtn() {
     btn.textContent = '⏸';
     btn.title = '暂停 (P)';
   }
-  // Shop / Codex side buttons only on title
-  const isTitle = (screen === 'title');
-  shopSideBtn.style.display = isTitle ? '' : 'none';
-  codexSideBtn.style.display = isTitle ? '' : 'none';
+  // Shop / Codex side buttons — visible on title AND in-game / pause / death
+  // (hidden in shop/codex/settings/console themselves to avoid recursion).
+  const showShopCodex = (screen === 'title' || screen === 'game' || screen === 'pause' || screen === 'death');
+  shopSideBtn.style.display = showShopCodex ? '' : 'none';
+  codexSideBtn.style.display = showShopCodex ? '' : 'none';
   // Console DOM panel visibility + render-on-enter
   const showConsole = (screen === 'console');
   consolePanelEl.classList.toggle('show', showConsole);
@@ -9556,10 +9575,22 @@ speedBtn.addEventListener('touchstart', e=>{ e.preventDefault(); cycleSpeed(); }
 // Shop / Codex DOM side buttons (visible only on title)
 const shopSideBtn = document.getElementById('btn-shop');
 const codexSideBtn = document.getElementById('btn-codex');
-shopSideBtn.addEventListener('click',  () => { if (screen === 'title') screen = 'shop';  });
-codexSideBtn.addEventListener('click', () => { if (screen === 'title') screen = 'codex'; });
-shopSideBtn.addEventListener('touchstart',  e => { e.preventDefault(); if (screen === 'title') screen = 'shop';  }, {passive:false});
-codexSideBtn.addEventListener('touchstart', e => { e.preventDefault(); if (screen === 'title') screen = 'codex'; }, {passive:false});
+// Allow opening shop/codex from title, in-game, pause, and death screens.
+// In-game opening auto-pauses the BGM but keeps the run resumable via the pause button.
+function openShopFromAnywhere() {
+  if (screen === 'shop' || screen === 'codex' || screen === 'console') return;
+  if (screen === 'game') stopBGM();
+  screen = 'shop';
+}
+function openCodexFromAnywhere() {
+  if (screen === 'shop' || screen === 'codex' || screen === 'console') return;
+  if (screen === 'game') stopBGM();
+  screen = 'codex';
+}
+shopSideBtn.addEventListener('click',  () => openShopFromAnywhere());
+codexSideBtn.addEventListener('click', () => openCodexFromAnywhere());
+shopSideBtn.addEventListener('touchstart',  e => { e.preventDefault(); openShopFromAnywhere(); },  {passive:false});
+codexSideBtn.addEventListener('touchstart', e => { e.preventDefault(); openCodexFromAnywhere(); }, {passive:false});
 
 // Infinite-bomb button — visible only in invincible mode
 const infBombBtn = document.getElementById('btn-infbomb');
