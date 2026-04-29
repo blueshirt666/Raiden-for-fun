@@ -1439,21 +1439,25 @@ function updateBlackHoles() {
     if (h.x > W - 50)     { h.x = W - 50;     h.vx = -Math.abs(h.vx); }
     if (h.y < 50)         { h.y = 50;         h.vy = Math.abs(h.vy); }
     if (h.y > H - 220)    { h.y = H - 220;    h.vy = -Math.abs(h.vy); }
-    // Player: pulled in but takes NO damage; player can muscle out with input.
+    // Player: pulled in but takes NO damage. The pull adds extra inertial drag
+    // (visible slow-down) while keeping the player's own speed > pull strength
+    // so they can always escape with sustained input.
     const _bhPullMul = (save.console && typeof save.console.bhPullMul === 'number') ? save.console.bhPullMul : 1;
     for (const p of players) {
       if (p.dead) continue;
       const dx = h.x - p.x, dy = h.y - p.y;
       const d = Math.hypot(dx, dy);
       if (d < BH_PULL_RADIUS && d > 0.1) {
-        // Softer pull — peaks at ~0.7 px/frame, so player input (>4 px/frame)
-        // can easily counter and escape.
         const k = (1 - d / BH_PULL_RADIUS);
-        const pullStrength = Math.pow(k, 1.8) * 0.85 * _bhPullMul;
+        // Pull peaks at ~0.95 px/frame near the core (still less than the
+        // player's ~3-4 px/frame so input always wins).
+        const pullStrength = Math.pow(k, 1.6) * 0.95 * _bhPullMul;
         p.x += (dx / d) * pullStrength;
         p.y += (dy / d) * pullStrength;
-        // Movement-damping field — keeps player feeling the field but never frozen.
-        const dampNew = clamp(1 - k * 0.5, 0.5, 1);
+        // Heavy damping that gets pronounced near the core — at the very
+        // center the plane retains 25% of its speed, so movement is clearly
+        // slowed but escape is still possible.
+        const dampNew = clamp(1 - k * 0.75, 0.25, 1);
         p._bhDamp = Math.min(p._bhDamp || 1, dampNew);
       }
     }
@@ -3337,39 +3341,26 @@ function drawBackground() {
           const nx = px + Math.cos(a) * rad, ny = py + Math.sin(a) * rad;
           const v = _hash(ni * 19);
           cx.globalAlpha = 0.18 + v * 0.18;
-          cx.fillStyle = v < 0.3 ? '#1a4422'
-                        : v < 0.6 ? '#2a6b40'
-                        : v < 0.85 ? '#5db077'
-                        : '#88dd99';
+          cx.fillStyle = v < 0.3 ? '#0e2810'
+                        : v < 0.6 ? '#1a4022'
+                        : v < 0.85 ? '#2f6840'
+                        : '#3d7a52';
           cx.fillRect(nx | 0, ny | 0, 1, 1);
         }
-        // Cloud strands — short curved arcs, not flat bars
-        cx.globalAlpha = 0.20;
-        cx.fillStyle = '#ffffff';
+        // Subtle cloud strands — muted blue-grey, not bright white
+        cx.globalAlpha = 0.14;
+        cx.fillStyle = '#5b7a8a';
         for (let ci = 0; ci < 7; ci++) {
           const ay = py + (_hash(ci * 31) - 0.5) * r * 1.4;
           const aw = r * (0.25 + _hash(ci * 11) * 0.45);
           const ax = px + (_hash(ci * 53) - 0.5) * r * 0.6;
-          // pixel-thin trail of dots
           for (let p = 0; p < 14; p++) {
             const fx = ax + (p / 13 - 0.5) * aw + Math.sin(p * 0.5 + ci) * 1.2;
             const fy = ay + Math.cos(p * 0.4 + ci) * 1.5;
             cx.fillRect(fx | 0, fy | 0, 1, 1);
           }
         }
-        // Polar caps — chunked (jagged edge), not smooth ellipse
-        cx.globalAlpha = 0.7;
-        cx.fillStyle = '#e8f4ff';
-        for (let ci = -5; ci <= 5; ci++) {
-          const ch = (_hash(ci + 50) * 0.12 + 0.04) * r;
-          cx.fillRect((px + ci * r * 0.07) | 0, (py - r * 0.95 + ch) | 0,
-                      Math.ceil(r * 0.07), Math.ceil(r * 0.20 - ch));
-        }
-        for (let ci = -5; ci <= 5; ci++) {
-          const ch = (_hash(ci + 100) * 0.12 + 0.04) * r;
-          cx.fillRect((px + ci * r * 0.07) | 0, (py + r * 0.75) | 0,
-                      Math.ceil(r * 0.07), Math.ceil(r * 0.20 - ch));
-        }
+        // No polar caps — keep the surface tonally consistent with the planet.
       } else if (biomeId === 1) {
         // Mars-like: rust pixel grain + canyon scratches + small storm vortex.
         // Layered noise = rocky regolith feel.
@@ -3379,10 +3370,10 @@ function drawBackground() {
           const nx = px + Math.cos(a) * rad, ny = py + Math.sin(a) * rad;
           const v = _hash(ni * 23);
           cx.globalAlpha = 0.22 + v * 0.30;
-          cx.fillStyle = v < 0.30 ? '#5a1a08'    // dark canyon
-                        : v < 0.55 ? '#8a3818'   // rust shadow
-                        : v < 0.82 ? '#c66428'   // bright rust
-                        :            '#ffaa66';  // dust highlight
+          cx.fillStyle = v < 0.30 ? '#3a0e04'    // dark canyon
+                        : v < 0.55 ? '#6a2810'   // rust shadow
+                        : v < 0.82 ? '#9a4818'   // mid rust
+                        :            '#b85420';  // bright rust (no longer pale)
           cx.fillRect(nx | 0, ny | 0, 1, 1);
         }
         // Canyon lines (Valles Marineris feel) — thin diagonal scratches
@@ -3401,9 +3392,9 @@ function drawBackground() {
           }
           cx.stroke();
         }
-        // Dust storm — curved arc trail of dots, not flat ellipse
-        cx.globalAlpha = 0.30;
-        cx.fillStyle = '#dd9966';
+        // Dust storm — curved arc trail of dots in deeper rust (no pale color)
+        cx.globalAlpha = 0.32;
+        cx.fillStyle = '#7a3614';
         for (let p = 0; p < 22; p++) {
           const a = (p / 22) * Math.PI * 1.5;
           const rad = r * 0.55 - p * 0.05;
@@ -3413,14 +3404,7 @@ function drawBackground() {
             2, 2
           );
         }
-        // Polar dust cap — chunked
-        cx.globalAlpha = 0.55;
-        cx.fillStyle = '#e0c088';
-        for (let ci = -3; ci <= 3; ci++) {
-          const ch = (_hash(ci + 70) * 0.10) * r;
-          cx.fillRect((px + ci * r * 0.06) | 0, (py - r * 0.95 + ch) | 0,
-                      Math.ceil(r * 0.06), Math.ceil(r * 0.15 - ch));
-        }
+        // No polar caps — keep the surface a uniform rust palette.
       } else if (biomeId === 2) {
         // Jupiter-like: turbulent cloud bands with per-pixel texture noise +
         // animated swirl arcs + a Great Red Spot drawn from layered curves.
@@ -3432,7 +3416,7 @@ function drawBackground() {
           const widthShrink = 1 - Math.abs(bi) * 0.08;
           cx.fillRect(px - r * widthShrink, bandY - r*0.085, r*2 * widthShrink, r*0.13);
         }
-        // Per-pixel turbulence noise inside bands
+        // Per-pixel turbulence noise inside bands (no white highlights)
         for (let ni = 0; ni < 220; ni++) {
           const a = _hash(ni * 7) * Math.PI * 2;
           const rad = _hash(ni * 13) * r * 0.94;
@@ -3440,14 +3424,14 @@ function drawBackground() {
           const v = _hash(ni * 19);
           cx.globalAlpha = 0.10 + v * 0.18;
           cx.fillStyle = v < 0.3 ? shadeHex(t.core, -40)
-                        : v < 0.7 ? shadeHex(t.core, 8)
-                        :            '#ffffff';
+                        : v < 0.7 ? shadeHex(t.core, 0)
+                        :            shadeHex(t.core, 18);
           cx.fillRect(nx | 0, ny | 0, 1, 1);
         }
         // Great Red Spot — layered curved oval with swirl ring
         const spX = px - r*0.15, spY = py + r*0.25;
         cx.globalAlpha = 0.55;
-        cx.fillStyle = '#aa3322';
+        cx.fillStyle = '#7a1c10';
         cx.beginPath();
         for (let k = 0; k < 16; k++) {
           const a = (k / 16) * Math.PI * 2;
@@ -3457,15 +3441,13 @@ function drawBackground() {
           if (k === 0) cx.moveTo(x, y); else cx.lineTo(x, y);
         }
         cx.closePath(); cx.fill();
-        cx.fillStyle = '#dd5533';
+        cx.fillStyle = '#a02818';
         cx.beginPath();
         cx.ellipse(spX, spY, r * 0.10, r * 0.06, -0.2, 0, Math.PI*2);
         cx.fill();
-        cx.fillStyle = '#ffaa66';
-        cx.fillRect((spX - r*0.03) | 0, (spY - r*0.015) | 0, Math.ceil(r*0.06), Math.ceil(r*0.025));
-        // Swirl arcs — curved storm trails on bands
-        cx.globalAlpha = 0.32;
-        cx.strokeStyle = '#ffffff';
+        // Swirl arcs — muted core-tone trails (no white)
+        cx.globalAlpha = 0.22;
+        cx.strokeStyle = shadeHex(t.core, 18);
         cx.lineWidth = 1;
         for (let si = 0; si < 5; si++) {
           const sy = py + ((bandSeed * 0.21 + si * 0.6) % 1 - 0.5) * r * 1.4;
@@ -3487,10 +3469,10 @@ function drawBackground() {
           const nx = px + Math.cos(a) * rad, ny = py + Math.sin(a) * rad;
           const v = _hash(ni * 23);
           cx.globalAlpha = 0.20 + v * 0.30;
-          cx.fillStyle = v < 0.30 ? '#1a1a1a'
-                        : v < 0.55 ? '#3a3a3a'
-                        : v < 0.82 ? '#7a7a7a'
-                        :            '#bcbcbc';
+          cx.fillStyle = v < 0.30 ? '#0a0a0a'
+                        : v < 0.55 ? '#2a2a2a'
+                        : v < 0.82 ? '#4a4a4a'
+                        :            '#6a6a6a';
           cx.fillRect(nx | 0, ny | 0, 1, 1);
         }
         // Craters — circle with shadow + lit rim, deterministic placement
@@ -3506,16 +3488,16 @@ function drawBackground() {
           cx.beginPath();
           cx.arc(cx0, cy0, cR, 0, Math.PI*2);
           cx.fill();
-          // Lit rim (upper-left outside)
-          cx.globalAlpha = 0.50;
-          cx.strokeStyle = '#e0dcd0';
+          // Lit rim (upper-left outside) — dimmed grey, no near-white
+          cx.globalAlpha = 0.40;
+          cx.strokeStyle = '#5a564e';
           cx.lineWidth = 1.2;
           cx.beginPath();
           cx.arc(cx0, cy0, cR * 1.05, Math.PI * 0.85, Math.PI * 1.85);
           cx.stroke();
-          // Inner highlight
-          cx.globalAlpha = 0.34;
-          cx.fillStyle = '#cccccc';
+          // Inner highlight (subtle mid-grey)
+          cx.globalAlpha = 0.28;
+          cx.fillStyle = '#4a4a4a';
           cx.beginPath();
           cx.arc(cx0 - cR*0.25, cy0 - cR*0.25, cR * 0.5, 0, Math.PI*2);
           cx.fill();
@@ -3542,9 +3524,9 @@ function drawBackground() {
           cx.fillStyle = (bi & 1) ? shadeHex(t.core, 18) : shadeHex(t.core, -18);
           cx.fillRect(px - r, bandY - r*0.06, r*2, r*0.09);
         }
-        // Ripple texture (thin pixel lines)
-        cx.globalAlpha = 0.16;
-        cx.fillStyle = '#ffffff';
+        // Ripple texture — pale-blue tone, no pure white
+        cx.globalAlpha = 0.14;
+        cx.fillStyle = shadeHex(t.core, 28);
         for (let ri = 0; ri < 5; ri++) {
           const ry = py + (ri - 2) * r * 0.32 + _hash(ri * 19) * r * 0.06;
           for (let p = 0; p < 16; p++) {
@@ -3561,7 +3543,7 @@ function drawBackground() {
         cx.strokeStyle = '#0a2266';
         cx.lineWidth = 1;
         cx.beginPath(); cx.arc(stX, stY, r*0.13, 0, Math.PI*2); cx.stroke();
-        cx.fillStyle = '#88ccff';
+        cx.fillStyle = '#0c2a55';
         cx.fillRect((stX - 1) | 0, (stY - 1) | 0, 2, 2);
       }
       cx.restore();
@@ -3574,12 +3556,7 @@ function drawBackground() {
       cx.beginPath(); cx.arc(px, py, r, 0, Math.PI*2); cx.clip();
       cx.fillStyle = term;
       cx.fillRect(px - r, py - r, r*2, r*2);
-      // Specular highlight (smaller, softer)
-      const spec = cx.createRadialGradient(px - r*0.45, py - r*0.5, 1, px - r*0.4, py - r*0.45, r*0.45);
-      spec.addColorStop(0, 'rgba(255,255,255,0.36)');
-      spec.addColorStop(1, 'rgba(255,255,255,0)');
-      cx.fillStyle = spec;
-      cx.fillRect(px - r, py - r, r*2, r*2);
+      // No specular white highlight — keep planet tonally consistent.
       cx.restore();
       // Atmospheric rim (softer, double layer)
       cx.strokeStyle = t.glow + '88';
@@ -3608,7 +3585,7 @@ function drawBackground() {
         cx.beginPath(); cx.ellipse(0, 0, r*1.18, r*0.32, 0, 0, Math.PI*2); cx.stroke();
         cx.restore();
       }
-      // Up to 2 tiny moons of varying sizes
+      // Up to 2 tiny moons — darker palette so they don't pop bright.
       const moonCount = ((r % 3) === 0) ? 2 : ((r % 5) === 0) ? 1 : 0;
       for (let mi = 0; mi < moonCount; mi++) {
         const mr = r * (0.13 + mi * 0.08);
@@ -3616,13 +3593,12 @@ function drawBackground() {
         const mx = px + Math.cos(ma) * (r + mr*3 + 4 + mi*6);
         const my = py + Math.sin(ma) * (r * 0.45);
         const mg = cx.createRadialGradient(mx - mr*0.3, my - mr*0.3, 1, mx, my, mr);
-        mg.addColorStop(0, '#cccccc');
-        mg.addColorStop(0.6, '#777777');
-        mg.addColorStop(1, '#1a1a1a');
+        mg.addColorStop(0, '#5a5a5a');
+        mg.addColorStop(0.6, '#3a3a3a');
+        mg.addColorStop(1, '#0a0a0a');
         cx.fillStyle = mg;
         cx.beginPath(); cx.arc(mx, my, mr, 0, Math.PI*2); cx.fill();
-        // 1-2 dark craters per moon
-        cx.fillStyle = 'rgba(0,0,0,0.45)';
+        cx.fillStyle = 'rgba(0,0,0,0.55)';
         cx.beginPath(); cx.arc(mx - mr*0.25, my - mr*0.1, mr*0.18, 0, Math.PI*2); cx.fill();
         cx.beginPath(); cx.arc(mx + mr*0.15, my + mr*0.20, mr*0.13, 0, Math.PI*2); cx.fill();
       }
@@ -10391,6 +10367,9 @@ function setGameSpeed(label) {
   gameSpeedLabel = label;
   gameSpeed = label * SPEED_INTERNAL_MUL;
   speedBtn.textContent = label + 'x';
+  // Reset accumulator on speed change so high-speed buildup doesn't keep
+  // running fast updates after switching back to 1x.
+  speedAccum = 0;
 }
 function cycleSpeed() {
   const i = SPEED_CYCLE.indexOf(gameSpeedLabel);
@@ -10564,6 +10543,9 @@ function loop() {
     speedAccum -= 1;
   }
   if (speedAccum < 0) speedAccum = 0;
+  // Clamp residual accumulator so a previous high-speed run can't carry over
+  // and keep ticking fast after the player drops back to 1×.
+  if (speedAccum > gameSpeed) speedAccum = gameSpeed;
   // Death countdown ticks once per real frame (60fps), independent of 倍速.
   // 1x label -> 0.5 internal pace would otherwise halve the visible second count;
   // by ticking here it always matches the real wall clock.
