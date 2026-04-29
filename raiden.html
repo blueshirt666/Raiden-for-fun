@@ -181,19 +181,8 @@ const BG_SKINS = [
   ['日落云海',5,'d','sunset'],
   ['远古遗迹',8,'d','ruins'],
   ['次元裂隙',12,'d','rift'],
-  // 二次元美少女动态背景 (10)
-  ['福利姬·樱花',3000,'g','animeSakura'],
-  ['福利姬·星海',3500,'g','animeStar'],
-  ['福利姬·月神',4000,'g','animeMoon'],
-  ['福利姬·雪国',4500,'g','animeSnow'],
-  ['福利姬·炎之',5000,'g','animeFlame'],
-  ['福利姬·碧海',10,'d','animeOcean'],
-  ['福利姬·霓虹',12,'d','animeNeon'],
-  ['福利姬·黄昏',15,'d','animeDusk'],
-  ['福利姬·幻彩',20,'d','animeRainbow'],
-  ['福利姬·女神',30,'d','animeGoddess'],
 ];
-const ANIME_BG_TYPES = ['animeSakura','animeStar','animeMoon','animeSnow','animeFlame','animeOcean','animeNeon','animeDusk','animeRainbow','animeGoddess'];
+const ANIME_BG_TYPES = [];
 
 // ─── RUNES ───────────────────────────────────────────────────────────────────
 // Each rune: name, key, color, base proc rate, lv 10 max rate, diamond cost per lv up
@@ -216,7 +205,9 @@ function runeProb(key) {
   if (lv <= 0) return 0;
   const def = RUNE_DEFS.find(r => r.key === key);
   if (!def) return 0;
-  return def.base + (def.max - def.base) * ((lv - 1) / 9);
+  const base = def.base + (def.max - def.base) * ((lv - 1) / 9);
+  const mul = (save.console && typeof save.console.runeProcMul === 'number') ? save.console.runeProcMul : 1;
+  return Math.min(1, base * mul);
 }
 function isRuneEquipped(key) {
   return save.equippedRunes && save.equippedRunes.indexOf(key) >= 0;
@@ -237,7 +228,7 @@ function defaultSave() {
     coins: 500, diamonds: 2,
     planes: Array(PLANE_SKINS.length).fill(false).map((_,i)=>i===0),
     bgs: Array(BG_SKINS.length).fill(false).map((_,i)=>i===0),
-    selP1: 0, selP2: 1, selBG: 0,
+    selP1: 0, selBG: 0,
     stageProgress: { novice:1, veteran:0, hell:0 },
     medals: { novice:false, veteran:false, hell:false },
     tier: 'novice',
@@ -280,6 +271,12 @@ function defaultConsole() {
     coinMul: 1.0,           // coin reward multiplier
     diamondMul: 1.0,        // diamond reward multiplier
     bossKillMul: 1.0,       // boss-kill threshold multiplier (more kills needed)
+    // Rune strength multipliers (1.0 = stock; >1 amplifies proc rate, capped at 1.0)
+    runeProcMul: 1.0,       // global rune proc-rate multiplier
+    burnDmgMul: 1.0,        // burn DoT %hp/tick multiplier
+    poisonSlowMul: 1.0,     // poison fire-interval ×; >1 = slower fire
+    plagueDmgMul: 1.0,      // plague DoT %hp/tick multiplier
+    critDmgMul: 1.0,        // crit damage multiplier (stock = 2x; this scales it)
   };
 }
 let save = defaultSave();
@@ -299,7 +296,6 @@ function loadSave() {
         for (let i=0; i<Math.min(d.bgs.length, save.bgs.length); i++) save.bgs[i] = !!d.bgs[i];
       }
       if (typeof d.selP1 === 'number') save.selP1 = d.selP1;
-      if (typeof d.selP2 === 'number') save.selP2 = d.selP2;
       if (typeof d.selBG === 'number' && d.selBG < BG_SKINS.length) save.selBG = d.selBG;
       // stageProgress: migrate legacy number → {novice,veteran,hell}
       if (typeof d.stageProgress === 'number') {
@@ -1031,6 +1027,8 @@ let bullets = [];
 let enemyBullets = [];
 let screenMissiles = [];   // {axis:'h'|'v', pos, warnT, fireT}
 let lastMissileSpawn = 0;
+let blackHoles = [];       // {x, y, life, maxLife, r, spinT}
+let lastBlackHoleSpawn = 0;
 let enemies = [];
 let pickups = [];
 let explosions = [];
@@ -1059,16 +1057,30 @@ function shouldEnableScreenMissiles() {
 }
 function maxConcurrentMissiles() {
   if (endlessMode) {
-    // Lv10 → 1, Lv25 → 2, Lv45 → 3, Lv70+ → 4
-    if (level < 25) return 1;
-    if (level < 45) return 2;
-    if (level < 70) return 3;
+    // Lv10 → 2, Lv20 → 3, Lv35 → 4, Lv55 → 5, Lv75+ → 6 (multi-row + multi-col warnings)
+    if (level < 10) return 1;
+    if (level < 20) return 2;
+    if (level < 35) return 3;
+    if (level < 55) return 4;
+    if (level < 75) return 5;
+    return 6;
+  }
+  const lvScale = Math.min(level / 12, 1);
+  if (currentTier() === 'hell')    return clamp(1 + Math.floor(lvScale * 4),   1, 5);
+  if (currentTier() === 'veteran') return clamp(1 + Math.floor(lvScale * 3),   1, 4);
+  return clamp(1 + Math.floor(lvScale * 2), 1, 3);
+}
+function maxSameAxisMissiles() {
+  // How many warnings can stack on the SAME row (or same column).
+  // Higher difficulty → multi-warnings on same axis.
+  if (endlessMode) {
+    if (level < 25) return 2;
+    if (level < 50) return 3;
     return 4;
   }
-  // Veteran starts gentle, hell ramps faster
-  const lvScale = Math.min(level / 12, 1);
-  if (currentTier() === 'hell') return clamp(1 + Math.floor(lvScale * 2.5), 1, 3);
-  return clamp(1 + Math.floor(lvScale * 1.5), 1, 2);
+  if (currentTier() === 'hell')    return 3;
+  if (currentTier() === 'veteran') return 2;
+  return 2;
 }
 function trySpawnScreenMissile() {
   if (screenMissiles.length >= maxConcurrentMissiles()) return;
@@ -1080,9 +1092,9 @@ function trySpawnScreenMissile() {
     // Reject if would crowd same-axis warnings
     const tooClose = screenMissiles.some(m => m.axis === axis && Math.abs(m.pos - pos) < MISSILE_GAP);
     if (tooClose) continue;
-    // Hard rule: never let same-axis active warnings exceed 2 at once → guarantees corridor
+    // Cap same-axis warnings to keep at least one safe corridor available.
     const sameAxisCount = screenMissiles.filter(m => m.axis === axis).length;
-    if (sameAxisCount >= 2) return;
+    if (sameAxisCount >= maxSameAxisMissiles()) return;
     screenMissiles.push({ axis, pos, warnT: MISSILE_WARN_FRAMES, fireT: 0 });
     return;
   }
@@ -1201,6 +1213,133 @@ function drawScreenMissiles() {
     }
   }
 }
+// ─── BLACK HOLES (master / endless 30+) ─────────────────────────────────────
+// Fixed at a screen point (does NOT scroll with the terrain). 10s lifetime at 1x speed.
+const BH_LIFE_FRAMES = 600;            // 10s @ 60fps
+const BH_PULL_RADIUS = 110;            // pull starts here
+const BH_DAMAGE_RADIUS = 22;           // close-contact = lethal
+function shouldEnableBlackHoles() {
+  if (endlessMode) return level >= 30;
+  // Stage mode: only the highest tier (大师 / 地狱)
+  return currentTier() === 'hell';
+}
+function trySpawnBlackHole() {
+  if (blackHoles.length >= 2) return;
+  // Avoid clustering on the player and on existing holes
+  const margin = 70;
+  for (let attempt = 0; attempt < 12; attempt++) {
+    const x = rnd(margin, W - margin), y = rnd(margin, H - 200);
+    const p = players[0];
+    if (p && Math.hypot(p.x - x, p.y - y) < 140) continue;
+    const tooClose = blackHoles.some(h => Math.hypot(h.x - x, h.y - y) < 160);
+    if (tooClose) continue;
+    blackHoles.push({ x, y, life: BH_LIFE_FRAMES, maxLife: BH_LIFE_FRAMES, r: 22, spinT: 0 });
+    addFT('黑洞已生成', x, y - 36, '#cc88ff');
+    return;
+  }
+}
+function updateBlackHoles() {
+  if (!shouldEnableBlackHoles() || screen !== 'game') return;
+  // Spawn every ~14s while under cap
+  const interval = endlessMode ? Math.max(420, 1000 - (level - 30) * 12) : 900;
+  if (frame - lastBlackHoleSpawn > interval) {
+    lastBlackHoleSpawn = frame;
+    trySpawnBlackHole();
+  }
+  for (const h of blackHoles) {
+    h.life--;
+    h.spinT++;
+    // Pull players (not held in place — sucked toward center)
+    for (const p of players) {
+      if (p.dead) continue;
+      const dx = h.x - p.x, dy = h.y - p.y;
+      const d = Math.hypot(dx, dy);
+      if (d < BH_PULL_RADIUS && d > 0.1) {
+        const k = (1 - d / BH_PULL_RADIUS);
+        p.x += (dx / d) * k * 1.4;
+        p.y += (dy / d) * k * 1.4;
+        if (d < BH_DAMAGE_RADIUS && p.invTimer <= 0 && !invincible) {
+          // 6 frame damage cooldown
+          if (!h._lastHitFrame || frame - h._lastHitFrame > 24) {
+            h._lastHitFrame = frame;
+            hitPlayer(p);
+          }
+        }
+      }
+    }
+    // Pull enemies too — flavor; weaker than player pull
+    for (const e of enemies) {
+      if (!e.alive) continue;
+      const dx = h.x - e.x, dy = h.y - e.y;
+      const d = Math.hypot(dx, dy);
+      if (d < BH_PULL_RADIUS) {
+        const k = (1 - d / BH_PULL_RADIUS) * 0.6;
+        e.x += (dx / (d || 1)) * k;
+        e.y += (dy / (d || 1)) * k;
+        if (d < BH_DAMAGE_RADIUS) { e.hp -= e.maxHp * 0.04; if (e.hp <= 0) killEnemy(e); }
+      }
+    }
+    // Pull enemy bullets — looks dramatic
+    for (const b of enemyBullets) {
+      if (!b.alive) continue;
+      const dx = h.x - b.x, dy = h.y - b.y;
+      const d = Math.hypot(dx, dy);
+      if (d < BH_PULL_RADIUS * 0.7) {
+        const k = (1 - d / (BH_PULL_RADIUS * 0.7)) * 0.5;
+        b.vx += (dx / (d || 1)) * k;
+        b.vy += (dy / (d || 1)) * k;
+        if (d < 14) b.alive = false;
+      }
+    }
+  }
+  blackHoles = blackHoles.filter(h => h.life > 0);
+}
+function drawBlackHoles() {
+  for (const h of blackHoles) {
+    cx.save();
+    // Outer event-horizon swirl (rings)
+    const t = h.spinT * 0.06;
+    for (let i = 0; i < 4; i++) {
+      const rg = i * 8 + 26 + Math.sin(t + i) * 4;
+      cx.strokeStyle = `rgba(140,80,200,${0.55 - i * 0.1})`;
+      cx.lineWidth = 1.4;
+      cx.beginPath(); cx.arc(h.x, h.y, rg, 0, Math.PI * 2); cx.stroke();
+    }
+    // Accretion disk
+    const grd = cx.createRadialGradient(h.x, h.y, 4, h.x, h.y, BH_PULL_RADIUS);
+    grd.addColorStop(0, 'rgba(0,0,0,1)');
+    grd.addColorStop(0.18, 'rgba(40,10,60,0.85)');
+    grd.addColorStop(0.45, 'rgba(120,40,180,0.35)');
+    grd.addColorStop(1, 'rgba(80,40,140,0)');
+    cx.fillStyle = grd;
+    cx.beginPath(); cx.arc(h.x, h.y, BH_PULL_RADIUS, 0, Math.PI * 2); cx.fill();
+    // Inner singularity
+    cx.fillStyle = '#000';
+    cx.beginPath(); cx.arc(h.x, h.y, h.r, 0, Math.PI * 2); cx.fill();
+    cx.strokeStyle = '#ee88ff'; cx.lineWidth = 2;
+    cx.beginPath(); cx.arc(h.x, h.y, h.r, 0, Math.PI * 2); cx.stroke();
+    // Spinning streaks
+    for (let i = 0; i < 6; i++) {
+      const a = t + i * (Math.PI / 3);
+      const r1 = h.r + 4, r2 = h.r + 20;
+      cx.strokeStyle = `rgba(255,180,255,${0.4 + 0.4 * Math.sin(t * 2 + i)})`;
+      cx.lineWidth = 1.2;
+      cx.beginPath();
+      cx.moveTo(h.x + Math.cos(a) * r1, h.y + Math.sin(a) * r1);
+      cx.lineTo(h.x + Math.cos(a + 0.4) * r2, h.y + Math.sin(a + 0.4) * r2);
+      cx.stroke();
+    }
+    // Countdown ring (life remaining)
+    const lifeT = h.life / h.maxLife;
+    cx.strokeStyle = '#ffaa44';
+    cx.lineWidth = 2;
+    cx.beginPath();
+    cx.arc(h.x, h.y, h.r + 4, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * lifeT);
+    cx.stroke();
+    cx.restore();
+  }
+}
+
 let bgStars = [];
 let bgTerrain = [];
 let score = 0;
@@ -1217,8 +1356,8 @@ function triggerShake(mag, frames) {
 }
 let gameSpeed = 1; // 0.5 / 1 / 2 / 3
 let speedAccum = 0;
-// Stage mode beatable thresholds (12 levels). Endless reuses last value.
-const BOSS_KILL_THRESHOLD = [10, 14, 18, 22, 26, 30, 34, 38, 42, 46, 52, 60];
+// Fixed 60 minis per stage before boss appears (all 12 stage levels).
+const BOSS_KILL_THRESHOLD = [60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60];
 
 // ─── UTILITY ─────────────────────────────────────────────────────────────────
 function rnd(min, max) { return Math.random()*(max-min)+min; }
@@ -2843,10 +2982,10 @@ function mkB(x,y,vx,vy,color,w,h,owner,dmg) {
   const isPlayer = !!owner && (owner.pNum !== undefined);
   let finalDmg = (dmg || 10) * (isPlayer ? C.weaponDmgMul : 1);
   let crit = false;
-  // Crit rune: roll at bullet creation, doubles damage, gold tint
+  // Crit rune: roll at bullet creation, doubles damage (×critDmgMul), gold tint
   if (isPlayer && isRuneEquipped('crit') && Math.random() < runeProb('crit')) {
     crit = true;
-    finalDmg *= 2;
+    finalDmg *= 2 * (C.critDmgMul || 1);
   }
   const sm = isPlayer ? C.bulletSpeedMul : 1;
   return {x, y, px:x|0, py:y|0,
@@ -2859,6 +2998,7 @@ function mkB(x,y,vx,vy,color,w,h,owner,dmg) {
 // Apply rune procs at the moment a player bullet hits an enemy.
 function applyRuneOnHit(e, b) {
   if (!b || !b.owner || b.owner.pNum === undefined) return;
+  const isBoss = !!e && e === boss;
   // Crit visual — large floating golden number with damage shown
   if (b.crit) {
     const dmgInt = Math.max(1, Math.round(b.dmg));
@@ -2923,7 +3063,7 @@ function applyRuneOnHit(e, b) {
     addFT('☣ 疫病', e.x, e.y - 14, '#cc44ff');
   }
   // Decap — non-boss only
-  if (isRuneEquipped('decap') && Math.random() < runeProb('decap')) {
+  if (!isBoss && isRuneEquipped('decap') && Math.random() < runeProb('decap')) {
     addFT('斩  首!', e.x, e.y - 10, '#ff4488');
     spawnExplosion(e.x, e.y, 'large');
     e.hp = 0;
@@ -3201,8 +3341,15 @@ function updateBullets() {
   bullets=bullets.filter(b=>b.alive);
 }
 
+// Global enemy bullet speed multiplier (slower = easier to dodge)
+const ENEMY_BULLET_SPD_GLOBAL = 0.7;
 function updateEnemyBullets() {
-  for(const b of enemyBullets){b.x+=b.vx;b.y+=b.vy;b.px=b.x|0;b.py=b.y|0;if(b.x<-10||b.x>W+10||b.y<-10||b.y>H+20)b.alive=false;}
+  for(const b of enemyBullets){
+    b.x+=b.vx*ENEMY_BULLET_SPD_GLOBAL;
+    b.y+=b.vy*ENEMY_BULLET_SPD_GLOBAL;
+    b.px=b.x|0;b.py=b.y|0;
+    if(b.x<-10||b.x>W+10||b.y<-10||b.y>H+20)b.alive=false;
+  }
   enemyBullets=enemyBullets.filter(b=>b.alive);
 }
 
@@ -3285,27 +3432,27 @@ function doBomb(p) {
 
 // ─── ENEMIES (20 types) ──────────────────────────────────────────────────────
 const ENEMY_CFG = {
-  basic:    {hp:20, spd:1.5,pts:100,w:20,h:18,col:'#ff4444',cv:1},
-  zigzag:   {hp:30, spd:2,  pts:150,w:18,h:16,col:'#ff8800',cv:2},
-  bomber:   {hp:60, spd:1,  pts:300,w:28,h:22,col:'#aa44ff',cv:3},
-  gunship:  {hp:80, spd:1.2,pts:250,w:30,h:24,col:'#44aaff',cv:2},
-  tank:     {hp:150,spd:0.7,pts:400,w:36,h:28,col:'#44ff44',cv:4},
-  speeder:  {hp:15, spd:3.5,pts:80, w:14,h:12,col:'#ffff00',cv:1},
-  carrier:  {hp:200,spd:0.5,pts:600,w:50,h:40,col:'#ff44aa',cv:5},
+  basic:    {hp:50, spd:1.5,pts:100,w:20,h:18,col:'#ff4444',cv:1},
+  zigzag:   {hp:75, spd:2,  pts:150,w:18,h:16,col:'#ff8800',cv:2},
+  bomber:   {hp:130,spd:1,  pts:300,w:28,h:22,col:'#aa44ff',cv:3},
+  gunship:  {hp:170,spd:1.2,pts:250,w:30,h:24,col:'#44aaff',cv:2},
+  tank:     {hp:300,spd:0.7,pts:400,w:36,h:28,col:'#44ff44',cv:4},
+  speeder:  {hp:35, spd:3.5,pts:80, w:14,h:12,col:'#ffff00',cv:1},
+  carrier:  {hp:420,spd:0.5,pts:600,w:50,h:40,col:'#ff44aa',cv:5},
   // Additional 13 types
-  dart:     {hp:18, spd:3,  pts:90, w:14,h:18,col:'#ffaaaa',cv:1},
-  saucer:   {hp:60, spd:0.9,pts:280,w:30,h:18,col:'#aaffaa',cv:2},
-  scout:    {hp:10, spd:4.2,pts:60, w:12,h:12,col:'#ffffaa',cv:1},
-  sniper:   {hp:80, spd:0.4,pts:320,w:24,h:24,col:'#ff66ff',cv:2},
-  mortar:   {hp:50, spd:0.6,pts:240,w:24,h:22,col:'#cc8855',cv:2},
-  swarmlet: {hp:8,  spd:2.6,pts:40, w:10,h:10,col:'#ff77aa',cv:1},
-  hive:     {hp:140,spd:0.7,pts:480,w:36,h:30,col:'#cc44ff',cv:4},
-  turret:   {hp:120,spd:0.0,pts:280,w:24,h:24,col:'#888888',cv:2},
-  stealth:  {hp:35, spd:1.6,pts:220,w:22,h:18,col:'#553388',cv:2},
-  splitter: {hp:50, spd:1.1,pts:240,w:24,h:22,col:'#88ddff',cv:2},
-  minelayer:{hp:90, spd:0.7,pts:330,w:26,h:22,col:'#aaaa44',cv:3},
-  jet:      {hp:25, spd:5,  pts:110,w:14,h:22,col:'#88ccff',cv:1},
-  elite:    {hp:260,spd:0.9,pts:700,w:38,h:32,col:'#ff2244',cv:5},
+  dart:     {hp:42, spd:3,  pts:90, w:14,h:18,col:'#ffaaaa',cv:1},
+  saucer:   {hp:130,spd:0.9,pts:280,w:30,h:18,col:'#aaffaa',cv:2},
+  scout:    {hp:25, spd:4.2,pts:60, w:12,h:12,col:'#ffffaa',cv:1},
+  sniper:   {hp:170,spd:0.4,pts:320,w:24,h:24,col:'#ff66ff',cv:2},
+  mortar:   {hp:110,spd:0.6,pts:240,w:24,h:22,col:'#cc8855',cv:2},
+  swarmlet: {hp:18, spd:2.6,pts:40, w:10,h:10,col:'#ff77aa',cv:1},
+  hive:     {hp:300,spd:0.7,pts:480,w:36,h:30,col:'#cc44ff',cv:4},
+  turret:   {hp:260,spd:0.0,pts:280,w:24,h:24,col:'#888888',cv:2},
+  stealth:  {hp:80, spd:1.6,pts:220,w:22,h:18,col:'#553388',cv:2},
+  splitter: {hp:110,spd:1.1,pts:240,w:24,h:22,col:'#88ddff',cv:2},
+  minelayer:{hp:200,spd:0.7,pts:330,w:26,h:22,col:'#aaaa44',cv:3},
+  jet:      {hp:55, spd:5,  pts:110,w:14,h:22,col:'#88ccff',cv:1},
+  elite:    {hp:550,spd:0.9,pts:700,w:38,h:32,col:'#ff2244',cv:5},
   // Ramming-only types: no bullets, only deal contact damage
   asteroid: {hp:80, spd:1.0,pts:120,w:32,h:32,col:'#888899',cv:2},
   ramship:  {hp:50, spd:2.4,pts:140,w:22,h:22,col:'#aa44ff',cv:2},
@@ -3332,13 +3479,13 @@ function mkEnemy(type, x, y) {
 function updateEnemy(e) {
   if(!e.alive) return;
   // Pre-tick: rune effects (burn / plague drain HP, freeze stops everything, slow halves motion)
-  if (e.burn   > 0) { e.burn--;   e.hp -= e.maxHp * 0.005; }
+  if (e.burn   > 0) { e.burn--;   e.hp -= e.maxHp * 0.005 * (save.console.burnDmgMul || 1); }
   if (e.poison > 0) e.poison--;
   if (e.freeze > 0) { e.freeze--; e.px = e.x|0; e.py = e.y|0; if (e.hp <= 0) killEnemy(e); return; }
   if (e.slow   > 0) e.slow--;
   if (e.plague > 0) {
     e.plague--;
-    e.hp -= e.maxHp * 0.004;
+    e.hp -= e.maxHp * 0.004 * (save.console.plagueDmgMul || 1);
     if (e.plague % 30 === 0) {
       let near = null, bestD = 60*60;
       for (const o of enemies) {
@@ -3352,9 +3499,10 @@ function updateEnemy(e) {
   if (e.hp <= 0) { killEnemy(e); return; }
   e.moveTimer++;
   const C = save.console || defaultConsole();
-  // Poisoned enemies fire much less often (skip half their internal ticks)
-  if (e.poison > 0 && Math.random() < 0.5) e.moveTimer--;
-  const fireMul = (endlessMode ? 1.6 : 1.0) * C.enemyFireRateMul;
+  // Poisoned enemies fire much less often: skip ~70% ticks AND lengthen fire interval ×2.5
+  if (e.poison > 0 && Math.random() < 0.7) e.moveTimer--;
+  const _poisonFireMul = (e.poison > 0) ? (2.5 * (save.console.poisonSlowMul || 1)) : 1.0;
+  const fireMul = (endlessMode ? 1.6 : 1.0) * C.enemyFireRateMul * _poisonFireMul;
   // Pre-record position for slow modifier
   const _slowApply = e.slow > 0;
   const _xPre = e.x, _yPre = e.y;
@@ -3695,22 +3843,52 @@ function drawEnemy(e) {
       break;
     }
     case 'tank': {
-      // Fortress — wide armored hull with triple turrets
+      // Heavy gunship aircraft — twin-engine, swept wings, three nose cannons.
+      // Outer swept-back wings
+      cx.fillStyle=e.col+'88';
+      cx.beginPath();
+      cx.moveTo(-e.w*.18,-e.h*.05);
+      cx.lineTo(-e.w*.62, e.h*.18);
+      cx.lineTo(-e.w*.55, e.h*.32);
+      cx.lineTo(-e.w*.10, e.h*.10);
+      cx.closePath(); cx.fill();
+      cx.beginPath();
+      cx.moveTo( e.w*.18,-e.h*.05);
+      cx.lineTo( e.w*.62, e.h*.18);
+      cx.lineTo( e.w*.55, e.h*.32);
+      cx.lineTo( e.w*.10, e.h*.10);
+      cx.closePath(); cx.fill();
+      // Armored fuselage — pill-shaped with bevel
       cx.fillStyle=rg;
-      cx.beginPath(); cx.roundRect(-e.w*.5,-e.h*.5,e.w,e.h,5); cx.fill();
-      cx.strokeStyle=e.col; cx.lineWidth=1; cx.stroke();
-      // armor plating lines
-      cx.strokeStyle='rgba(0,0,0,.35)'; cx.lineWidth=2;
-      cx.beginPath(); cx.moveTo(-e.w*.5,-e.h*.05); cx.lineTo(e.w*.5,-e.h*.05); cx.stroke();
-      // 3 turrets
-      for(let i=-1;i<=1;i++){
-        cx.fillStyle=e.col+'cc';
-        cx.beginPath(); cx.arc(i*e.w*.32,e.h*.12,e.w*.13,0,Math.PI*2); cx.fill();
-        cx.fillStyle='#1a441a';
-        cx.fillRect((i*e.w*.32-1.5)|0,e.h*.24|0,3,e.h*.22);
+      cx.beginPath(); cx.roundRect(-e.w*.22,-e.h*.5,e.w*.44,e.h,7); cx.fill();
+      cx.strokeStyle='rgba(0,0,0,.5)'; cx.lineWidth=1;
+      cx.stroke();
+      // Twin engine pods under the wings (rear glow)
+      for (let s = -1; s <= 1; s += 2) {
+        cx.fillStyle = '#222';
+        cx.beginPath(); cx.roundRect(s*e.w*.30 - 4, e.h*.14, 8, 12, 2); cx.fill();
+        const eg = cx.createRadialGradient(s*e.w*.30, e.h*.30, 1, s*e.w*.30, e.h*.30, 6);
+        eg.addColorStop(0,'#ffeeaa'); eg.addColorStop(1,'rgba(255,120,0,0)');
+        cx.fillStyle = eg;
+        cx.beginPath(); cx.arc(s*e.w*.30, e.h*.30, 6, 0, Math.PI*2); cx.fill();
       }
-      cx.fillStyle='rgba(100,255,100,.5)';
-      cx.beginPath(); cx.ellipse(0,-e.h*.1,e.w*.15,e.h*.15,0,0,Math.PI*2); cx.fill();
+      // Belly armor plating ribs
+      cx.strokeStyle='rgba(0,0,0,.4)'; cx.lineWidth=1;
+      cx.beginPath(); cx.moveTo(-e.w*.20,-e.h*.18); cx.lineTo(e.w*.20,-e.h*.18); cx.stroke();
+      cx.beginPath(); cx.moveTo(-e.w*.20, e.h*.05); cx.lineTo(e.w*.20, e.h*.05); cx.stroke();
+      // Tinted canopy + 3-cannon nose
+      cx.fillStyle='rgba(120,255,160,.55)';
+      cx.beginPath(); cx.ellipse(0,-e.h*.18,e.w*.13,e.h*.16,0,0,Math.PI*2); cx.fill();
+      cx.strokeStyle='rgba(0,0,0,.5)'; cx.lineWidth=0.6; cx.stroke();
+      for (let i=-1;i<=1;i++) {
+        cx.fillStyle='#1a1a1a';
+        cx.fillRect(i*e.w*.16 - 1, -e.h*.55, 2, e.h*.12);
+      }
+      // Tail fin
+      cx.fillStyle=e.col;
+      cx.beginPath();
+      cx.moveTo(-3, e.h*.45); cx.lineTo(0, e.h*.32); cx.lineTo(3, e.h*.45);
+      cx.closePath(); cx.fill();
       break;
     }
     case 'speeder': {
@@ -3729,22 +3907,74 @@ function drawEnemy(e) {
       break;
     }
     case 'carrier': {
-      // Massive carrier — wide armored hull
+      // Mothership — massive flying carrier with delta wings, command bridge,
+      // ventral hangar bay launching speeders, plus 3 plasma engines.
+      // Sweeping outer wings (delta)
+      cx.fillStyle = e.col + '55';
+      cx.beginPath();
+      cx.moveTo(-e.w*.5,-e.h*.10);
+      cx.lineTo(-e.w*.85, e.h*.20);
+      cx.lineTo(-e.w*.78, e.h*.40);
+      cx.lineTo(-e.w*.30, e.h*.32);
+      cx.closePath(); cx.fill();
+      cx.beginPath();
+      cx.moveTo( e.w*.5,-e.h*.10);
+      cx.lineTo( e.w*.85, e.h*.20);
+      cx.lineTo( e.w*.78, e.h*.40);
+      cx.lineTo( e.w*.30, e.h*.32);
+      cx.closePath(); cx.fill();
+      // Hull (hex-cut tapered ship)
       cx.fillStyle=rg;
-      cx.beginPath(); cx.roundRect(-e.w*.5,-e.h*.5,e.w,e.h,8); cx.fill();
+      cx.beginPath();
+      cx.moveTo(0,-e.h*.50);
+      cx.lineTo( e.w*.42,-e.h*.20);
+      cx.lineTo( e.w*.50, e.h*.18);
+      cx.lineTo( e.w*.34, e.h*.42);
+      cx.lineTo(-e.w*.34, e.h*.42);
+      cx.lineTo(-e.w*.50, e.h*.18);
+      cx.lineTo(-e.w*.42,-e.h*.20);
+      cx.closePath(); cx.fill();
       cx.strokeStyle='#ff44aa'; cx.lineWidth=1.5; cx.stroke();
-      // side wings
-      cx.fillStyle=e.col+'66';
-      cx.beginPath(); cx.moveTo(-e.w*.5,-e.h*.05); cx.lineTo(-e.w*.75,e.h*.15); cx.lineTo(-e.w*.68,e.h*.35); cx.lineTo(-e.w*.5,e.h*.25); cx.closePath(); cx.fill();
-      cx.beginPath(); cx.moveTo(e.w*.5,-e.h*.05); cx.lineTo(e.w*.75,e.h*.15); cx.lineTo(e.w*.68,e.h*.35); cx.lineTo(e.w*.5,e.h*.25); cx.closePath(); cx.fill();
-      // hangar bay (darker rect)
-      cx.fillStyle='rgba(0,0,0,.6)';
-      cx.beginPath(); cx.roundRect(-e.w*.35,e.h*.08,e.w*.7,e.h*.32,4); cx.fill();
-      // command bridge
-      cx.fillStyle=e.col+'bb';
-      cx.beginPath(); cx.roundRect(-e.w*.14,-e.h*.35,e.w*.28,e.h*.22,3); cx.fill();
-      cx.fillStyle='rgba(255,100,180,.6)';
-      cx.beginPath(); cx.ellipse(0,-e.h*.24,e.w*.09,e.h*.1,0,0,Math.PI*2); cx.fill();
+      // Bow paneling lines (tech detail)
+      cx.strokeStyle='rgba(255,255,255,0.18)'; cx.lineWidth=0.7;
+      cx.beginPath(); cx.moveTo(-e.w*.32,-e.h*.1); cx.lineTo(e.w*.32,-e.h*.1); cx.stroke();
+      cx.beginPath(); cx.moveTo(-e.w*.10,-e.h*.5); cx.lineTo(-e.w*.10,e.h*.05); cx.stroke();
+      cx.beginPath(); cx.moveTo( e.w*.10,-e.h*.5); cx.lineTo( e.w*.10,e.h*.05); cx.stroke();
+      // Command bridge (raised, pulsing canopy)
+      cx.fillStyle = '#1a0010';
+      cx.beginPath(); cx.roundRect(-e.w*.14,-e.h*.40,e.w*.28,e.h*.22,3); cx.fill();
+      cx.fillStyle = e.col + 'cc';
+      cx.beginPath(); cx.roundRect(-e.w*.11,-e.h*.37,e.w*.22,e.h*.16,2); cx.fill();
+      const pulse = 0.55 + Math.sin(e.moveTimer*0.10)*0.30;
+      cx.fillStyle = `rgba(255,140,200,${pulse})`;
+      cx.beginPath(); cx.ellipse(0,-e.h*.28,e.w*.09,e.h*.07,0,0,Math.PI*2); cx.fill();
+      // Ventral hangar bay (darker recessed rectangle with running lights)
+      cx.fillStyle = 'rgba(10,0,15,0.85)';
+      cx.beginPath(); cx.roundRect(-e.w*.32, e.h*.10, e.w*.64, e.h*.26, 3); cx.fill();
+      // Hangar light strip — alternating glow
+      for (let i = 0; i < 8; i++) {
+        const lx = -e.w*.30 + i * (e.w*.60 / 7);
+        const onLight = ((Math.floor(e.moveTimer/8) + i) % 2 === 0);
+        cx.fillStyle = onLight ? '#ffaa66' : '#552233';
+        cx.fillRect(lx-1, e.h*.36, 2, 1.4);
+      }
+      // Three plasma engines on stern (left/center/right)
+      for (let i = -1; i <= 1; i++) {
+        const ex = i * e.w*.28, ey = e.h*.45;
+        const eg = cx.createRadialGradient(ex, ey, 1, ex, ey, 9);
+        eg.addColorStop(0, '#fff'); eg.addColorStop(0.4, '#ff66cc'); eg.addColorStop(1, 'rgba(255,80,160,0)');
+        cx.fillStyle = eg;
+        cx.beginPath(); cx.arc(ex, ey, 9, 0, Math.PI*2); cx.fill();
+        cx.fillStyle = '#220015';
+        cx.beginPath(); cx.arc(ex, ey, 3.5, 0, Math.PI*2); cx.fill();
+      }
+      // Vertical stabilizers (twin tail fins)
+      cx.fillStyle = e.col;
+      cx.beginPath(); cx.moveTo(-e.w*.18, e.h*.20); cx.lineTo(-e.w*.22, e.h*.42); cx.lineTo(-e.w*.10, e.h*.32); cx.closePath(); cx.fill();
+      cx.beginPath(); cx.moveTo( e.w*.18, e.h*.20); cx.lineTo( e.w*.22, e.h*.42); cx.lineTo( e.w*.10, e.h*.32); cx.closePath(); cx.fill();
+      // Beacon
+      cx.fillStyle = (Math.floor(e.moveTimer/12)%2===0) ? '#ffffff' : '#ff66ff';
+      cx.beginPath(); cx.arc(0, -e.h*.5, 1.6, 0, Math.PI*2); cx.fill();
       break;
     }
     case 'dart': {
@@ -3791,32 +4021,117 @@ function drawEnemy(e) {
       break;
     }
     case 'sniper': {
-      // Octagon turret with long barrel pointing down
+      // Stealth-bomber profile — long flat fuselage, swept wings, big rifled barrel,
+      // pulsing scope eye + targeting laser when aiming.
+      // Swept wings (delta)
+      cx.fillStyle=e.col+'66';
+      cx.beginPath();
+      cx.moveTo(-e.w*.10,-e.h*.05);
+      cx.lineTo(-e.w*.55, e.h*.20);
+      cx.lineTo(-e.w*.45, e.h*.30);
+      cx.lineTo(-e.w*.06, e.h*.10);
+      cx.closePath(); cx.fill();
+      cx.beginPath();
+      cx.moveTo( e.w*.10,-e.h*.05);
+      cx.lineTo( e.w*.55, e.h*.20);
+      cx.lineTo( e.w*.45, e.h*.30);
+      cx.lineTo( e.w*.06, e.h*.10);
+      cx.closePath(); cx.fill();
+      // Faceted hull
       cx.fillStyle=rg;
       cx.beginPath();
-      for(let i=0;i<8;i++){const ag=i/8*Math.PI*2;cx.lineTo(Math.cos(ag)*e.w*.5,Math.sin(ag)*e.h*.5);}
+      cx.moveTo(0, -e.h*.50);
+      cx.lineTo( e.w*.22,-e.h*.10);
+      cx.lineTo( e.w*.16, e.h*.32);
+      cx.lineTo(-e.w*.16, e.h*.32);
+      cx.lineTo(-e.w*.22,-e.h*.10);
       cx.closePath(); cx.fill();
-      cx.fillStyle='#220022';
-      cx.fillRect(-2, e.h*.3, 4, e.h*.55);
-      cx.fillStyle='rgba(255,80,255,.7)';
-      cx.beginPath(); cx.arc(0,0,3.5,0,Math.PI*2); cx.fill();
-      // Aim warning
+      cx.strokeStyle='rgba(0,0,0,0.55)'; cx.lineWidth=0.7; cx.stroke();
+      // Sniper rifle barrel (long, with muzzle brake fins)
+      cx.fillStyle='#1a0010';
+      cx.fillRect(-2.2, e.h*.30, 4.4, e.h*.55);
+      cx.fillStyle='#552255';
+      for (let i=0;i<3;i++) cx.fillRect(-3.2, e.h*.40 + i*4, 6.4, 1.5);
+      // Cooling vents on shoulders
+      cx.fillStyle='rgba(255,255,255,0.18)';
+      cx.fillRect(-e.w*.20,-e.h*.05, 4, 1.5);
+      cx.fillRect( e.w*.20-4,-e.h*.05, 4, 1.5);
+      // Scope eye
+      const ePulse = 0.55 + Math.sin(e.moveTimer*0.18)*0.4;
+      const sg = cx.createRadialGradient(0,-e.h*.10, 0.5, 0,-e.h*.10, 5);
+      sg.addColorStop(0,'#ffffff'); sg.addColorStop(0.4, e.col); sg.addColorStop(1,'rgba(255,80,255,0)');
+      cx.fillStyle=sg;
+      cx.beginPath(); cx.arc(0,-e.h*.10, 5*ePulse, 0, Math.PI*2); cx.fill();
+      cx.fillStyle = '#ff66ff';
+      cx.beginPath(); cx.arc(0,-e.h*.10, 1.6, 0, Math.PI*2); cx.fill();
+      // Aim warning laser
       const t=players.find(p=>!p.dead);
       if (t && e.moveTimer%140 > 70 && e.moveTimer%140 < 90) {
-        cx.strokeStyle='rgba(255,80,255,.5)';
-        cx.lineWidth=1;
+        cx.strokeStyle='rgba(255,80,255,.55)';
+        cx.lineWidth=1.4;
+        cx.setLineDash([4,3]);
         cx.beginPath(); cx.moveTo(0,e.h*.5); cx.lineTo(t.x-e.x, t.y-e.y); cx.stroke();
+        cx.setLineDash([]);
       }
       break;
     }
     case 'mortar': {
-      // Squat barrel-mortar shape
+      // Stout bombardier — bulldog fuselage with twin pod-launchers, stubby wings,
+      // glowing mortar tube belching smoke.
+      // Stubby outer wings
+      cx.fillStyle=e.col+'88';
+      cx.beginPath();
+      cx.moveTo(-e.w*.30,-e.h*.05);
+      cx.lineTo(-e.w*.55, e.h*.10);
+      cx.lineTo(-e.w*.50, e.h*.28);
+      cx.lineTo(-e.w*.30, e.h*.20);
+      cx.closePath(); cx.fill();
+      cx.beginPath();
+      cx.moveTo( e.w*.30,-e.h*.05);
+      cx.lineTo( e.w*.55, e.h*.10);
+      cx.lineTo( e.w*.50, e.h*.28);
+      cx.lineTo( e.w*.30, e.h*.20);
+      cx.closePath(); cx.fill();
+      // Bulldog hull
       cx.fillStyle=rg;
-      cx.beginPath(); cx.roundRect(-e.w*.45,-e.h*.4,e.w*.9,e.h*.8,5); cx.fill();
-      cx.fillStyle='#552200';
-      cx.beginPath(); cx.arc(0,e.h*.1,e.w*.18,0,Math.PI*2); cx.fill();
-      cx.fillStyle='rgba(255,180,80,.6)';
-      cx.beginPath(); cx.arc(0,e.h*.1,e.w*.1,0,Math.PI*2); cx.fill();
+      cx.beginPath(); cx.roundRect(-e.w*.35,-e.h*.40,e.w*.70,e.h*.80,7); cx.fill();
+      cx.strokeStyle='rgba(0,0,0,0.45)'; cx.lineWidth=1; cx.stroke();
+      // Riveted plating lines
+      cx.strokeStyle='rgba(255,220,160,0.25)'; cx.lineWidth=0.6;
+      cx.beginPath(); cx.moveTo(-e.w*.30,-e.h*.18); cx.lineTo(e.w*.30,-e.h*.18); cx.stroke();
+      cx.beginPath(); cx.moveTo(-e.w*.30, e.h*.06); cx.lineTo(e.w*.30, e.h*.06); cx.stroke();
+      for (let i=-2;i<=2;i++) {
+        cx.fillStyle='rgba(255,255,255,0.25)';
+        cx.fillRect(i*e.w*.10, -e.h*.32, 1, 1);
+      }
+      // Side launch pods (mini missiles loaded)
+      for (let s=-1;s<=1;s+=2) {
+        cx.fillStyle='#332211';
+        cx.beginPath(); cx.roundRect(s*e.w*.30 - 3, -e.h*.10, 6, e.h*.32, 1.5); cx.fill();
+        cx.fillStyle='#ffaa55';
+        cx.fillRect(s*e.w*.30 - 1, -e.h*.05, 2, e.h*.12);
+      }
+      // Tinted forward canopy
+      cx.fillStyle='rgba(255,200,140,0.6)';
+      cx.beginPath(); cx.ellipse(0,-e.h*.22,e.w*.13,e.h*.13,0,0,Math.PI*2); cx.fill();
+      cx.strokeStyle='rgba(0,0,0,0.5)'; cx.lineWidth=0.5; cx.stroke();
+      // Center mortar tube — dark with glowing core (charge cycle)
+      cx.fillStyle='#1a0805';
+      cx.beginPath(); cx.arc(0,e.h*.18,e.w*.20,0,Math.PI*2); cx.fill();
+      const charge = (e.moveTimer % 90) / 90;
+      const cg = cx.createRadialGradient(0,e.h*.18,1, 0,e.h*.18, e.w*.18);
+      cg.addColorStop(0,'#fff'); cg.addColorStop(0.4,'#ffaa44'); cg.addColorStop(1,'rgba(255,80,0,0)');
+      cx.globalAlpha = 0.4 + charge * 0.6;
+      cx.fillStyle = cg;
+      cx.beginPath(); cx.arc(0,e.h*.18,e.w*.13,0,Math.PI*2); cx.fill();
+      cx.globalAlpha = 1;
+      // Smoke wisps trailing back
+      for (let i=0;i<2;i++) {
+        cx.fillStyle = `rgba(120,90,70,${0.25 - i*0.08})`;
+        cx.beginPath();
+        cx.arc(rnd(-2,2), e.h*.40 + i*4, 3 - i*0.6, 0, Math.PI*2);
+        cx.fill();
+      }
       break;
     }
     case 'swarmlet': {
@@ -3828,20 +4143,63 @@ function drawEnemy(e) {
       break;
     }
     case 'hive': {
-      // Hex hive
-      cx.fillStyle=rg;
+      // Bio-organic dropship — segmented hex thorax with translucent wings
+      // and a glowing brood chamber visible through the hull.
+      // Translucent wings beating
+      const wingFlap = Math.sin(e.moveTimer*0.18)*0.18 + 1;
+      cx.save();
+      cx.scale(wingFlap, 1);
+      cx.fillStyle = 'rgba(180,90,220,0.32)';
       cx.beginPath();
-      for(let i=0;i<6;i++){const ag=i/6*Math.PI*2-Math.PI/2;cx.lineTo(Math.cos(ag)*e.w*.5,Math.sin(ag)*e.h*.5);}
+      cx.moveTo(-e.w*.20,-e.h*.10);
+      cx.bezierCurveTo(-e.w*.65,-e.h*.30, -e.w*.70, e.h*.10, -e.w*.30, e.h*.05);
       cx.closePath(); cx.fill();
-      // Honeycomb
-      cx.strokeStyle='#220033';
-      cx.lineWidth=1;
-      for(let i=0;i<3;i++) for(let j=-1;j<=1;j++){
-        const px2=j*e.w*.18, py2=(i-1)*e.h*.18;
+      cx.beginPath();
+      cx.moveTo( e.w*.20,-e.h*.10);
+      cx.bezierCurveTo( e.w*.65,-e.h*.30,  e.w*.70, e.h*.10,  e.w*.30, e.h*.05);
+      cx.closePath(); cx.fill();
+      // Wing veins
+      cx.strokeStyle='rgba(220,180,255,0.5)'; cx.lineWidth=0.6;
+      cx.beginPath(); cx.moveTo(-e.w*.20,-e.h*.05); cx.lineTo(-e.w*.55, 0); cx.stroke();
+      cx.beginPath(); cx.moveTo( e.w*.20,-e.h*.05); cx.lineTo( e.w*.55, 0); cx.stroke();
+      cx.restore();
+      // Hex thorax (5 stacked segments shrinking toward head)
+      const segCount = 5;
+      for (let i = 0; i < segCount; i++) {
+        const fy = -e.h*.45 + i * (e.h*.85 / (segCount-1));
+        const sw = (1 - Math.abs(i - (segCount-1)/2)/(segCount-1)) * e.w*.50;
+        cx.fillStyle = (i%2===0) ? rg : '#440066';
         cx.beginPath();
-        for(let k=0;k<6;k++){const ag=k/6*Math.PI*2;cx.lineTo(px2+Math.cos(ag)*4,py2+Math.sin(ag)*4);}
-        cx.closePath(); cx.stroke();
+        for (let k=0;k<6;k++) {
+          const ag = k/6*Math.PI*2 - Math.PI/2;
+          cx.lineTo(Math.cos(ag)*sw, fy + Math.sin(ag) * e.h*.12);
+        }
+        cx.closePath();
+        cx.fill();
+        cx.strokeStyle = '#220033'; cx.lineWidth = 0.8; cx.stroke();
       }
+      // Glowing brood-cell core (where new swarmlets hatch)
+      const broodPulse = 0.5 + Math.sin(e.moveTimer*0.10)*0.40;
+      const bg = cx.createRadialGradient(0, 0, 1, 0, 0, e.w*.20);
+      bg.addColorStop(0, '#ffffff');
+      bg.addColorStop(0.4, '#ff66ff');
+      bg.addColorStop(1, 'rgba(120,40,180,0)');
+      cx.globalAlpha = broodPulse;
+      cx.fillStyle = bg;
+      cx.beginPath(); cx.arc(0, 0, e.w*.20, 0, Math.PI*2); cx.fill();
+      cx.globalAlpha = 1;
+      // Antennae
+      cx.strokeStyle = e.col;
+      cx.lineWidth = 1;
+      cx.beginPath(); cx.moveTo(-e.w*.10, -e.h*.42); cx.lineTo(-e.w*.18, -e.h*.55); cx.stroke();
+      cx.beginPath(); cx.moveTo( e.w*.10, -e.h*.42); cx.lineTo( e.w*.18, -e.h*.55); cx.stroke();
+      cx.fillStyle = '#ffaaff';
+      cx.beginPath(); cx.arc(-e.w*.18, -e.h*.55, 1.4, 0, Math.PI*2); cx.fill();
+      cx.beginPath(); cx.arc( e.w*.18, -e.h*.55, 1.4, 0, Math.PI*2); cx.fill();
+      // Compound eyes
+      cx.fillStyle = '#ff44aa';
+      cx.beginPath(); cx.arc(-e.w*.10, -e.h*.30, 1.8, 0, Math.PI*2); cx.fill();
+      cx.beginPath(); cx.arc( e.w*.10, -e.h*.30, 1.8, 0, Math.PI*2); cx.fill();
       break;
     }
     case 'turret': {
@@ -4181,6 +4539,13 @@ function spawnBoss() {
 
 function updateBoss() {
   if(!boss||!boss.alive) return;
+  // Pre-tick rune effects on boss (mirrors enemy version, minus decap which is non-boss).
+  if (boss.burn   > 0) { boss.burn--;   boss.hp -= boss.maxHp * 0.0015 * (save.console.burnDmgMul || 1); }
+  if (boss.poison > 0) boss.poison--;
+  if (boss.plague > 0) { boss.plague--; boss.hp -= boss.maxHp * 0.0012 * (save.console.plagueDmgMul || 1); }
+  if (boss.freeze > 0) { boss.freeze--; if (boss.hp<=0) killBoss(); return; }
+  if (boss.slow   > 0) boss.slow--;
+  if (boss.hp <= 0) { killBoss(); return; }
   boss.moveTimer++;
   if(!boss.entryDone){
     boss.y+=2;
@@ -4314,7 +4679,12 @@ function bossLogic(b) {
   const lvScale = clamp(level / 7, 0.35, 1);
   // rageMul interpolates: lvl 1 → 0.85 (mild speedup), lvl 7+ → 0.4 (current full)
   const rageBase = phase >= 2 ? (0.85 - lvScale * 0.45) : 1.0;
-  const fireMul = (endlessMode ? 1.4 : 1.0) * rageBase * C.bossFireRateMul;
+  // Poison drastically slows boss firing (interval ×2.5) and slow lengthens it too.
+  const poisonMul = (b.poison > 0) ? (2.5 * (save.console.poisonSlowMul || 1)) : 1.0;
+  const slowMul   = (b.slow   > 0) ? 1.4 : 1.0;
+  const fireMul = (endlessMode ? 1.4 : 1.0) * rageBase * C.bossFireRateMul * poisonMul * slowMul;
+  // While poisoned the boss skips ~half its internal ticks → bullet count drops too.
+  if (b.poison > 0 && Math.random() < 0.5) b.moveTimer--;
   if (phase >= 2) {
     // Burst frequency + bullet count both scale with level
     const burstInterval = Math.round(60 - lvScale * 25);   // 60→35 frames
@@ -5531,6 +5901,7 @@ function checkCollisions() {
         }
       }
       if(boss&&boss.alive&&Math.abs(boss.x-b.x)<b.w/2+44&&boss.y<b.h) {
+        applyRuneOnHit(boss, b);
         boss.hp-=b.dmg; if(boss.hp<=0)killBoss();
       }
       continue;
@@ -5557,6 +5928,7 @@ function checkCollisions() {
     }
     if(!b.alive) continue;
     if(boss&&boss.alive&&Math.abs(b.x-boss.x)<44&&Math.abs(b.y-boss.y)<34) {
+      applyRuneOnHit(boss, b);
       boss.hp-=b.dmg; b.alive=false; SFX.hitEnemy();
       if(boss.hp<=0) killBoss();
     }
@@ -6027,9 +6399,12 @@ function ownedPlaneIndices() {
 }
 function clampShowcase() {
   const owned = ownedPlaneIndices();
+  // If the saved plane is owned, prefer it as the canonical showcase target —
+  // keeps title and shop in sync regardless of which one was edited last.
+  const sIdx = owned.indexOf(save.selP1);
+  if (sIdx >= 0) showcaseIdx = sIdx;
   if (showcaseIdx >= owned.length) showcaseIdx = 0;
   if (showcaseIdx < 0) showcaseIdx = owned.length - 1;
-  // Sync with selP1 so the chosen plane is what flies in-game
   save.selP1 = owned[showcaseIdx];
 }
 
@@ -6166,6 +6541,40 @@ function drawTitle() {
   cx.font = "11px 'Courier New', monospace";
   cx.fillText('★ 出战机 · '+(showcaseIdx+1)+' / '+owned.length+' ★', W/2, 380);
 
+  // ─── Quick map switcher (left of trail) — same box style ───────────────
+  {
+    const sx = W/2 - 206, sy = 416;
+    const isRandom = !!save.bgRandom;
+    const bgIdx = (typeof save.selBG === 'number') ? save.selBG : 0;
+    const bgDef = BG_SKINS[bgIdx];
+    const accent = isRandom ? '#ffaa44' : '#88ccff';
+    cx.fillStyle = '#0a2030';
+    cx.fillRect(sx, sy, 86, 38);
+    cx.strokeStyle = accent;
+    cx.lineWidth = 2;
+    cx.strokeRect(sx + 0.5, sy + 0.5, 85, 37);
+    // Mini-globe thumbnail (left side)
+    const tcx = sx + 14, tcy = sy + 19;
+    const mg = cx.createRadialGradient(tcx-3, tcy-3, 1, tcx, tcy, 10);
+    mg.addColorStop(0, '#ffffff');
+    mg.addColorStop(0.45, accent);
+    mg.addColorStop(1, accent + '00');
+    cx.fillStyle = mg;
+    cx.beginPath(); cx.arc(tcx, tcy, 9, 0, Math.PI*2); cx.fill();
+    if (isRandom) {
+      cx.fillStyle = '#000';
+      cx.font = "bold 9px 'Courier New', monospace";
+      cx.textAlign = 'center';
+      cx.fillText('?', tcx, tcy + 3);
+    }
+    cx.fillStyle = accent;
+    cx.font = "bold 10px 'Courier New', monospace";
+    cx.textAlign = 'left';
+    cx.fillText('地  图', sx + 28, sy + 16);
+    cx.font = "bold 11px 'Courier New', monospace";
+    const label = isRandom ? '随  机' : (bgDef ? bgDef[0] : '—');
+    cx.fillText(label.length > 6 ? label.slice(0,6) : label, sx + 28, sy + 30);
+  }
   // ─── Quick trail switcher (under plane) — same box style as runes ──────
   const trailIdx = save.selTrail || 0;
   const trailDef = TRAIL_DEFS[trailIdx];
@@ -6353,14 +6762,35 @@ function clickTitle(mx,my) {
   if (owned.length > 1) {
     if (mx>=30 && mx<=90 && my>=220 && my<=300) {
       showcaseIdx = (showcaseIdx - 1 + owned.length) % owned.length;
-      clampShowcase(); writeSave(); SFX.buySuccess();
+      save.selP1 = owned[showcaseIdx];
+      writeSave(); SFX.buySuccess();
       return;
     }
     if (mx>=W-90 && mx<=W-30 && my>=220 && my<=300) {
       showcaseIdx = (showcaseIdx + 1) % owned.length;
-      clampShowcase(); writeSave(); SFX.buySuccess();
+      save.selP1 = owned[showcaseIdx];
+      writeSave(); SFX.buySuccess();
       return;
     }
+  }
+  // Map quick switch (left of trail box) — same box style, click cycles + random
+  if (mx >= W/2 - 206 && mx <= W/2 - 120 && my >= 416 && my <= 454) {
+    const ownedBgs = BG_SKINS.map((_, i) => save.bgs && save.bgs[i] ? i : -1).filter(x => x >= 0);
+    if (!ownedBgs.length) { SFX.buyFail(); return; }
+    // Cycle: -1 means random; ordering = [...ownedBgs, -1]
+    const order = ownedBgs.concat([-1]);
+    const cur = (typeof save.selBG === 'number' && save.bgRandom !== true) ? save.selBG : -1;
+    const ci = order.indexOf(save.bgRandom ? -1 : cur);
+    const nextRaw = order[(ci + 1) % order.length];
+    if (nextRaw === -1) {
+      save.bgRandom = true;
+      save.selBG = ownedBgs[Math.floor(Math.random() * ownedBgs.length)];
+    } else {
+      save.bgRandom = false;
+      save.selBG = nextRaw;
+    }
+    writeSave(); SFX.buySuccess();
+    return;
   }
   // Mode tabs
   for (const btn of titleBtns) {
@@ -6507,6 +6937,7 @@ const CODEX_TABS = [
   {id:'enemies', label:'敌人'},
   {id:'bosses',  label:'Boss'},
   {id:'wingmen', label:'僚机'},
+  {id:'runes',   label:'符文'},
   {id:'pickups', label:'道具'},
 ];
 let codexTab = 'weapons';
@@ -6580,12 +7011,12 @@ function drawCodex() {
   cx.fillText('📖 图  鉴', W/2, 50);
   cx.fillStyle='#88ccee';
   cx.font="11px 'Courier New', monospace";
-  cx.fillText('武器 / 敌人 / Boss / 僚机 / 道具 一览', W/2, 76);
+  cx.fillText('武器 / 敌人 / Boss / 僚机 / 符文 / 道具 一览', W/2, 76);
 
   // Tabs
   const tabsY = 92, tabH = 28, gap = 4;
   const totalW = W - 40;
-  const tabW = (totalW - gap*4) / 5;
+  const tabW = (totalW - gap*5) / CODEX_TABS.length;
   for (let i=0;i<CODEX_TABS.length;i++) {
     const tx = 20 + i*(tabW+gap);
     const t = CODEX_TABS[i];
@@ -6609,6 +7040,7 @@ function drawCodex() {
   else if (codexTab==='enemies') totalContentH = drawCodexEnemies(bodyY - codexScroll);
   else if (codexTab==='bosses')  totalContentH = drawCodexBosses(bodyY - codexScroll);
   else if (codexTab==='wingmen') totalContentH = drawCodexWingmen(bodyY - codexScroll);
+  else if (codexTab==='runes')   totalContentH = drawCodexRunes(bodyY - codexScroll);
   else if (codexTab==='pickups') totalContentH = drawCodexPickups(bodyY - codexScroll);
   cx.restore();
 
@@ -6805,6 +7237,52 @@ function drawCodexWingmen(startY) {
   return WINGMAN_NAMES.length * rowH + 20;
 }
 
+function drawCodexRunes(startY) {
+  const rowH = 78;
+  cx.textAlign='left';
+  for (let i = 0; i < RUNE_DEFS.length; i++) {
+    const r = RUNE_DEFS[i];
+    const ry = startY + i*rowH + 6;
+    const owned = (save.runes && save.runes[r.key]) || 0;
+    cx.fillStyle = 'rgba(20,40,60,0.45)';
+    cx.fillRect(16, ry, W-32, rowH-8);
+    cx.fillStyle = r.col;
+    cx.fillRect(16, ry, 4, rowH-8);
+    // Thumbnail with glowing rune disc
+    cx.fillStyle = '#04101a';
+    cx.fillRect(26, ry+4, 56, rowH-16);
+    cx.strokeStyle = r.col + '88'; cx.lineWidth = 0.6;
+    cx.strokeRect(26.5, ry+4.5, 55, rowH-17);
+    const tcx = 54, tcy = ry + (rowH-8)/2;
+    const rg = cx.createRadialGradient(tcx, tcy, 1, tcx, tcy, 18);
+    rg.addColorStop(0, '#ffffff'); rg.addColorStop(0.4, r.col); rg.addColorStop(1, r.col + '00');
+    cx.fillStyle = rg;
+    cx.beginPath(); cx.arc(tcx, tcy, 18, 0, Math.PI*2); cx.fill();
+    cx.fillStyle = r.col;
+    cx.font = "bold 18px sans-serif";
+    cx.textAlign = 'center';
+    cx.fillText(r.icon, tcx, tcy + 6);
+    cx.textAlign = 'left';
+    // Name
+    cx.fillStyle = r.col;
+    cx.font = "bold 15px 'Courier New', monospace";
+    cx.fillText(r.name, 96, ry+22);
+    // Description
+    cx.fillStyle = '#cccccc';
+    cx.font = "11px 'Courier New', monospace";
+    cx.fillText(r.desc, 96, ry+42);
+    // Proc rate range and current owned level
+    const baseLow  = (r.base * 100).toFixed(0);
+    const baseHigh = (r.max  * 100).toFixed(0);
+    cx.fillStyle = '#ffcc88';
+    cx.font = "10px 'Courier New', monospace";
+    cx.fillText('Lv1 触发率 ' + baseLow + '%   →   Lv10 ' + baseHigh + '%', 96, ry+58);
+    cx.fillStyle = owned > 0 ? '#00ff88' : '#557799';
+    cx.fillText(owned > 0 ? ('已拥有 Lv ' + owned) : '未拥有 (商城购买)', W - 144, ry+58);
+  }
+  return RUNE_DEFS.length * rowH + 20;
+}
+
 function drawCodexPickups(startY) {
   const rowH = 60;
   cx.textAlign='left';
@@ -6841,7 +7319,7 @@ function clickCodex(mx, my) {
   // Tabs
   const tabsY = 92, tabH = 28, gap = 4;
   const totalW = W - 40;
-  const tabW = (totalW - gap*4) / 5;
+  const tabW = (totalW - gap*(CODEX_TABS.length-1)) / CODEX_TABS.length;
   if (my>=tabsY && my<=tabsY+tabH) {
     for (let i=0;i<CODEX_TABS.length;i++) {
       const tx = 20 + i*(tabW+gap);
@@ -6985,10 +7463,10 @@ function drawShopPlanes() {
     if (by + ch < sy - 5 || by > sy + 540) continue;
     const skin=PLANE_SKINS[i];
     const owned=save.planes[i];
-    const isP1=save.selP1===i, isP2=save.selP2===i, isHL=shopSelectedPlane===i;
+    const isP1=save.selP1===i, isHL=shopSelectedPlane===i;
     fillPx(isHL?'#113355':'#081828',bx+2,by+2,cw-4,ch-4);
-    cx.strokeStyle=isP1?'#00ffff':isP2?'#ff8844':isHL?'#4488cc':'#224466';
-    cx.lineWidth=isP1||isP2?2:1;
+    cx.strokeStyle=isP1?'#00ffff':isHL?'#4488cc':'#224466';
+    cx.lineWidth=isP1?2:1;
     cx.strokeRect((bx+1)|0,(by+1)|0,(cw-2)|0,(ch-2)|0);
     // Plane image — clipped to image area so wings/details never overflow border
     cx.save();
@@ -7013,7 +7491,7 @@ function drawShopPlanes() {
     // Owned mark or price
     if(owned){
       cx.fillStyle='#00ff88';cx.font="10px 'Courier New'";
-      cx.fillText(isP1?'[P1]':isP2?'[P2]':'✓',(bx+cw/2)|0,(by+90)|0);
+      cx.fillText(isP1?'[ 出战 ]':'✓',(bx+cw/2)|0,(by+90)|0);
     } else {
       cx.fillStyle=skin[2]==='d'?'#44aaff':'#ffcc00';cx.font="10px 'Courier New'";
       cx.fillText((skin[2]==='d'?'💎':'🪙')+skin[1],(bx+cw/2)|0,(by+90)|0);
@@ -7340,8 +7818,11 @@ function clickShop(mx,my) {
 
 function equipSelected() {
   if(shopTab===0&&shopSelectedPlane>=0&&save.planes[shopSelectedPlane]){
-    if(save.selP1!==shopSelectedPlane) save.selP1=shopSelectedPlane;
-    else if(save.selP2!==shopSelectedPlane) save.selP2=shopSelectedPlane;
+    save.selP1=shopSelectedPlane;
+    // Sync title showcase to the equipped plane so both views show the same plane
+    const owned = ownedPlaneIndices();
+    const idx = owned.indexOf(shopSelectedPlane);
+    if (idx >= 0) showcaseIdx = idx;
     writeSave(); SFX.buySuccess();
   }
   if(shopTab===1&&shopSelectedBG>=0&&save.bgs[shopSelectedBG]){
@@ -7418,9 +7899,10 @@ function clickDeath(mx,my) {
 
 // ─── PAUSE MENU ──────────────────────────────────────────────────────────────
 const pauseBtns = [
-  {x:140,y:200,w:200,h:46,text:'继续游戏',act:'resume'},
-  {x:140,y:255,w:200,h:46,text:'重新开始',act:'restart'},
-  {x:140,y:310,w:200,h:46,text:'返回主页',act:'home'},
+  {x:140,y:188,w:200,h:42,text:'继续游戏',act:'resume'},
+  {x:140,y:236,w:200,h:42,text:'重新开始',act:'restart'},
+  {x:140,y:284,w:200,h:42,text:'⚙ 控 制 台',act:'console'},
+  {x:140,y:332,w:200,h:42,text:'返回主页',act:'home'},
 ];
 
 function drawPause() {
@@ -7562,6 +8044,7 @@ function clickPause(mx,my) {
   for (const btn of pauseBtns) {
     if (mx>=btn.x && mx<=btn.x+btn.w && my>=btn.y && my<=btn.y+btn.h) {
       if (btn.act==='resume') { screen='game'; if(bgmEnabled) startBGM(); }
+      else if (btn.act==='console') { showConsolePanel(true); pauseConsoleReturn = true; screen='console'; }
       else if (btn.act==='restart') {
         if (endlessMode) clearEndlessSnapshot();
         startGame(twoPlayer, endlessMode, endlessMode?1:level);
@@ -7893,14 +8376,18 @@ function clearEndlessSnapshot() {
 }
 
 // ─── GAME INIT ───────────────────────────────────────────────────────────────
-function startGame(two, endless, startLv) {
-  twoPlayer=two; endlessMode=!!endless;
+function startGame(_unused, endless, startLv) {
+  twoPlayer=false; endlessMode=!!endless;
   players=[]; wingmen=[]; bullets=[]; enemyBullets=[]; enemies=[]; pickups=[]; explosions=[]; floatingTexts=[];
-  screenMissiles=[]; lastMissileSpawn=0;
+  screenMissiles=[]; lastMissileSpawn=0; blackHoles=[];
   score=0; level=Math.max(1,(startLv|0)||1); waveTimer=0; killCount=0; bossActive=false; boss=null; bombFlash=0;
   sessionCoins=0; sessionDiamonds=0; finalScore=0; frame=0;
   players.push(createPlayer(1,save.selP1));
-  if(two) players.push(createPlayer(2,save.selP2));
+  // Random-map mode: pick a fresh owned bg per run (does not persist as selection)
+  if (save.bgRandom) {
+    const ownedBgs = BG_SKINS.map((_, i) => save.bgs && save.bgs[i] ? i : -1).filter(x => x >= 0);
+    if (ownedBgs.length) save.selBG = ownedBgs[Math.floor(Math.random() * ownedBgs.length)];
+  }
   initBGStars(BG_SKINS[save.selBG][3]);
   if (endlessMode) {
     endlessStartTime = Date.now();
@@ -8320,6 +8807,7 @@ function update() {
   for(const e of enemies) updateEnemy(e);
   updateBoss();
   updateScreenMissiles();
+  updateBlackHoles();
   updatePickups();
   collectPickups();
   checkCollisions();
@@ -8359,6 +8847,7 @@ function drawGameField() {
   drawWingmen();
   for(const p of players) drawPlayer(p);
   drawScreenMissiles();
+  drawBlackHoles();
   drawFTs();
   cx.restore();
   // HUD + joystick visual outside shake transform
@@ -8451,6 +8940,13 @@ const CONSOLE_TABS = [
     {k:'diamondMul',  name:'钻石倍率',       min:0,  max:100, step:0.1, desc:'×'},
     {k:'bossKillMul', name:'Boss 触发阈值倍率', min:0.05, max:5, step:0.05, desc:'×需击杀数'},
   ]},
+  { id:'rune', label:'符文', fields: [
+    {k:'runeProcMul',   name:'触发概率倍率',  min:0,  max:50, step:0.1, desc:'×概率(过高会被钳到100%)'},
+    {k:'burnDmgMul',    name:'燃烧伤害倍率',  min:0,  max:50, step:0.1, desc:'×%血/帧'},
+    {k:'plagueDmgMul',  name:'疫病伤害倍率',  min:0,  max:50, step:0.1, desc:'×%血/帧'},
+    {k:'poisonSlowMul', name:'中毒减速倍率',  min:0.1,max:10, step:0.1, desc:'×敌方射速间隔'},
+    {k:'critDmgMul',    name:'暴击倍率',      min:0.5,max:20, step:0.1, desc:'×伤害(基础2x)'},
+  ]},
   { id:'wallet', label:'钱包', fields: [
     {k:'__coins',    name:'当前金币',  min:0, max:9999999, step:1, desc:'直接修改账户余额', live:true},
     {k:'__diamonds', name:'当前钻石',  min:0, max:9999999, step:1, desc:'直接修改账户余额', live:true},
@@ -8509,9 +9005,11 @@ function showConsolePanel(show) {
   consolePanelEl.classList.toggle('show', !!show);
   if (show) renderConsole();
 }
+let pauseConsoleReturn = false;
 document.getElementById('console-back').addEventListener('click', ()=>{
   showConsolePanel(false);
-  screen = 'titleSettings';
+  if (pauseConsoleReturn) { pauseConsoleReturn = false; screen = 'pause'; }
+  else screen = 'titleSettings';
 });
 document.getElementById('console-reset').addEventListener('click', ()=>{
   if (confirm('重置所有控制台数据为默认?')) {
