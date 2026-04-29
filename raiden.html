@@ -7975,20 +7975,24 @@ function drawHUD() {
 
 // ─── TITLE SCREEN ────────────────────────────────────────────────────────────
 // Layout regions (single source of truth so click + draw stay in sync):
-//   y=  60–135 : title art + brand subtitle
-//   y= 160–340 : plane showcase + side arrows
-//   y= 345–375 : skin name + page indicator
-//   y= 384–424 : 4-card quick equip strip (Map / Trail / Rune-A / Rune-B)
-//   y= 446–516 : two large mode tabs (clear gap of 22px below strip)
-//   y= 540–565 : control hint
-const TITLE_EQUIP = { y: 384, h: 40, cardW: 100, gap: 8 };
+//   y=  56–140 : title art + brand subtitle
+//   y= 165–355 : plane showcase + side arrows
+//   y= 360–390 : skin name + page indicator
+//   y= 410–460 : 4-card quick equip strip (Map / Trail / Rune-A / Rune-B)
+//   y= 490–578 : three large mode tabs
+//   y= 656     : version footer (v1.0 / 2026-04-29)
+const TITLE_EQUIP = { y: 410, h: 50, cardW: 100, gap: 8 };
 const TITLE_EQUIP_X = (W - (TITLE_EQUIP.cardW * 4 + TITLE_EQUIP.gap * 3)) / 2;  // = 28
-// Three mode tabs: 关卡 / 无尽 / Boss — re-laid out so they fit the W=480 canvas.
+// Three mode tabs: 关卡 / 无尽 / Boss — taller and pushed lower so the bottom
+// half of the screen is fully used.
 const titleBtns=[
-  {x: 16, y:446, w:140, h:70, text:'关卡模式',  act:'solo'},
-  {x:170, y:446, w:140, h:70, text:'无尽模式',  act:'endless'},
-  {x:324, y:446, w:140, h:70, text:'BOSS 模式', act:'bossMode'},
+  {x: 16, y:490, w:140, h:88, text:'关卡模式',  act:'solo'},
+  {x:170, y:490, w:140, h:88, text:'无尽模式',  act:'endless'},
+  {x:324, y:490, w:140, h:88, text:'BOSS 模式', act:'bossMode'},
 ];
+// Version stamp — bumped on every meaningful release.
+const GAME_VERSION = 'v1.0';
+const GAME_BUILD_DATE = '2026-04-29';
 function titleEquipCardX(i){ return TITLE_EQUIP_X + i*(TITLE_EQUIP.cardW + TITLE_EQUIP.gap); }
 // Shop / Codex / Settings now use DOM side-bar buttons (#btn-shop / #btn-codex / #btn-pause).
 let showcaseIdx = 0;
@@ -8184,22 +8188,22 @@ function drawTitle() {
   const owned = ownedPlaneIndices();
   const skinIdx = owned[showcaseIdx];
   const skin = PLANE_SKINS[skinIdx];
-  // Halo behind plane
-  const halo = cx.createRadialGradient(W/2, 248, 20, W/2, 248, 110);
+  // Halo behind plane (centered around the new showcase y)
+  const halo = cx.createRadialGradient(W/2, 258, 20, W/2, 258, 120);
   halo.addColorStop(0, skin[4][0]+'66');
   halo.addColorStop(1, 'transparent');
   cx.fillStyle = halo;
-  cx.fillRect(0, 165, W, 195);
+  cx.fillRect(0, 165, W, 200);
   // Big plane
-  drawVectorPlane(skin[3], skin[4], cx, W/2, 248, 2.6, false, 0);
+  drawVectorPlane(skin[3], skin[4], cx, W/2, 258, 2.8, false, 0);
   // Skin name + index
   cx.fillStyle = '#aaeeff';
-  cx.font = "bold 16px 'Courier New', monospace";
+  cx.font = "bold 17px 'Courier New', monospace";
   cx.textAlign = 'center';
-  cx.fillText(skin[0], W/2, 350);
+  cx.fillText(skin[0], W/2, 370);
   cx.fillStyle = '#557799';
   cx.font = "11px 'Courier New', monospace";
-  cx.fillText('★ 出战机 · '+(showcaseIdx+1)+' / '+owned.length+' ★', W/2, 372);
+  cx.fillText('★ 出战机 · '+(showcaseIdx+1)+' / '+owned.length+' ★', W/2, 392);
 
   // ─── Quick equip strip: 4 equal cards (Map / Trail / Rune-A / Rune-B) ──
   const trailIdx = save.selTrail || 0;
@@ -8221,39 +8225,39 @@ function drawTitle() {
     const bgDef = BG_SKINS[bgIdx];
     const accent = isRandom ? '#ffaa44' : '#88ccff';
     const x = drawCard(0, accent, true);
-    const tcx = x + 16, tcy = ey + eh/2;
-    const mg = cx.createRadialGradient(tcx-3, tcy-3, 1, tcx, tcy, 11);
+    const tcx = x + 18, tcy = ey + eh/2;
+    const mg = cx.createRadialGradient(tcx-3, tcy-3, 1, tcx, tcy, 13);
     mg.addColorStop(0, '#ffffff');
     mg.addColorStop(0.45, accent);
     mg.addColorStop(1, accent + '00');
     cx.fillStyle = mg;
-    cx.beginPath(); cx.arc(tcx, tcy, 11, 0, Math.PI*2); cx.fill();
+    cx.beginPath(); cx.arc(tcx, tcy, 13, 0, Math.PI*2); cx.fill();
     if (isRandom) {
       cx.fillStyle = '#000'; cx.font = "bold 10px 'Courier New', monospace";
       cx.textAlign = 'center'; cx.fillText('?', tcx, tcy + 3);
     }
     cx.fillStyle = accent;
     cx.font = "bold 10px 'Courier New', monospace"; cx.textAlign = 'left';
-    cx.fillText('地  图', x + 32, ey + 16);
-    cx.font = "bold 11px 'Courier New', monospace";
+    cx.fillText('地  图', x + 36, ey + 22);
+    cx.font = "bold 12px 'Courier New', monospace";
     const label = isRandom ? '随  机' : (bgDef ? bgDef[0] : '—');
-    cx.fillText(label.length > 6 ? label.slice(0,6) : label, x + 32, ey + 30);
+    cx.fillText(label.length > 6 ? label.slice(0,6) : label, x + 36, ey + 38);
   }
   // Card 1 — Trail
   {
     const x = drawCard(1, trailDef[4], true);
-    const tcx = x + 16, tcy = ey + eh/2;
-    const tg2 = cx.createRadialGradient(tcx, tcy, 1, tcx, tcy, 11);
+    const tcx = x + 18, tcy = ey + eh/2;
+    const tg2 = cx.createRadialGradient(tcx, tcy, 1, tcx, tcy, 13);
     tg2.addColorStop(0, '#ffffff');
     tg2.addColorStop(0.4, trailDef[4]);
     tg2.addColorStop(1, trailDef[4] + '00');
     cx.fillStyle = tg2;
-    cx.beginPath(); cx.arc(tcx, tcy, 11, 0, Math.PI*2); cx.fill();
+    cx.beginPath(); cx.arc(tcx, tcy, 13, 0, Math.PI*2); cx.fill();
     cx.fillStyle = trailDef[4];
     cx.font = "bold 10px 'Courier New', monospace"; cx.textAlign = 'left';
-    cx.fillText('残  影', x + 32, ey + 16);
-    cx.font = "bold 11px 'Courier New', monospace";
-    cx.fillText(trailDef[0].length > 6 ? trailDef[0].slice(0,6) : trailDef[0], x + 32, ey + 30);
+    cx.fillText('残  影', x + 36, ey + 22);
+    cx.font = "bold 12px 'Courier New', monospace";
+    cx.fillText(trailDef[0].length > 6 ? trailDef[0].slice(0,6) : trailDef[0], x + 36, ey + 38);
   }
   // Cards 2 & 3 — Rune slots
   for (let s = 0; s < 2; s++) {
@@ -8261,31 +8265,31 @@ function drawTitle() {
     const def = eqKey ? RUNE_DEFS.find(r => r.key === eqKey) : null;
     const accent = def ? def.col : '#335577';
     const x = drawCard(2 + s, accent, !!def);
-    const tcx = x + 16, tcy = ey + eh/2;
+    const tcx = x + 18, tcy = ey + eh/2;
     if (def) {
       const lv = save.runes[def.key] || 0;
-      const rg2 = cx.createRadialGradient(tcx, tcy, 1, tcx, tcy, 11);
+      const rg2 = cx.createRadialGradient(tcx, tcy, 1, tcx, tcy, 13);
       rg2.addColorStop(0, '#ffffff');
       rg2.addColorStop(0.4, def.col);
       rg2.addColorStop(1, def.col + '00');
       cx.fillStyle = rg2;
-      cx.beginPath(); cx.arc(tcx, tcy, 11, 0, Math.PI*2); cx.fill();
+      cx.beginPath(); cx.arc(tcx, tcy, 13, 0, Math.PI*2); cx.fill();
       cx.fillStyle = '#0a1828';
       cx.font = "bold 12px sans-serif"; cx.textAlign = 'center';
       cx.fillText(def.icon, tcx, tcy + 4);
       cx.fillStyle = def.col;
       cx.font = "bold 10px 'Courier New', monospace"; cx.textAlign = 'left';
-      cx.fillText('符文 ' + (s+1), x + 32, ey + 16);
-      cx.font = "bold 10px 'Courier New', monospace";
-      cx.fillText(def.name.slice(0,2) + ' Lv' + lv, x + 32, ey + 30);
+      cx.fillText('符文 ' + (s+1), x + 36, ey + 22);
+      cx.font = "bold 11px 'Courier New', monospace";
+      cx.fillText(def.name.slice(0,2) + ' Lv' + lv, x + 36, ey + 38);
     } else {
       cx.fillStyle = '#446688';
       cx.beginPath(); cx.arc(tcx, tcy, 10, 0, Math.PI*2); cx.stroke();
       cx.fillStyle = '#557799';
-      cx.font = "bold 10px 'Courier New', monospace"; cx.textAlign = 'left';
-      cx.fillText('符文 ' + (s+1), x + 32, ey + 16);
-      cx.font = "10px 'Courier New', monospace";
-      cx.fillText('点击装备', x + 32, ey + 30);
+      cx.font = "bold 11px 'Courier New', monospace"; cx.textAlign = 'left';
+      cx.fillText('符文 ' + (s+1), x + 36, ey + 22);
+      cx.font = "11px 'Courier New', monospace";
+      cx.fillText('点击装备', x + 36, ey + 38);
     }
   }
   cx.textAlign = 'left';
@@ -8295,8 +8299,8 @@ function drawTitle() {
     cx.fillStyle = `rgba(0,255,255,${aA})`;
     cx.font = "bold 36px 'Courier New', monospace";
     cx.textAlign = 'center';
-    cx.fillText('‹', 50, 260);
-    cx.fillText('›', W-50, 260);
+    cx.fillText('‹', 50, 270);
+    cx.fillText('›', W-50, 270);
     cx.textAlign = 'left';
   }
 
@@ -8338,12 +8342,12 @@ function drawTitle() {
     cx.moveTo(btn.x+3, btn.y+3); cx.lineTo(btn.x+btn.w-3, btn.y+3);
     cx.moveTo(btn.x+3, btn.y+3); cx.lineTo(btn.x+3, btn.y+btn.h-3);
     cx.stroke();
-    // Tab label — auto-sized for narrower 3-tab layout
+    // Tab label — auto-sized for the 3-tab layout, vertically centered
     const label = btn.text;
     cx.fillStyle = isActive ? '#aaffff' : '#aaccee';
-    cx.font = "bold 16px 'Courier New', monospace";
+    cx.font = "bold 18px 'Courier New', monospace";
     cx.textAlign = 'center';
-    cx.fillText(label, btn.x + btn.w/2, btn.y + btn.h/2 + 6);
+    cx.fillText(label, btn.x + btn.w/2, btn.y + btn.h/2 + 7);
     // Medal disc inside 关卡 tab corner (real medal art)
     if (btn.act === 'solo' && topKey) {
       drawMedalIcon(btn.x + btn.w - 22, btn.y + btn.h - 18, true, topKey);
@@ -8384,11 +8388,11 @@ function drawTitle() {
     cx.fillText('💎 ' + save.diamonds, bx + 110, by + 20);
   }
 
-  // Hint line below the mode tabs (replaces orphan footer)
-  cx.fillStyle = '#557799';
-  cx.font = "11px 'Courier New', monospace";
+  // Bottom version stamp — small, dim, fixed at the very foot of the screen.
+  cx.fillStyle = '#446677';
+  cx.font = "10px 'Courier New', monospace";
   cx.textAlign = 'center';
-  cx.fillText('点击模式开始 · 侧栏可访问商城 / 图鉴 / 设置', W/2, 540);
+  cx.fillText(GAME_VERSION + '  ·  ' + GAME_BUILD_DATE, W/2, 666);
   cx.textAlign = 'left';
 }
 
@@ -8458,13 +8462,13 @@ function clickTitle(mx,my) {
   // Plane arrows (left/right of showcase)
   const owned = ownedPlaneIndices();
   if (owned.length > 1) {
-    if (mx>=20 && mx<=80 && my>=215 && my<=295) {
+    if (mx>=20 && mx<=80 && my>=225 && my<=310) {
       showcaseIdx = (showcaseIdx - 1 + owned.length) % owned.length;
       save.selP1 = owned[showcaseIdx];
       writeSave(); SFX.buySuccess();
       return;
     }
-    if (mx>=W-80 && mx<=W-20 && my>=215 && my<=295) {
+    if (mx>=W-80 && mx<=W-20 && my>=225 && my<=310) {
       showcaseIdx = (showcaseIdx + 1) % owned.length;
       save.selP1 = owned[showcaseIdx];
       writeSave(); SFX.buySuccess();
@@ -10798,9 +10802,10 @@ function loop() {
     speedAccum -= 1;
   }
   if (speedAccum < 0) speedAccum = 0;
-  // Clamp residual accumulator so a previous high-speed run can't carry over
-  // and keep ticking fast after the player drops back to 1×.
-  if (speedAccum > gameSpeed) speedAccum = gameSpeed;
+  // Clamp residual to ≤ 2 so a previous high-speed run can't carry over,
+  // but we never starve slow speeds (0.5x). 0.5x → 0.425/frame builds to 1.0
+  // every ~3 frames, fires 1 tick, drops to ~0.275 — smooth slow-mo, not frozen.
+  if (speedAccum > 2) speedAccum = 2;
   // Death countdown ticks once per real frame (60fps), independent of 倍速.
   // 1x label -> 0.5 internal pace would otherwise halve the visible second count;
   // by ticking here it always matches the real wall clock.
