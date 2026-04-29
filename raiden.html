@@ -7559,21 +7559,35 @@ function killEnemy(e) {
 
 // Helper: advance to next boss-mode level (used by both primary AND secondary
 // kill paths so dual-boss fights can finish even if boss2 dies last).
+// Boss mode: 100 阶段 = 100 cycles. Each cycle the same boss returns ×1.10
+// stronger via the existing tier system in spawnBoss / spawnSecondBoss.
+const BOSS_MODE_MAX_STAGE = 100;
+
 function advanceBossModeLevel() {
   level++; waveTimer = 0; bossActive = false;
-  // Clear secondary so the next fight spawns fresh
   boss2 = null;
   if (level > 13) {
-    bossModeCycle = Math.max(1, bossModeCycle + 1);
-    level = 1;
-    // Do NOT wipe bossTiers — tiers keep accumulating so each cycle the same
-    // boss reappears as 二阶 / 三阶 / 四阶 ... infinite progression.
-    const tierWord = ['二','三','四','五','六','七','八','九','十'][Math.min(bossModeCycle - 1, 8)] || (bossModeCycle + 1);
-    addFT('全员击破 · 进入第 ' + (bossModeCycle + 1) + ' 轮 · ' + tierWord + ' 阶 BOSS',
-          W/2, H/2-30, '#ffff44');
+    // Cycle complete — bump stage, but cap at 100 阶段 total.
+    if (bossModeCycle + 1 >= BOSS_MODE_MAX_STAGE) {
+      bossModeCycle = BOSS_MODE_MAX_STAGE - 1;
+      level = 1;
+      addFT('★ 已达最高 ' + BOSS_MODE_MAX_STAGE + ' 阶段 ★',
+            W/2, H/2-30, '#ffff44');
+    } else {
+      bossModeCycle = Math.max(1, bossModeCycle + 1);
+      level = 1;
+      // Tiers keep accumulating — each stage the same boss is 10% stronger.
+      const tierLabels = ['二','三','四','五','六','七','八','九','十'];
+      const tierWord = tierLabels[Math.min(bossModeCycle - 1, tierLabels.length-1)]
+                        || (bossModeCycle + 1);
+      const stageNum = bossModeCycle + 1;
+      addFT('进入第 ' + stageNum + ' / ' + BOSS_MODE_MAX_STAGE + ' 阶段 · ' + tierWord + ' 阶 BOSS',
+            W/2, H/2-30, '#ffff44');
+    }
   } else {
-    const totalSlot = 13;
-    addFT('BOSS ' + level + ' / ' + totalSlot, W/2, H/2-20, '#ff66aa');
+    const stageNum = bossModeCycle + 1;
+    addFT('BOSS ' + level + ' / 13  ·  阶段 ' + stageNum + ' / ' + BOSS_MODE_MAX_STAGE,
+          W/2, H/2-20, '#ff66aa');
   }
   SFX.levelUp();
 }
@@ -10617,7 +10631,7 @@ document.getElementById('btn-invincible').addEventListener('click',()=>{invincib
 // Speed button. Internally 1x = half-step (game runs at 0.5 of old pace),
 // so labels match user expectation while overall feel is calmer.
 const SPEED_CYCLE = [0.5, 1, 2, 3, 10];    // 显示标签 (去掉 4x, 增加 0.5x + 10x)
-const SPEED_INTERNAL_MUL = 0.85;            // 1x label → 0.85 internal tick (faster baseline)
+const SPEED_INTERNAL_MUL = 1.0;             // label is the literal multiplier (1x = 60 ticks/sec)
 const speedBtn = document.getElementById('btn-speed');
 let gameSpeedLabel = 1;
 function setGameSpeed(label) {
