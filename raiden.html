@@ -51,6 +51,8 @@ canvas { display:block; width:100%; height:100%; image-rendering:auto; }
   body.is-mobile .touch-only { display:flex; }
   body.is-mobile #btn-speed   { right:auto; left:90px;  top:6px; width:36px; height:36px; font-size:11px; }
   body.is-mobile #btn-infbomb { right:auto; left:132px; top:6px; width:36px; height:36px; font-size:14px; }
+  body.is-mobile #btn-shop    { right:auto; left:174px; top:6px; width:36px; height:36px; font-size:14px; }
+  body.is-mobile #btn-codex   { right:auto; left:216px; top:6px; width:36px; height:36px; font-size:14px; }
 }
 #btn-bomb {
   position:absolute; right:14px; bottom:18px;
@@ -97,6 +99,8 @@ canvas { display:block; width:100%; height:100%; image-rendering:auto; }
   <!-- BGM mute / track switch removed — use Pause menu instead -->
   <button id="btn-speed" title="切换倍速">1.0x</button>
   <button id="btn-infbomb" title="无限核弹">💥∞</button>
+  <button class="side-btn" id="btn-shop" style="top:172px;display:none;font-size:18px;" title="商城">🛒</button>
+  <button class="side-btn" id="btn-codex" style="top:226px;display:none;font-size:18px;" title="图鉴">📖</button>
   <!-- Bomb hidden: 移动端双击屏幕触发，桌面端 X 键 -->
   <div id="console-panel">
     <h2>🛠 控制台</h2>
@@ -5955,12 +5959,7 @@ const titleBtns=[
   {x:60, y:470, w:170, h:64, text:'关卡模式',  act:'solo'},
   {x:250,y:470, w:170, h:64, text:'无尽模式',  act:'endless'},
 ];
-// Right-top corner icons — kept clear of the plane-arrow zone (around y=240)
-// Settings is reached via the side bar's ⚙ button on title (no inline duplicate).
-const titleIconBtns=[
-  {x:412, y:155, w:42, h:42, icon:'🛒', act:'shop',  label:'商城'},
-  {x:412, y:200, w:42, h:42, icon:'📖', act:'codex', label:'图鉴'},
-];
+// Shop / Codex / Settings now use DOM side-bar buttons (#btn-shop / #btn-codex / #btn-pause).
 let showcaseIdx = 0;
 
 // Realistic medal disc with red ribbon + engraved tier letter
@@ -6167,29 +6166,33 @@ function drawTitle() {
   cx.font = "11px 'Courier New', monospace";
   cx.fillText('★ 出战机 · '+(showcaseIdx+1)+' / '+owned.length+' ★', W/2, 380);
 
-  // ─── Quick trail switcher (under plane) ────────────────
-  const ownedTrails = TRAIL_DEFS.map((d, i) => save.trails && save.trails[i] ? i : -1).filter(x => x >= 0);
-  if (ownedTrails.length === 0) ownedTrails.push(0);
+  // ─── Quick trail switcher (under plane) — same box style as runes ──────
   const trailIdx = save.selTrail || 0;
   const trailDef = TRAIL_DEFS[trailIdx];
-  cx.fillStyle = '#88aacc';
-  cx.font = "10px 'Courier New', monospace";
-  cx.textAlign = 'center';
-  cx.fillText('残影', W/2 - 80, 396);
-  cx.fillStyle = trailDef[4];
-  cx.font = "bold 11px 'Courier New', monospace";
-  cx.fillText(trailDef[0], W/2 - 80, 410);
-  if (ownedTrails.length > 1) {
-    cx.fillStyle = '#aaffff';
-    cx.font = "bold 18px 'Courier New', monospace";
-    cx.fillText('‹', W/2 - 130, 408);
-    cx.fillText('›', W/2 - 30,  408);
+  {
+    const sx = W/2 - 116, sy = 416;
+    cx.fillStyle = '#0a2030';
+    cx.fillRect(sx, sy, 86, 38);
+    cx.strokeStyle = trailDef[4];
+    cx.lineWidth = 2;
+    cx.strokeRect(sx + 0.5, sy + 0.5, 85, 37);
+    // Thumbnail: small filled disc with trail color
+    const tcx = sx + 14, tcy = sy + 19;
+    const tg = cx.createRadialGradient(tcx, tcy, 1, tcx, tcy, 9);
+    tg.addColorStop(0, '#ffffff');
+    tg.addColorStop(0.4, trailDef[4]);
+    tg.addColorStop(1, trailDef[4] + '00');
+    cx.fillStyle = tg;
+    cx.beginPath(); cx.arc(tcx, tcy, 9, 0, Math.PI*2); cx.fill();
+    // Name
+    cx.fillStyle = trailDef[4];
+    cx.font = "bold 10px 'Courier New', monospace";
+    cx.textAlign = 'left';
+    cx.fillText('残  影', sx + 28, sy + 16);
+    cx.font = "bold 11px 'Courier New', monospace";
+    cx.fillText(trailDef[0], sx + 28, sy + 30);
   }
-  // ─── Quick rune equip slots (under plane) ──────────────
-  cx.fillStyle = '#88aacc';
-  cx.font = "10px 'Courier New', monospace";
-  cx.textAlign = 'center';
-  cx.fillText('佩戴符文 (点击循环)', W/2 + 60, 396);
+  // ─── Quick rune equip slots (under plane) — no caption ─────────────────
   for (let s = 0; s < 2; s++) {
     const sx = W/2 + 24 + s * 60, sy = 416;
     const eqKey = (save.equippedRunes || [])[s];
@@ -6289,26 +6292,7 @@ function drawTitle() {
   }
   cx.textAlign = 'left';
 
-  // ─── Right-side icon buttons ──────────────────────────
-  for (const ib of titleIconBtns) {
-    cx.fillStyle = '#0a1a2a';
-    cx.fillRect(ib.x, ib.y, ib.w, ib.h);
-    cx.strokeStyle = '#4488aa';
-    cx.lineWidth = 1.5;
-    cx.strokeRect(ib.x+0.5, ib.y+0.5, ib.w-1, ib.h-1);
-    cx.fillStyle = '#aaeeff';
-    cx.font = "22px sans-serif";
-    cx.textAlign = 'center';
-    cx.textBaseline = 'middle';
-    cx.fillText(ib.icon, ib.x + ib.w/2, ib.y + ib.h/2 - 2);
-    cx.textBaseline = 'alphabetic';
-    cx.fillStyle = '#557799';
-    cx.font = "9px 'Courier New', monospace";
-    cx.fillText(ib.label, ib.x + ib.w/2, ib.y + ib.h - 5);
-  }
-  cx.textAlign = 'left';
-
-  // (Medal & trash now rendered inline inside their respective tab boxes above)
+  // (Shop / Codex moved to DOM side-bar; medal & trash render inline in their tabs above.)
 
   // Footer
   cx.fillStyle='#ffcc00';
@@ -6329,19 +6313,16 @@ function clickTitle(mx,my) {
       return;
     }
   }
-  // Quick trail arrows (left/right of trail name on left half)
-  const ownedTrails = TRAIL_DEFS.map((d, i) => save.trails && save.trails[i] ? i : -1).filter(x => x >= 0);
-  if (ownedTrails.length > 1) {
-    if (mx >= W/2 - 145 && mx <= W/2 - 115 && my >= 392 && my <= 420) {
-      const cur = ownedTrails.indexOf(save.selTrail || 0);
-      const next = ownedTrails[(cur - 1 + ownedTrails.length) % ownedTrails.length];
-      save.selTrail = next; writeSave(); SFX.buySuccess(); return;
-    }
-    if (mx >= W/2 - 45 && mx <= W/2 - 15 && my >= 392 && my <= 420) {
-      const cur = ownedTrails.indexOf(save.selTrail || 0);
-      const next = ownedTrails[(cur + 1) % ownedTrails.length];
-      save.selTrail = next; writeSave(); SFX.buySuccess(); return;
-    }
+  // Trail quick-equip box (same style as rune slots) — click cycles forward
+  if (mx >= W/2 - 116 && mx <= W/2 - 30 && my >= 416 && my <= 454) {
+    const ownedTrails = TRAIL_DEFS.map((d, i) => save.trails && save.trails[i] ? i : -1).filter(x => x >= 0);
+    if (!ownedTrails.length) { SFX.buyFail(); return; }
+    const cur = ownedTrails.indexOf(save.selTrail || 0);
+    const next = ownedTrails[(cur + 1) % ownedTrails.length];
+    save.selTrail = next;
+    writeSave();
+    SFX.buySuccess();
+    return;
   }
   // Quick rune slots — always cycles to a real rune (never produces all-empty).
   // To unequip, use the shop's runes tab.
@@ -6389,15 +6370,6 @@ function clickTitle(mx,my) {
       return;
     }
   }
-  // Right icon buttons
-  for (const ib of titleIconBtns) {
-    if (mx>=ib.x && mx<=ib.x+ib.w && my>=ib.y && my<=ib.y+ib.h) {
-      if (ib.act === 'shop')        screen = 'shop';
-      else if (ib.act === 'codex')  screen = 'codex';
-      else if (ib.act === 'settings') screen = 'titleSettings';
-      return;
-    }
-  }
 }
 
 // ─── TITLE SETTINGS SCREEN ───────────────────────────────────────────────────
@@ -6428,19 +6400,19 @@ function drawTitleSettings() {
   drawSensSlider(70, 240, 340, '横向', 'moveSensX');
   drawSensSlider(70, 270, 340, '纵向', 'moveSensY');
 
-  // Music
+  // Music — dropdown top row, sliders below (no overlap with % values)
   cx.textAlign='center';
   cx.fillStyle='#ffcc00'; cx.font="bold 13px 'Courier New', monospace";
   cx.fillText('音 乐 设 置', W/2, 320);
-  drawVolumeSlider(70, 338, 220, '背景', 'bgmVol');
-  drawVolumeSlider(70, 366, 220, '音效', 'sfxVol');
-  drawDropdown(310, 338, 130, 36, BGM_TRACK_NAMES, bgmTrack, bgmDropdownOpen);
+  drawDropdown(70, 332, 340, 30, BGM_TRACK_NAMES, bgmTrack, bgmDropdownOpen);
+  drawVolumeSlider(70, 374, 280, '背景', 'bgmVol');
+  drawVolumeSlider(70, 402, 280, '音效', 'sfxVol');
 
   // Dev console as sub-page link
   cx.textAlign='center';
   cx.fillStyle='#ffcc00'; cx.font="bold 13px 'Courier New', monospace";
-  cx.fillText('开 发 者', W/2, 412);
-  drawButton(140, 430, 200, 38, '🛠 控  制  台', false);
+  cx.fillText('开 发 者', W/2, 450);
+  drawButton(140, 468, 200, 38, '🛠 控  制  台', false);
 
   drawButton(20, 655, 110, 36, '← 返回', false);
   cx.textAlign='left';
@@ -6499,15 +6471,15 @@ function clickTitleSettings(mx, my) {
     bgmDropdownOpen = false; screen='title'; return;
   }
   // Console sub-page entry
-  if (mx>=140 && mx<=340 && my>=430 && my<=468) {
+  if (mx>=140 && mx<=340 && my>=468 && my<=506) {
     bgmDropdownOpen = false;
     screen='console';
     renderConsole();
     return;
   }
-  // Dropdown picks first
+  // Dropdown picks (header now spans 70..410, y=332..362)
   if (bgmDropdownOpen) {
-    const lx=250, ly=338+36+2, lw=170, itemH=DROPDOWN_ITEM_H, visH=DROPDOWN_VISIBLE_H;
+    const lx=70, ly=332+30+2, lw=340, itemH=DROPDOWN_ITEM_H, visH=DROPDOWN_VISIBLE_H;
     if (mx>=lx && mx<=lx+lw && my>=ly && my<=ly+visH) {
       const localY = (my - ly) + bgmDropdownScroll;
       const idx = Math.floor(localY / itemH);
@@ -6517,16 +6489,16 @@ function clickTitleSettings(mx, my) {
       bgmDropdownOpen = false;
       return;
     }
-    if (!(mx>=250 && mx<=420 && my>=338 && my<=374)) bgmDropdownOpen = false;
+    if (!(mx>=70 && mx<=410 && my>=332 && my<=362)) bgmDropdownOpen = false;
   }
   if (hitResSlider(mx, my, 70, 142, 340)) return;
   if (hitSensSlider(mx, my, 70, 240, 340, 'moveSensX')) return;
   if (hitSensSlider(mx, my, 70, 270, 340, 'moveSensY')) return;
-  // Volume sliders
-  if (hitVolumeSlider(mx, my, 70, 338, 220, 'bgmVol', t => setBgmVol(t))) return;
-  if (hitVolumeSlider(mx, my, 70, 366, 220, 'sfxVol', t => setSfxVol(t))) return;
-  // Dropdown header (track picker)
-  if (mx>=310 && mx<=440 && my>=338 && my<=374) { bgmDropdownOpen = !bgmDropdownOpen; return; }
+  // Volume sliders (full width, no dropdown collision)
+  if (hitVolumeSlider(mx, my, 70, 374, 280, 'bgmVol', t => setBgmVol(t))) return;
+  if (hitVolumeSlider(mx, my, 70, 402, 280, 'sfxVol', t => setSfxVol(t))) return;
+  // Dropdown header (track picker) toggles open/close
+  if (mx>=70 && mx<=410 && my>=332 && my<=362) { bgmDropdownOpen = !bgmDropdownOpen; return; }
 }
 
 // ─── CODEX (图鉴) ─────────────────────────────────────────────────────────────
@@ -7002,11 +6974,15 @@ function drawShop() {
   drawButton(350,655,110,36,'装备选中',shopSelectedPlane>=0||shopSelectedBG>=0);
 }
 
+let shopPlaneScroll = 0;
 function drawShopPlanes() {
   const cols=4,cw=110,ch=110,sx=10,sy=115;
+  cx.save();
+  cx.beginPath(); cx.rect(0, sy-2, W, 540); cx.clip();
   for(let i=0;i<PLANE_SKINS.length;i++){
     const col=i%cols, row=Math.floor(i/cols);
-    const bx=sx+col*cw, by=sy+row*ch;
+    const bx=sx+col*cw, by=sy+row*ch - shopPlaneScroll;
+    if (by + ch < sy - 5 || by > sy + 540) continue;
     const skin=PLANE_SKINS[i];
     const owned=save.planes[i];
     const isP1=save.selP1===i, isP2=save.selP2===i, isHL=shopSelectedPlane===i;
@@ -7045,6 +7021,7 @@ function drawShopPlanes() {
     if(isHL){cx.fillStyle='#88ccff';cx.font="9px 'Courier New'";cx.fillText('▶选中◀',(bx+cw/2)|0,(by+102)|0);}
     cx.textAlign='left';
   }
+  cx.restore();
 }
 
 let shopTrailScroll = 0;
@@ -7331,7 +7308,8 @@ function clickShop(mx,my) {
   if(shopTab===0){
     const cols=4,cw=110,ch=110,sx=10,sy=115;
     for(let i=0;i<PLANE_SKINS.length;i++){
-      const bx=sx+(i%cols)*cw, by=sy+Math.floor(i/cols)*ch;
+      const bx=sx+(i%cols)*cw, by=sy+Math.floor(i/cols)*ch - shopPlaneScroll;
+      if(my < sy-2 || my > sy+540) continue;
       if(mx>=bx&&mx<=bx+cw&&my>=by&&my<=by+ch){
         if(!save.planes[i]){
           const sk=PLANE_SKINS[i];
@@ -8120,11 +8098,11 @@ function pickSliderUnder(mx, my) {
     if (my >= 270 - 6 && my <= 270 + 22 && mx >= 70 - 12 && mx <= 70 + 340 + 12) {
       return { x:70, y:270, w:340, type:'sens', key:'moveSensY' };
     }
-    if (my >= 338 - 6 && my <= 338 + 22 && mx >= 70 - 12 && mx <= 70 + 220 + 12) {
-      return { x:70, y:338, w:220, type:'vol', key:'bgmVol' };
+    if (my >= 374 - 6 && my <= 374 + 22 && mx >= 70 - 12 && mx <= 70 + 280 + 12) {
+      return { x:70, y:374, w:280, type:'vol', key:'bgmVol' };
     }
-    if (my >= 366 - 6 && my <= 366 + 22 && mx >= 70 - 12 && mx <= 70 + 220 + 12) {
-      return { x:70, y:366, w:220, type:'vol', key:'sfxVol' };
+    if (my >= 402 - 6 && my <= 402 + 22 && mx >= 70 - 12 && mx <= 70 + 280 + 12) {
+      return { x:70, y:402, w:280, type:'vol', key:'sfxVol' };
     }
   }
   // Pause-page volume sliders
@@ -8213,6 +8191,12 @@ canvas.addEventListener('click',e=>{
 });
 
 canvas.addEventListener('wheel', e=>{
+  if (screen === 'shop' && shopTab === 0) {
+    e.preventDefault();
+    const totalH = Math.ceil(PLANE_SKINS.length / 4) * 110;
+    const maxScroll = Math.max(0, totalH - 540);
+    shopPlaneScroll = clamp(shopPlaneScroll + (e.deltaY > 0 ? 40 : -40), 0, maxScroll);
+  }
   if (screen === 'shop' && shopTab === 1) {
     e.preventDefault();
     const totalH = Math.ceil(BG_SKINS.length/2) * 72;
@@ -8250,6 +8234,10 @@ function syncPauseBtn() {
     btn.textContent = '⏸';
     btn.title = '暂停 (P)';
   }
+  // Shop / Codex side buttons only on title
+  const isTitle = (screen === 'title');
+  shopSideBtn.style.display = isTitle ? '' : 'none';
+  codexSideBtn.style.display = isTitle ? '' : 'none';
   // Console DOM panel visibility + render-on-enter
   const showConsole = (screen === 'console');
   consolePanelEl.classList.toggle('show', showConsole);
@@ -8286,6 +8274,14 @@ function cycleSpeed() {
 setGameSpeed(1);  // Default: 1x label = 0.5 internal pace
 speedBtn.addEventListener('click', e=>{ e.preventDefault(); cycleSpeed(); });
 speedBtn.addEventListener('touchstart', e=>{ e.preventDefault(); cycleSpeed(); }, {passive:false});
+
+// Shop / Codex DOM side buttons (visible only on title)
+const shopSideBtn = document.getElementById('btn-shop');
+const codexSideBtn = document.getElementById('btn-codex');
+shopSideBtn.addEventListener('click',  () => { if (screen === 'title') screen = 'shop';  });
+codexSideBtn.addEventListener('click', () => { if (screen === 'title') screen = 'codex'; });
+shopSideBtn.addEventListener('touchstart',  e => { e.preventDefault(); if (screen === 'title') screen = 'shop';  }, {passive:false});
+codexSideBtn.addEventListener('touchstart', e => { e.preventDefault(); if (screen === 'title') screen = 'codex'; }, {passive:false});
 
 // Infinite-bomb button — visible only in invincible mode
 const infBombBtn = document.getElementById('btn-infbomb');
