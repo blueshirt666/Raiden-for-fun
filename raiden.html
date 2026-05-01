@@ -195,6 +195,36 @@ const PLANE_SKINS = [
   ['犬·守夜',  18, 'd',    0, ['#5588cc','#ddeeff','#224477','#aaccee']],   // dog / 蓝白守卫
   ['猪·铁壁',  18, 'd',    3, ['#cc88aa','#ffddee','#884466','#ffaaee']],   // pig / 粉铁壁垒
 ];
+// Plane → fixed weapon mapping. Higher tier plane = stronger weapon.
+// 0 标准炮  1 散弹枪  2 激光炮  3 制导弹  4 等离子
+// 5 闪电链  6 回旋镖  7 波动炮  8 龙卷炮  9 冰晶炮
+const PLANE_WEAPON = [
+  // base 0..10 (gold-tier ramp)
+  0,            // 蓝色战机 0g       → 标准炮
+  1, 1,         // 红色凤凰/绿色飞龙 800g → 散弹
+  2, 2,         // 金色雄鹰/紫色幻影 1200g → 激光
+  3, 3, 3,      // 白/黑/橙 1500g → 制导
+  4, 4,         // 青色冰晶/粉色樱花 2000g → 等离子
+  5,            // 炎焰冲锋 2500g → 闪电链
+  // diamond tier
+  6,            // 暗物质 5💎 → 回旋镖
+  6, 6,         // 雷狼/风暴猎鹰 6💎 → 回旋镖
+  7, 7,         // 古龙/水晶之翼 8💎 → 波动炮
+  7, 7,         // 影之幽灵/霓虹赛车 10💎 → 波动炮
+  8,            // 太阳神焰 15💎 → 龙卷炮
+  9,            // 虚空收割 20💎 → 冰晶炮
+  // 四象 25💎 → 9 (top tier weapons distinct)
+  9, 9, 9, 9,
+  // 骷髅死神 30💎
+  9,
+  // 12 生肖机甲 18💎 — split across W6-W9
+  6, 7, 8, 6, 9, 7, 8, 6, 8, 9, 6, 7,
+];
+function planeWeaponIdx(skinIdx) {
+  if (skinIdx == null || skinIdx < 0) return 0;
+  if (skinIdx < PLANE_WEAPON.length) return PLANE_WEAPON[skinIdx];
+  return 0;
+}
 
 // BG_SKINS: [name, price, currency, bgType]
 const BG_SKINS = [
@@ -3774,9 +3804,12 @@ function createPlayer(pNum, skinIdx) {
     y: H-120,
     px:0, py:0,
     speed: C.playerSpeed,
-    lives: C.playerLives, bombs: C.playerBombs,
+    lives: clamp(C.playerLives, 1, 3),
+    bombs: clamp(C.playerBombs, 0, 3),
     skinIdx,
-    weapon:0, weaponLevel:1,
+    // Each plane has a fixed weapon tied to its tier — no more weapon switching.
+    weapon: planeWeaponIdx(skinIdx),
+    weaponLevel:1,
     weaponMax:0,            // frames remaining of LV MAX state
     bank:0,                 // -1..1 banking factor (left/right roll)
     shield:0, invTimer:0, shootTimer:0,
@@ -4424,17 +4457,39 @@ function drawBullets() {
 }
 
 function drawEnemyBullets() {
+  // Distinct visual style: dark red/purple diamond core with outer pulsing
+  // halo + white pip — unmistakable from the cyan/orange player bullets.
+  const t = frame;
   for(const b of enemyBullets) {
     if (b.px < -20 || b.px > W+20 || b.py < -20 || b.py > H+20) continue;
-    const rg=cx.createRadialGradient(b.px,b.py,0,b.px,b.py,7);
-    rg.addColorStop(0,'#ffaa44'); rg.addColorStop(.4,b.color||'#ff4400'); rg.addColorStop(1,(b.color||'#ff4400')+'00');
-    cx.fillStyle=rg; cx.beginPath(); cx.arc(b.px,b.py,7,0,Math.PI*2); cx.fill();
-    cx.fillStyle='#ffeeaa'; cx.beginPath(); cx.arc(b.px,b.py,2,0,Math.PI*2); cx.fill();
+    const baseCol = b.color || '#ff2244';
+    // Outer pulsing halo (purple/red ring) — clearly enemy-coded
+    const pulse = 0.6 + Math.sin(t * 0.25 + b.px * 0.04) * 0.4;
+    const haloR = 8 + pulse * 1.5;
+    const rg = cx.createRadialGradient(b.px, b.py, 0, b.px, b.py, haloR);
+    rg.addColorStop(0, '#ffeebb');
+    rg.addColorStop(0.35, baseCol);
+    rg.addColorStop(0.70, '#aa1144');
+    rg.addColorStop(1, 'rgba(60,0,40,0)');
+    cx.fillStyle = rg;
+    cx.beginPath(); cx.arc(b.px, b.py, haloR, 0, Math.PI*2); cx.fill();
+    // Diamond core — rotated square (45°) so silhouette differs from player
+    // bullets which are upright rects.
+    cx.save();
+    cx.translate(b.px, b.py);
+    cx.rotate(Math.PI / 4);
+    cx.fillStyle = '#330018';
+    cx.fillRect(-4, -4, 8, 8);
+    cx.fillStyle = baseCol;
+    cx.fillRect(-3, -3, 6, 6);
+    cx.fillStyle = '#ffeebb';
+    cx.fillRect(-1.2, -1.2, 2.4, 2.4);
+    cx.restore();
     if (b.cancelable) {
-      // Pulsing white outline marks "shootable" hazard
-      cx.strokeStyle = `rgba(255,255,255,${0.45+Math.sin(frame*0.2)*0.35})`;
+      // Pulsing yellow outline marks "shootable" hazard so player can engage
+      cx.strokeStyle = `rgba(255,220,80,${0.55 + Math.sin(t*0.2)*0.35})`;
       cx.lineWidth = 1.5;
-      cx.beginPath(); cx.arc(b.px, b.py, 9, 0, Math.PI*2); cx.stroke();
+      cx.beginPath(); cx.arc(b.px, b.py, 10, 0, Math.PI*2); cx.stroke();
       if (b.kind === 'mine') {
         cx.strokeStyle = '#ffffff'; cx.lineWidth = 1;
         cx.beginPath();
@@ -4458,16 +4513,16 @@ function doBomb(p) {
   }
   // Boss debuff: 双鱼·皮西斯 → bomb damage halved
   const _dbfBomb = activeBossDebuff() === 'noBomb' ? 0.5 : 1;
-  // Boss takes ~1/3 of MAX hp (×_dbfBomb if 双鱼 active)
+  // Boss takes ~3% of MAX hp (greatly reduced — bombs no longer one-shot bosses)
   if(boss&&boss.alive){
-    const dmg = Math.ceil(boss.maxHp / 3 * _dbfBomb);
+    const dmg = Math.ceil(boss.maxHp * 0.03 * _dbfBomb);
     boss.hp -= dmg;
     spawnExplosion(boss.x,boss.y,'huge');
     addFT('-'+dmg, boss.x, boss.y-30, '#ffff44');
     if(boss.hp<=0) killBoss();
   }
   if (boss2 && boss2.alive) {
-    const dmg2 = Math.ceil(boss2.maxHp / 3);
+    const dmg2 = Math.ceil(boss2.maxHp * 0.03 * _dbfBomb);
     boss2.hp -= dmg2;
     spawnExplosion(boss2.x, boss2.y, 'huge');
     addFT('-' + dmg2, boss2.x, boss2.y-30, '#ffff44');
@@ -5752,8 +5807,6 @@ function spawnBoss() {
   // 难度封顶: 关卡分量取 min(level, ENDLESS_DIFF_CAP), 之后保持地狱难度
   const cappedLv = Math.min(level, ENDLESS_DIFF_CAP);
   const barCount = clamp(Math.round((1 + Math.floor((cappedLv-1)/2)) * (C.bossBarMul||1)), 1, 9);
-  // ─── Boss tier (阶) — same boss reappears stronger every cycle ──────────
-  // 12 levels per boss cycle in endless. Tier 1 = first encounter, +10% per re-appearance.
   if (!save.bossTiers) save.bossTiers = {};
   const tier = (save.bossTiers[idx] || 0) + 1;
   save.bossTiers[idx] = tier;
@@ -5763,7 +5816,9 @@ function spawnBoss() {
   // Per-boss-type overrides (console)
   const eachBossHp  = (C.bossHpEach   && typeof C.bossHpEach[idx]   === 'number') ? C.bossHpEach[idx]   : 1;
   const eachBossBar = (C.bossBarEach  && typeof C.bossBarEach[idx]  === 'number') ? C.bossBarEach[idx]  : 1;
-  const finalBars = clamp(Math.round(barCount * eachBossBar), 1, 12);
+  // Each tier above 1 adds 2 extra bars to the same boss — directly boosts total HP.
+  const tierBars = (tier - 1) * 2;
+  const finalBars = clamp(Math.round((barCount + tierBars) * eachBossBar), 1, 30);
   const hp = (def.hp + cappedLv*150) * finalBars * C.bossHpMul * tierMul * eachBossHp;
   boss = {
     bossType: idx,
@@ -5811,7 +5866,9 @@ function spawnSecondBoss() {
   const tierLabel = ['一','二','三','四','五','六','七','八','九','十'][Math.min(tier-1,9)] || (tier+'');
   const eachBossHp  = (C.bossHpEach   && typeof C.bossHpEach[idx]  === 'number') ? C.bossHpEach[idx]  : 1;
   const eachBossBar = (C.bossBarEach  && typeof C.bossBarEach[idx] === 'number') ? C.bossBarEach[idx] : 1;
-  const finalBars = clamp(Math.round(barCount * eachBossBar), 1, 12);
+  // Each tier above 1 adds 2 extra bars (same as primary boss).
+  const tierBars2 = (tier - 1) * 2;
+  const finalBars = clamp(Math.round((barCount + tierBars2) * eachBossBar), 1, 30);
   // Dual-boss fights apply 0.7× HP per boss to keep total HP roughly fair.
   const hp = (def.hp + cappedLv*150) * finalBars * C.bossHpMul * tierMul * eachBossHp * 0.7;
   boss2 = {
@@ -7026,17 +7083,11 @@ function collectPickups() {
             sessionDiamonds+=pk.value;
             addFT('+'+pk.value+'💎',pk.x,pk.y,'#00aaff'); SFX.pickupDiamond(); break;
           case 'weapon': {
-            const newW = pk.value%10;
-            if (p.weapon === newW) {
-              // Same weapon — bump level
-              if (p.weaponLevel < 5) { p.weaponLevel++; SFX.levelUp(); }
-              else SFX.pickupStar();
-            } else {
-              // Switching weapon — KEEP existing level
-              p.weapon = newW;
-              SFX.pickupWeapon();
-            }
-            addFT(WEAPON_NAMES[p.weapon]+' Lv'+p.weaponLevel,pk.x,pk.y,'#ff8800');
+            // Weapon pickups no longer switch weapon — each plane has its own.
+            // Treat as a star (level up the existing weapon).
+            if (p.weaponLevel < 5) { p.weaponLevel++; SFX.levelUp(); }
+            else SFX.pickupStar();
+            addFT(WEAPON_NAMES[p.weapon]+' Lv'+p.weaponLevel, pk.x, pk.y, '#ffcc44');
             break;
           }
           case 'star':
@@ -7054,11 +7105,11 @@ function collectPickups() {
             }
             break;
           case 'life':
-            if (p.lives >= 10) { addFT('生命已满',pk.x,pk.y,'#ff8888'); SFX.buyFail(); }
+            if (p.lives >= 3) { addFT('生命已满',pk.x,pk.y,'#ff8888'); SFX.buyFail(); }
             else { p.lives++; addFT('+1UP',pk.x,pk.y,'#ff4444'); SFX.pickupLife(); }
             break;
           case 'bomb':
-            if (p.bombs >= 10) { addFT('核弹已满',pk.x,pk.y,'#8888ff'); SFX.buyFail(); }
+            if (p.bombs >= 3) { addFT('核弹已满',pk.x,pk.y,'#8888ff'); SFX.buyFail(); }
             else { p.bombs++; addFT('+BOMB',pk.x,pk.y,'#4444ff'); }
             break;
           case 'shield':
@@ -10553,6 +10604,62 @@ canvas.addEventListener('touchmove', e => {
   e.preventDefault();
 }, { passive:false });
 window.addEventListener('touchend', () => { _draggingSlider = null; });
+
+// ─── Touch-based vertical scroll for shop / codex ──────────────────────────
+// Mobile users can drag inside the list area to scroll. Releases that didn't
+// scroll (small dy + short time) fall through as a click to clickShop().
+let _shopTouch = null;
+canvas.addEventListener('touchstart', e => {
+  if (screen !== 'shop' && screen !== 'codex') return;
+  const t0 = e.changedTouches[0];
+  const rect = canvas.getBoundingClientRect();
+  const mx = (t0.clientX - rect.left) * (W / rect.width);
+  const my = (t0.clientY - rect.top)  * (H / rect.height);
+  // Only start a scroll session when touching inside the body region
+  if (my < 110 || my > 660) return;
+  _shopTouch = { startY: my, lastY: my, mx, my, moved: false, t: Date.now() };
+}, { passive: false });
+canvas.addEventListener('touchmove', e => {
+  if (!_shopTouch) return;
+  const t0 = e.changedTouches[0];
+  const rect = canvas.getBoundingClientRect();
+  const my = (t0.clientY - rect.top) * (H / rect.height);
+  const dy = my - _shopTouch.lastY;
+  _shopTouch.lastY = my;
+  if (Math.abs(my - _shopTouch.startY) > 6) _shopTouch.moved = true;
+  if (screen === 'shop') {
+    // route delta by active tab
+    if (shopTab === 0) {
+      const totalH = Math.ceil(PLANE_SKINS.length / 4) * 110;
+      shopPlaneScroll = clamp(shopPlaneScroll - dy, 0, Math.max(0, totalH - 540));
+    } else if (shopTab === 1) {
+      const totalH = Math.ceil(BG_SKINS.length / 2) * 72;
+      shopBGScroll = clamp(shopBGScroll - dy, 0, Math.max(0, totalH - 540));
+    } else if (shopTab === 3) {
+      const totalH = Math.ceil(TRAIL_DEFS.length / 4) * 88;
+      shopTrailScroll = clamp(shopTrailScroll - dy, 0, Math.max(0, totalH - 540));
+    }
+  } else if (screen === 'codex') {
+    const maxS = Math.max(0, (codexContentH || 0) - 510);
+    codexScroll = clamp(codexScroll - dy, 0, maxS);
+  }
+  e.preventDefault();
+}, { passive: false });
+canvas.addEventListener('touchend', e => {
+  if (!_shopTouch) return;
+  const moved = _shopTouch.moved;
+  _shopTouch = null;
+  // If finger barely moved and was a quick tap, treat as a click on the shop.
+  if (!moved && (screen === 'shop' || screen === 'codex')) {
+    const t0 = e.changedTouches[0];
+    const rect = canvas.getBoundingClientRect();
+    const mx = (t0.clientX - rect.left) * (W / rect.width);
+    const my = (t0.clientY - rect.top)  * (H / rect.height);
+    if (screen === 'shop') clickShop(mx, my);
+    else if (screen === 'codex') clickCodex(mx, my);
+    e.preventDefault();
+  }
+});
 
 canvas.addEventListener('click',e=>{
   const rect=canvas.getBoundingClientRect();
