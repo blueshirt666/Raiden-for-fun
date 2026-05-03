@@ -230,6 +230,83 @@ function planeWeaponIdx(skinIdx) {
   return 0;
 }
 
+// ─── Per-plane bullet "trait" overlay ───────────────────────────────────────
+// Each of the 37 plane skins carries a unique bullet signature on top of its
+// base weapon. Traits stack on every bullet produced by mkB() so the same
+// weapon (e.g. W2 激光) feels different on different planes.
+//
+// Trait keys (all optional):
+//   sub      — spawns 2 small white "child" bullets ahead of the parent (子母弹)
+//   chain    — on hit, electric arcs to up to 2 nearby enemies
+//   fire     — leaves a small flame trail; +30% dmg vs unburned targets
+//   ice      — slows enemies on hit (sets e.slow)
+//   poison   — applies poison (sets e.poison)
+//   pierce   — bullet passes through 1-2 enemies before dying
+//   homing   — weak homing toward nearest visible enemy
+//   split    — explodes into 4 mini bullets when it dies (off-screen or hit)
+//   crit     — extra 10% crit chance
+//   wide     — +1 angled bullet on each side
+//   fast     — bullets travel 1.4× speed
+//   big      — bullets are 25% larger
+//   dual     — sub-bullet pair flanking parent
+//   holy     — gold tracer trail; +20% dmg vs bosses
+//   void     — purple shadow; bypasses dodge
+//   spectral — translucent + slight homing
+const PLANE_TRAITS = [
+  /*  0 蓝色战机     */ {},                                    // baseline
+  /*  1 红色凤凰     */ { fire: true },
+  /*  2 绿色飞龙     */ { poison: true },
+  /*  3 金色雄鹰     */ { wide: true },
+  /*  4 紫色幻影     */ { spectral: true, homing: true },
+  /*  5 白色天使     */ { holy: true },
+  /*  6 黑色隐形     */ { pierce: true, fast: true },
+  /*  7 橙色闪光     */ { fast: true },
+  /*  8 青色冰晶     */ { ice: true },
+  /*  9 粉色樱花     */ { sub: true },
+  /* 10 炎焰冲锋     */ { fire: true, big: true },
+  /* 11 暗物质       */ { void: true, pierce: true },
+  /* 12 雷狼战机     */ { chain: true, fast: true },
+  /* 13 风暴猎鹰     */ { chain: true, wide: true },
+  /* 14 古龙守护     */ { fire: true, pierce: true },
+  /* 15 水晶之翼     */ { ice: true, sub: true },
+  /* 16 影之幽灵     */ { spectral: true, crit: true },
+  /* 17 霓虹赛车     */ { fast: true, wide: true },
+  /* 18 太阳神焰     */ { fire: true, holy: true },
+  /* 19 虚空收割     */ { void: true, split: true },
+  /* 20 青龙·东方    */ { fire: true, chain: true, big: true },
+  /* 21 白虎·西方    */ { sub: true, dual: true, big: true },         // 子母弹 (双层)
+  /* 22 朱雀·南方    */ { fire: true, split: true, big: true },
+  /* 23 玄武·北方    */ { ice: true, pierce: true, big: true },
+  /* 24 骷髅死神     */ { void: true, pierce: true, crit: true },
+  /* 25 鼠·机偷      */ { homing: true, fast: true },
+  /* 26 牛·重铠      */ { big: true, pierce: true },
+  /* 27 虎·斩刃      */ { sub: true, fast: true },
+  /* 28 兔·跳影      */ { spectral: true, fast: true },
+  /* 29 龙·天枢      */ { chain: true, big: true },
+  /* 30 蛇·毒鳞      */ { poison: true, pierce: true },
+  /* 31 马·疾风      */ { fast: true, wide: true },
+  /* 32 羊·云螺      */ { holy: true, sub: true },
+  /* 33 猴·机灵      */ { homing: true, crit: true },
+  /* 34 鸡·锐喙      */ { fire: true, fast: true },
+  /* 35 犬·守夜      */ { holy: true, pierce: true },
+  /* 36 猪·铁壁      */ { big: true, dual: true },
+];
+function planeTraits(skinIdx) {
+  return (skinIdx >= 0 && skinIdx < PLANE_TRAITS.length) ? PLANE_TRAITS[skinIdx] : {};
+}
+// Human-readable trait names for codex / shop tooltip.
+const TRAIT_NAMES = {
+  sub:'子母弹', chain:'链电', fire:'灼烧', ice:'冰冻', poison:'毒液',
+  pierce:'穿透', homing:'追踪', split:'分裂', crit:'高暴击', wide:'扩散',
+  fast:'高速', big:'巨弹', dual:'双子', holy:'圣光', void:'虚空', spectral:'幽灵',
+};
+function planeTraitDesc(skinIdx) {
+  const tr = planeTraits(skinIdx);
+  const keys = Object.keys(tr).filter(k => tr[k]);
+  if (!keys.length) return '基础弹道';
+  return keys.map(k => TRAIT_NAMES[k] || k).join(' · ');
+}
+
 // BG_SKINS: [name, price, currency, bgType]
 const BG_SKINS = [
   ['深空星海',0,'free','space'],
@@ -4520,27 +4597,40 @@ function mkB(x,y,vx,vy,color,w,h,owner,dmg) {
   const _dbfDmg = (isPlayer && hasBossDebuff('dmgDown')) ? 0.75 : 1;
   let finalDmg = (dmg || 10) * (isPlayer ? C.weaponDmgMul : 1) * eachWpn * _dbfDmg;
   let crit = false;
-  if (isPlayer && isRuneEquipped('crit') && Math.random() < runeProb('crit')) {
+  // Per-plane traits — pulled before crit so crit-trait can stack
+  const tr = isPlayer ? planeTraits(owner.skinIdx) : {};
+  const baseCrit = isRuneEquipped('crit') ? runeProb('crit') : 0;
+  const critChance = tr.crit ? baseCrit + 0.10 : baseCrit;
+  if (isPlayer && critChance > 0 && Math.random() < critChance) {
     crit = true;
     finalDmg *= 2 * (C.critDmgMul || 1);
   }
   const sm = isPlayer ? C.bulletSpeedMul : 1;
-  // Per-plane bullet color override — each of the 37 plane skins shoots in
-  // its own signature hue while still using the underlying weapon mechanics.
+  const speedMul = sm * (tr.fast ? 1.4 : 1);
+  const sizeMul = tr.big ? 1.25 : 1;
+  // Per-plane bullet color override — each plane shoots in its own signature hue
   let finalColor = color;
   if (isPlayer && !crit) {
     const skin = PLANE_SKINS[owner.skinIdx];
     const tint = (skin && skin[4] && skin[4][1]) ? skin[4][1] : color;
-    // Light, mid, dark variants of the input color blend with the plane's accent.
     finalColor = tint;
   }
+  // Damage modifiers from passive traits (handled at hit-time for situational ones)
+  if (isPlayer && tr.holy) finalDmg *= 1.05;
   return {x, y, px:x|0, py:y|0,
-          vx: vx*sm, vy: vy*sm,
+          vx: vx*speedMul, vy: vy*speedMul,
           color: crit ? '#ffcc44' : finalColor,
-          w: crit ? w + 1 : w, h: crit ? h + 1 : h,
+          w: crit ? Math.round((w + 1) * sizeMul) : Math.round(w * sizeMul),
+          h: crit ? Math.round((h + 1) * sizeMul) : Math.round(h * sizeMul),
           owner, dmg: finalDmg, alive:true, crit,
-          // Tag bullet with plane index so drawBullets can render unique shapes
-          skinIdx: isPlayer ? owner.skinIdx : -1};
+          skinIdx: isPlayer ? owner.skinIdx : -1,
+          // Trait flags carried by the bullet (mkB callers don't set these)
+          traitSub: !!tr.sub, traitChain: !!tr.chain, traitFire: !!tr.fire,
+          traitIce: !!tr.ice, traitPoison: !!tr.poison, traitPierce: !!tr.pierce,
+          traitHoming: !!tr.homing && !owner.homing, traitSplit: !!tr.split,
+          traitHoly: !!tr.holy, traitVoid: !!tr.void, traitSpectral: !!tr.spectral,
+          traitDual: !!tr.dual,
+          pierceLeft: tr.pierce ? 2 : 0};
 }
 
 // Apply rune procs at the moment a player bullet hits an enemy.
@@ -4767,6 +4857,19 @@ function fireBulletMax(p) {
   }
 }
 
+function _fireExtraTraitBullets(p) {
+  // wide / dual: add flanking bullets on every shot independent of weapon
+  const tr = planeTraits(p.skinIdx);
+  const x = p.x, y = p.y;
+  if (tr.wide) {
+    bullets.push(mkB(x - 16, y - 4, -0.7, -10, '#ffffff', 2, 5, p, 6));
+    bullets.push(mkB(x + 16, y - 4,  0.7, -10, '#ffffff', 2, 5, p, 6));
+  }
+  if (tr.dual) {
+    bullets.push(mkB(x - 8, y, 0, -10, '#ffffff', 2, 5, p, 4));
+    bullets.push(mkB(x + 8, y, 0, -10, '#ffffff', 2, 5, p, 4));
+  }
+}
 function fireBullet(p) {
   const x=p.x, y=p.y, wl=p.weaponLevel;
   const C = save.console || defaultConsole();
@@ -4780,8 +4883,10 @@ function fireBullet(p) {
   // ─ LV MAX 超级形态 (5s) ─
   if (p.weaponMax > 0) {
     fireBulletMax(p);
+    _fireExtraTraitBullets(p);
     return;
   }
+  _fireExtraTraitBullets(p);
 
   switch(p.weapon) {
     case 0: { // 标准炮 - 5 levels, more barrels + speed
@@ -4892,6 +4997,29 @@ function updateBullets() {
     if(b.isLaserBeam){b.life--;if(b.life<=0)b.alive=false;continue;}
     if(b.wave){b.wPhase+=0.2;b.x=b.baseX+Math.sin(b.wPhase)*b.wAmp;b.px=b.x|0;}
     if(b.crystal){b.vx*=b.slowF;b.vy*=b.slowF;if(Math.abs(b.vx)<0.15&&Math.abs(b.vy)<0.15){b.alive=false;continue;}}
+    // Trait: homing — light steering toward nearest enemy (separate from b.homing)
+    if (b.traitHoming && !b.homing) {
+      let tgt2 = null, bd2 = 200*200;
+      for (const e2 of enemies) {
+        if (!e2.alive || e2.y < -10 || e2.y > H+10) continue;
+        const dx2 = e2.x - b.x, dy2 = e2.y - b.y;
+        const d2 = dx2*dx2 + dy2*dy2;
+        if (d2 < bd2) { bd2 = d2; tgt2 = e2; }
+      }
+      if (tgt2) {
+        const dx2 = tgt2.x - b.x, dy2 = tgt2.y - b.y;
+        const d2 = Math.sqrt(dx2*dx2 + dy2*dy2) || 1;
+        b.vx += dx2/d2 * 0.18;
+        b.vy += dy2/d2 * 0.18;
+      }
+    }
+    // Trait: fire — small flame trail particles
+    if (b.traitFire && (frame & 1) === 0) {
+      explosions.push({
+        x: b.x + rnd(-1, 1), y: b.y + 4 + rnd(-1, 1), vx: 0, vy: 0.4,
+        life: 10, maxLife: 10, size: 2, color: Math.random() < 0.5 ? '#ff8844' : '#ffcc44'
+      });
+    }
     if(b.homing){
       // Pick the NEAREST visible enemy; fall back to boss
       let tgt = null, bestD = Infinity;
@@ -5018,6 +5146,21 @@ function drawBullets() {
       continue;
     }
     // Normal bullets with glow + per-skin shape variant
+    // Spectral trait: ghostly translucent overlay
+    if (b.traitSpectral) {
+      cx.save(); cx.globalAlpha = 0.55;
+    }
+    // Holy trait: golden cross sparkle glow
+    if (b.traitHoly) {
+      cx.fillStyle = '#ffeecc88';
+      cx.fillRect((b.px - b.w*1.4)|0, (b.py - 0.6)|0, (b.w*2.8)|0, 1.2);
+      cx.fillRect((b.px - 0.6)|0, (b.py - b.h*1.4)|0, 1.2, (b.h*2.8)|0);
+    }
+    // Void trait: dark purple shadow under bullet
+    if (b.traitVoid) {
+      cx.fillStyle = '#33004488';
+      cx.fillRect((b.px - b.w*1.2)|0, (b.py - b.h*1.2)|0, (b.w*2.4)|0, (b.h*2.4)|0);
+    }
     cx.fillStyle=b.color+'44'; cx.fillRect((b.px-b.w)|0,(b.py-b.h)|0,b.w*2,b.h*2);
     const shape = (b.skinIdx >= 0) ? (b.skinIdx % 4) : 0;
     if (shape === 1) {
@@ -5040,6 +5183,7 @@ function drawBullets() {
       cx.fillStyle=b.color;
       cx.fillRect((b.px-b.w/2)|0,(b.py-b.h/2)|0,b.w,b.h);
     }
+    if (b.traitSpectral) cx.restore();
   }
 }
 
@@ -8667,8 +8811,68 @@ function checkCollisions() {
       if(!e.alive) continue;
       if(Math.abs(b.x-e.x)<(b.w/2+e.w/2)&&Math.abs(b.y-e.y)<(b.h/2+e.h/2)) {
         applyRuneOnHit(e, b);
-        e.hp-=b.dmg; b.alive=false; SFX.hitEnemy();
+        // Holy trait: +20% damage vs bosses (handled below for boss)
+        // Spectral / void: special on-hit flavor
+        e.hp-=b.dmg;
+        // Per-trait on-hit secondary effects
+        if (b.traitFire) e.burn = Math.max(e.burn || 0, 100);
+        if (b.traitIce) e.slow = Math.max(e.slow || 0, 90);
+        if (b.traitPoison) e.poison = Math.max(e.poison || 0, 150);
+        // Pierce: bullet survives, decrement counter
+        if (b.traitPierce && (b.pierceLeft || 0) > 0) {
+          b.pierceLeft--;
+        } else {
+          // Split: spawn 4 mini-bullets outward when bullet dies
+          if (b.traitSplit) {
+            for (let k = 0; k < 4; k++) {
+              const ag = (k / 4) * Math.PI * 2 + Math.random() * 0.4;
+              const mb = mkB(e.x, e.y, Math.cos(ag) * 4, Math.sin(ag) * 4 - 2,
+                             b.color, 3, 5, b.owner, b.dmg * 0.4);
+              // Strip split flag so children don't infinitely chain
+              mb.traitSplit = false; mb.traitPierce = false; mb.pierceLeft = 0;
+              bullets.push(mb);
+            }
+          }
+          b.alive = false;
+        }
+        SFX.hitEnemy();
         if(e.hp<=0) killEnemy(e);
+        // Sub-bullet trait: spawn 2 small white sub-bullets at the hit point
+        if (b.traitSub && b.alive === false && Math.random() < 0.6) {
+          for (const off of [-4, 4]) {
+            const sb = mkB(e.x + off, e.y - 4, off * 0.3, -8, '#ffffff', 2, 4, b.owner, b.dmg * 0.3);
+            sb.traitSub = false; sb.traitPierce = false; sb.pierceLeft = 0;
+            bullets.push(sb);
+          }
+        }
+        // Chain trait — like chainElectric but lighter (2 hops, 50% dmg)
+        if (b.traitChain) {
+          const chainDmg = b.dmg * 0.5;
+          const used = new Set([e]);
+          let origin = e;
+          for (let step = 0; step < 2; step++) {
+            let best = null, bestD = 70 * 70;
+            for (const e2 of enemies) {
+              if (!e2.alive || used.has(e2)) continue;
+              const dx2 = e2.x - origin.x, dy2 = e2.y - origin.y;
+              const d2 = dx2*dx2 + dy2*dy2;
+              if (d2 < bestD) { bestD = d2; best = e2; }
+            }
+            if (!best) break;
+            for (let s = 0; s < 4; s++) {
+              const tt = s / 4;
+              explosions.push({
+                x: origin.x + (best.x - origin.x) * tt + rnd(-2,2),
+                y: origin.y + (best.y - origin.y) * tt + rnd(-2,2),
+                vx: 0, vy: 0, life: 10, maxLife: 10, size: 2,
+                color: s%2 ? '#88ccff' : '#ffffaa'
+              });
+            }
+            best.hp -= chainDmg;
+            if (best.hp <= 0) killEnemy(best);
+            used.add(best); origin = best;
+          }
+        }
         // ─── Chain electric (lightning MAX) ─────────────────────────
         if (b.chainElectric) {
           const chainDmg = b.dmg * 0.6;
@@ -8719,12 +8923,21 @@ function checkCollisions() {
     if(!b.alive) continue;
     if(boss&&boss.alive&&Math.abs(b.x-boss.x)<44&&Math.abs(b.y-boss.y)<34) {
       applyRuneOnHit(boss, b);
-      boss.hp-=b.dmg; b.alive=false; SFX.hitEnemy(); bossModeRollPickup();
+      // Holy trait: +20% damage to boss; pierce: bullet survives
+      const _holyMul = b.traitHoly ? 1.2 : 1;
+      boss.hp -= b.dmg * _holyMul;
+      if (b.traitPierce && (b.pierceLeft || 0) > 0) b.pierceLeft--;
+      else b.alive = false;
+      SFX.hitEnemy(); bossModeRollPickup();
       if(boss.hp<=0) killBoss();
     }
     if (b.alive && boss2 && boss2.alive && Math.abs(b.x - boss2.x) < 44 && Math.abs(b.y - boss2.y) < 34) {
       applyRuneOnHit(boss2, b);
-      boss2.hp -= b.dmg; b.alive = false; SFX.hitEnemy(); bossModeRollPickup();
+      const _holyMul2 = b.traitHoly ? 1.2 : 1;
+      boss2.hp -= b.dmg * _holyMul2;
+      if (b.traitPierce && (b.pierceLeft || 0) > 0) b.pierceLeft--;
+      else b.alive = false;
+      SFX.hitEnemy(); bossModeRollPickup();
       if (boss2.hp <= 0) {
         const _o = boss; boss = boss2; boss._isSecondary = true; killBoss();
         if (!boss || !boss.alive) boss2 = null; else boss2 = boss;
@@ -10780,11 +10993,14 @@ function drawShopPlanes() {
       cx.fillStyle=skin[2]==='d'?'#44aaff':'#ffcc00';cx.font="10px 'Courier New'";
       cx.fillText((skin[2]==='d'?'💎':'🪙')+skin[1],(bx+cw/2)|0,(by+88)|0);
     }
-    // Bound weapon name (always visible — buy or owned)
+    // Bound weapon name + trait signature (always visible — buy or owned)
     const wIdx = planeWeaponIdx(i);
     cx.fillStyle = '#88ccee';
     cx.font="bold 8px 'Courier New', monospace";
     cx.fillText('🔫 ' + WEAPON_NAMES[wIdx], (bx+cw/2)|0, (by+100)|0);
+    cx.fillStyle = '#ffaa66';
+    cx.font="7px 'Courier New', monospace";
+    cx.fillText(planeTraitDesc(i), (bx+cw/2)|0, (by+108)|0);
     cx.textAlign='left';
   }
   cx.restore();
