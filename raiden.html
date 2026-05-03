@@ -9592,6 +9592,7 @@ let pauseFocus = 0;          // selected pause-menu button (0..3)
 let deathFocus = 0;          // selected death-screen button (0..1)
 let stageFocus = 0;          // selected stage cell (0..11)
 let codexTabsList = null;    // populated by drawCodex from CODEX_TABS
+let settingsFocus = 0;       // 0..6 corresponding to SETTINGS_FOCUS_LIST entries
 
 // Realistic medal disc with red ribbon + engraved tier letter
 function drawMedalIcon(x, y, earned, key) {
@@ -10158,6 +10159,22 @@ function drawTitleSettings() {
   drawDropdown(70, 446, 340, 30, BGM_TRACK_NAMES, bgmTrack, bgmDropdownOpen, false);
 
   drawButton(20, 655, 110, 36, '← 返回', false);
+  // Keyboard focus highlight (matches SETTINGS_FOCUS_LIST in keydown handler)
+  const settingsFocusRects = [
+    {x:60, y:122, w:360, h:18},   // res
+    {x:60, y:210, w:360, h:18},   // sensX
+    {x:60, y:238, w:360, h:18},   // sensY
+    {x:60, y:294, w:300, h:18},   // bgmVol
+    {x:60, y:322, w:300, h:18},   // sfxVol
+    {x:138, y:378, w:204, h:40},  // console btn
+    {x:60, y:440, w:360, h:42},   // bgm dropdown
+  ];
+  const _fr = settingsFocusRects[settingsFocus | 0];
+  if (_fr) {
+    cx.strokeStyle = '#ffff44';
+    cx.lineWidth = 2;
+    cx.strokeRect(_fr.x - 2, _fr.y - 2, _fr.w + 4, _fr.h + 4);
+  }
   cx.textAlign='left';
 }
 function drawVolumeSlider(x, y, w, label, key) {
@@ -12360,6 +12377,40 @@ document.addEventListener('keydown',e=>{
     }
     if (e.key === 'ArrowUp')   codexScroll = Math.max(0, codexScroll - 40);
     if (e.key === 'ArrowDown') codexScroll += 40;
+  } else if (screen === 'titleSettings') {
+    // Settings: ↑↓ select slider/control, ←→ adjust value
+    const SETTINGS_FOCUS_LIST = ['res', 'sensX', 'sensY', 'bgmVol', 'sfxVol', 'console', 'bgmDropdown'];
+    if (e.key === 'ArrowUp')   settingsFocus = clamp((settingsFocus|0) - 1, 0, SETTINGS_FOCUS_LIST.length-1);
+    if (e.key === 'ArrowDown') settingsFocus = clamp((settingsFocus|0) + 1, 0, SETTINGS_FOCUS_LIST.length-1);
+    const focusKey = SETTINGS_FOCUS_LIST[settingsFocus | 0];
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      const dir = (e.key === 'ArrowRight') ? 1 : -1;
+      if (focusKey === 'res') {
+        save.pixelScale = clamp((save.pixelScale || 1) + dir * 0.1, 0.5, 3.0);
+        writeSave(); applyResolution();
+      } else if (focusKey === 'sensX') {
+        save.moveSensX = clamp((save.moveSensX || 1) + dir * 0.1, 0.3, 4.0);
+        writeSave();
+      } else if (focusKey === 'sensY') {
+        save.moveSensY = clamp((save.moveSensY || 1) + dir * 0.1, 0.3, 4.0);
+        writeSave();
+      } else if (focusKey === 'bgmVol') {
+        setBgmVol(clamp((save.bgmVol || 0) + dir * 0.1, 0, 1));
+      } else if (focusKey === 'sfxVol') {
+        setSfxVol(clamp((save.sfxVol || 0) + dir * 0.1, 0, 1));
+      } else if (focusKey === 'bgmDropdown') {
+        bgmTrack = clamp(bgmTrack + dir, 0, BGM_TRACKS.length - 1);
+        stopBGM(); if (bgmEnabled) startBGM();
+      }
+    }
+    if (e.key === ' ' || e.key === 'Enter' || e.key === 'Spacebar') {
+      if (focusKey === 'console') {
+        bgmDropdownOpen = false;
+        screen = 'console'; renderConsole();
+      } else if (focusKey === 'bgmDropdown') {
+        bgmDropdownOpen = !bgmDropdownOpen;
+      }
+    }
   }
   if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','z','Z','x','X',' ','Spacebar'].includes(e.key)) e.preventDefault();
 });
