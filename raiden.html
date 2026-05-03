@@ -356,11 +356,24 @@ function defaultConsole() {
     bhPullMul: 1.0,          // ×blackhole pull strength
     bhMaxCount: 3,          // hard cap on simultaneous holes
     bhSpawnIntervalMul: 1.0, // ×spawn interval (>1 slower)
+    // White hole tuning
+    whHpMul: 1.0,
+    whPullMul: 1.0,
+    whMaxCount: 2,
+    whSpawnIntervalMul: 1.0,
     // Map-missile (ICBM) tuning
     missileWarnSec: 2.0,    // warning red-line duration (seconds @ 1×)
     missileFireSec: 0.47,   // beam sweep duration (seconds)
     missileMaxAxis: 5,      // max same-axis warnings (cap)
     missileSpawnIntervalMul: 1.0, // ×spawn interval
+    // Meteor / Lightning / Neutron tuning
+    meteorIntervalMul: 1.0,
+    meteorCountMul: 1.0,
+    lightningIntervalMul: 1.0,
+    lightningWarnSec: 2.0,
+    neutronIntervalMul: 1.0,
+    neutronFuseSec: 3.0,
+    neutronRadius: 95,
     // Rune strength multipliers (1.0 = stock; >1 amplifies proc rate, capped at 1.0)
     runeProcMul: 1.0,       // global rune proc-rate multiplier
     burnDmgMul: 1.0,        // burn DoT %hp/tick multiplier
@@ -1681,8 +1694,10 @@ function shouldEnableWhiteHoles() {
   return endlessMode && level >= 25;
 }
 function maxWhiteHolesNow() {
-  if (level >= 60) return 2;
-  return 1;
+  const C = save.console || defaultConsole();
+  const cap = (typeof C.whMaxCount === 'number') ? C.whMaxCount : 2;
+  if (level >= 60) return Math.min(2, cap);
+  return Math.min(1, cap);
 }
 function trySpawnWhiteHole() {
   if (whiteHoles.length >= maxWhiteHolesNow()) return;
@@ -1696,7 +1711,8 @@ function trySpawnWhiteHole() {
     const tooClose = whiteHoles.some(h => Math.hypot(h.x - x, h.y - y) < 200)
                   || blackHoles.some(h => Math.hypot(h.x - x, h.y - y) < 160);
     if (tooClose) continue;
-    const baseHp = currentBossBaselineHp() * 0.4;          // matches BH HP per spec
+    const C = save.console || defaultConsole();
+    const baseHp = currentBossBaselineHp() * 0.4 * (C.whHpMul || 1);
     const targetLv = clamp(50 + Math.floor(Math.random() * 151), 50, 200);
     whiteHoles.push({
       x, y,
@@ -1713,7 +1729,8 @@ function trySpawnWhiteHole() {
 }
 function updateWhiteHoles() {
   if (!shouldEnableWhiteHoles() || screen !== 'game') return;
-  const interval = Math.max(540, 1200 - (level - 25) * 14);
+  const Cwh = save.console || defaultConsole();
+  const interval = Math.max(540, 1200 - (level - 25) * 14) * (Cwh.whSpawnIntervalMul || 1);
   if (frame - lastWhiteHoleSpawn > interval) {
     lastWhiteHoleSpawn = frame;
     trySpawnWhiteHole();
@@ -1751,14 +1768,15 @@ function updateWhiteHoles() {
       }
     }
     if (h._dead) continue;
-    // 1.5× BH gravity well
+    // White-hole gravity well (configurable pull mul via console)
+    const _whPullMul = (save.console && typeof save.console.whPullMul === 'number') ? save.console.whPullMul : 1;
     for (const p of players) {
       if (p.dead) continue;
       const dx = h.x - p.x, dy = h.y - p.y;
       const d = Math.hypot(dx, dy);
       if (d < WH_PULL_RADIUS && d > 0.1) {
         const k = (1 - d / WH_PULL_RADIUS);
-        const pullStrength = Math.pow(k, 1.6) * 1.4;
+        const pullStrength = Math.pow(k, 1.6) * 1.4 * _whPullMul;
         p.x += (dx / d) * pullStrength;
         p.y += (dy / d) * pullStrength;
         p._bhDamp = Math.min(p._bhDamp || 1, clamp(1 - k * 0.75, 0.25, 1));
@@ -1877,14 +1895,17 @@ function shouldEnableMeteorShower() {
 }
 function tryStartMeteorShower() {
   if (meteorShowers.length >= 1) return;
+  const C = save.console || defaultConsole();
+  const total = clamp(Math.round(16 * (C.meteorCountMul || 1)), 1, 80);
   meteorShowers.push({
-    spawnIdx: 0, total: 16, lastSpawn: 0,
+    spawnIdx: 0, total, lastSpawn: 0,
   });
   addFT('☄ 流星雨!', W/2, 80, '#ffaa44');
 }
 function updateMeteorShowers() {
   if (!shouldEnableMeteorShower() || screen !== 'game') return;
-  const interval = Math.max(900, 2200 - (level - 50) * 16);
+  const Cm = save.console || defaultConsole();
+  const interval = Math.max(900, 2200 - (level - 50) * 16) * (Cm.meteorIntervalMul || 1);
   if (frame - lastMeteorSpawn > interval) {
     lastMeteorSpawn = frame;
     tryStartMeteorShower();
@@ -1976,15 +1997,17 @@ function tryStartLightning() {
   if (lightningStrikes.length >= 3) return;
   const tgt = players.find(p => !p.dead);
   if (!tgt) return;
+  const C = save.console || defaultConsole();
   lightningStrikes.push({
     x: tgt.x, y: tgt.y - 12,
-    warnT: 120,                      // 2s warning (per spec)
+    warnT: Math.max(20, Math.round((C.lightningWarnSec || 2) * 60)),
     fireT: 0,
   });
 }
 function updateLightningStrikes() {
   if (!shouldEnableLightning() || screen !== 'game') return;
-  const interval = Math.max(360, 900 - (level - 30) * 8);
+  const Cl = save.console || defaultConsole();
+  const interval = Math.max(360, 900 - (level - 30) * 8) * (Cl.lightningIntervalMul || 1);
   if (frame - lastLightningSpawn > interval) {
     lastLightningSpawn = frame;
     tryStartLightning();
@@ -2067,7 +2090,10 @@ function trySpawnNeutronStar() {
     if (p && Math.hypot(p.x - x, p.y - y) < 120) continue;
     const tooClose = neutronStars.some(n => Math.hypot(n.x - x, n.y - y) < 160);
     if (tooClose) continue;
-    neutronStars.push({ x, y, fuse: NEUTRON_FUSE_FRAMES, maxFuse: NEUTRON_FUSE_FRAMES, spinT: 0 });
+    const C = save.console || defaultConsole();
+    const fuse = Math.max(30, Math.round((C.neutronFuseSec || 3) * 60));
+    neutronStars.push({ x, y, fuse, maxFuse: fuse, spinT: 0,
+                        radius: clamp(C.neutronRadius || NEUTRON_BLAST_RADIUS, 30, 300) });
     addFT('⚠ 中微子星生成 ⚠', x, y - 40, '#aaccff');
     return;
   }
@@ -2075,7 +2101,8 @@ function trySpawnNeutronStar() {
 function updateNeutronStars() {
   if (!shouldEnableNeutronStars() || screen !== 'game') return;
   // Spawn every 12-18s, faster at higher endless levels
-  const interval = Math.max(420, 1100 - (level - 10) * 12);
+  const Cn = save.console || defaultConsole();
+  const interval = Math.max(420, 1100 - (level - 10) * 12) * (Cn.neutronIntervalMul || 1);
   if (frame - lastNeutronSpawn > interval) {
     lastNeutronSpawn = frame;
     trySpawnNeutronStar();
@@ -2086,7 +2113,7 @@ function updateNeutronStars() {
     if (n.fuse <= 0) {
       // BOOM — AOE blast (slightly tighter than the warning ring so the player
       // has room to dodge to the very edge).
-      const r = NEUTRON_BLAST_RADIUS;
+      const r = n.radius || NEUTRON_BLAST_RADIUS;
       // Damage player — costs a life on direct hit (fatal hazard).
       for (const p of players) {
         if (p.dead || p.invTimer > 0 || invincible) continue;
@@ -2137,12 +2164,13 @@ function drawNeutronStars() {
   for (const n of neutronStars) {
     const t = n.fuse / n.maxFuse;     // 1 → 0 over the 3s fuse
     const energy = 1 - t;             // 0 → 1, used for size/intensity
-    const r = NEUTRON_BLAST_RADIUS * (0.4 + energy * 0.55);
+    const NB = n.radius || NEUTRON_BLAST_RADIUS;
+    const r = NB * (0.4 + energy * 0.55);
     cx.save();
     // Outer warning ring (pulses red as fuse runs out)
     cx.strokeStyle = `rgba(255,${100 - energy*100|0},${100 - energy*100|0},${0.4 + Math.sin(n.spinT*0.4)*0.4})`;
     cx.lineWidth = 2.2;
-    cx.beginPath(); cx.arc(n.x, n.y, NEUTRON_BLAST_RADIUS, 0, Math.PI*2); cx.stroke();
+    cx.beginPath(); cx.arc(n.x, n.y, NB, 0, Math.PI*2); cx.stroke();
     // Energy build-up halo
     const halo = cx.createRadialGradient(n.x, n.y, 1, n.x, n.y, r);
     halo.addColorStop(0, '#ffffff');
@@ -2174,7 +2202,7 @@ function drawNeutronStars() {
     cx.fillStyle = `rgba(255,${100 - energy*100|0},${100 - energy*100|0},1)`;
     cx.font = "bold 22px 'Courier New', monospace";
     cx.textAlign = 'center';
-    cx.fillText(sec + 's', n.x, n.y - NEUTRON_BLAST_RADIUS - 6);
+    cx.fillText(sec + 's', n.x, n.y - NB - 6);
     cx.textAlign = 'left';
     cx.restore();
   }
@@ -12218,10 +12246,21 @@ const CONSOLE_TABS = [
     {k:'bhPullMul',            name:'黑洞引力倍率',     min:0,    max:10,  step:0.05,desc:'×拉力(0=关闭)'},
     {k:'bhMaxCount',           name:'黑洞同屏上限',     min:0,    max:10,  step:1,   desc:'个'},
     {k:'bhSpawnIntervalMul',   name:'黑洞生成间隔倍率', min:0.1,  max:20,  step:0.1, desc:'×间隔(>1 慢)'},
+    {k:'whHpMul',              name:'白洞血量倍率',     min:0.05,max:50,  step:0.05,desc:'×0.4 同等 boss 血量'},
+    {k:'whPullMul',            name:'白洞引力倍率',     min:0,    max:10,  step:0.05,desc:'×拉力'},
+    {k:'whMaxCount',           name:'白洞同屏上限',     min:0,    max:10,  step:1,   desc:'个'},
+    {k:'whSpawnIntervalMul',   name:'白洞生成间隔倍率', min:0.1,  max:20,  step:0.1, desc:'×间隔'},
     {k:'missileWarnSec',       name:'导弹警告秒数',     min:0.5,  max:15,  step:0.1, desc:'秒'},
     {k:'missileFireSec',       name:'导弹光束秒数',     min:0.1,  max:5,   step:0.05,desc:'秒'},
     {k:'missileMaxAxis',       name:'导弹同轴上限',     min:1,    max:10,  step:1,   desc:'同行/列警告数'},
     {k:'missileSpawnIntervalMul',name:'导弹生成间隔倍率', min:0.1,  max:20,  step:0.1, desc:'×间隔'},
+    {k:'meteorIntervalMul',    name:'流星雨生成间隔×',  min:0.1,  max:20,  step:0.1, desc:'×间隔'},
+    {k:'meteorCountMul',       name:'流星雨数量×',      min:0.25, max:5,   step:0.25,desc:'×16 颗'},
+    {k:'lightningIntervalMul', name:'雷罚生成间隔×',    min:0.1,  max:20,  step:0.1, desc:'×间隔'},
+    {k:'lightningWarnSec',     name:'雷罚警告秒数',     min:0.5,  max:10,  step:0.1, desc:'秒'},
+    {k:'neutronIntervalMul',   name:'中微子星生成间隔×',min:0.1,  max:20,  step:0.1, desc:'×间隔'},
+    {k:'neutronFuseSec',       name:'中微子星倒计时',   min:0.5,  max:15,  step:0.1, desc:'秒'},
+    {k:'neutronRadius',        name:'中微子星半径',     min:30,   max:300, step:5,   desc:'像素'},
   ]},
   { id:'rune', label:'符文', fields: [
     {k:'runeProcMul',   name:'触发概率倍率',  min:0,  max:50, step:0.1, desc:'×概率(过高会被钳到100%)'},
