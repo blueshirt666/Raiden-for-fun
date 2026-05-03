@@ -4741,8 +4741,72 @@ function mkLaser(x,playerY,wl,owner) {
 }
 
 // ─── LV MAX FIRE FORMS — flashy & overpowered (5s) ──────────────────────────
+// Per-skin MAX-state surge — adds trait-flavored bonus bullets on top of the
+// base weapon's MAX form so each plane's MAX feels visually & mechanically
+// different even when sharing the underlying weapon.
+function _fireMaxSurge(p) {
+  const tr = planeTraits(p.skinIdx);
+  const x = p.x, y = p.y;
+  // Sub trait — fire 4 sub-bullets ahead in a tight fan
+  if (tr.sub || tr.dual) {
+    for (let i = -2; i <= 2; i++) {
+      if (i === 0) continue;
+      bullets.push(mkB(x + i*4, y - 8, i*0.4, -16, '#ffffff', 2, 5, p, 8));
+    }
+  }
+  // Chain trait — single mega-chain bullet that links to many enemies on hit
+  if (tr.chain) {
+    const cb = mkB(x, y - 14, 0, -16, '#ffffaa', 6, 12, p, 20);
+    cb.chainElectric = true;
+    bullets.push(cb);
+  }
+  // Fire trait — flame ring of 8 short-range bullets
+  if (tr.fire) {
+    for (let k = 0; k < 8; k++) {
+      const ag = (k / 8) * Math.PI * 2;
+      bullets.push(mkB(x, y, Math.cos(ag) * 4, Math.sin(ag) * 4 - 2,
+                        '#ff6622', 5, 5, p, 14));
+    }
+  }
+  // Holy trait — single huge gold beam
+  if (tr.holy) {
+    const lb = mkLaser(x, y, 5, p);
+    lb.color = '#ffeecc';
+    lb.w = 9;
+    lb.dmg = 26;
+    bullets.push(lb);
+  }
+  // Void trait — 3 dark crystal slow piercing bullets
+  if (tr.void) {
+    for (let i = -1; i <= 1; i++) {
+      const vb = mkB(x + i*7, y - 10, i*0.3, -8, '#aa00ff', 6, 9, p, 22);
+      vb.crystal = true; vb.slowF = 0.97;
+      bullets.push(vb);
+    }
+  }
+  // Homing trait — extra homing missile barrage
+  if (tr.homing) {
+    for (let i = -1; i <= 1; i++) {
+      const hb = mkB(x + i*8, y - 6, i*0.2, -10, '#ff44ff', 4, 8, p, 16);
+      hb.homing = true; hb.homingStr = 0.10;
+      bullets.push(hb);
+    }
+  }
+  // Spectral trait — phasing twin sine bullets that pierce
+  if (tr.spectral) {
+    for (let i = -1; i <= 1; i += 2) {
+      const sb = mkB(x + i*6, y, 0, -12, '#88ffff', 4, 8, p, 14);
+      sb.wave = true; sb.wPhase = 0; sb.wAmp = 5; sb.baseX = sb.x;
+      sb.traitPierce = true; sb.pierceLeft = 3;
+      bullets.push(sb);
+    }
+  }
+}
+
 function fireBulletMax(p) {
   const x=p.x, y=p.y;
+  // Inject per-plane MAX surge alongside the base weapon's MAX pattern
+  _fireMaxSurge(p);
   switch (p.weapon) {
     case 0: { // 标准炮 MAX → 全屏中央光束 + 两翼三排齐射
       // Central full-screen laser beams (3 parallel) — instant top-of-screen reach.
@@ -8279,10 +8343,18 @@ function collectPickups() {
             } else {
               // Already Lv5 → grant LV MAX duration (stacks; from console)
               const Cx = save.console || defaultConsole();
+              const wasZero = (p.weaponMax || 0) === 0;
               p.weaponMax = (p.weaponMax || 0) + Math.round((Cx.starMaxDuration||5)*60);
               SFX.levelUp();
               triggerShake(6, 12);
               addFT('★ LV MAX ★', pk.x, pk.y, '#ff66ff');
+              // Show the plane's trait signature when MAX first activates
+              if (wasZero) {
+                const traitStr = planeTraitDesc(p.skinIdx);
+                if (traitStr && traitStr !== '基础弹道') {
+                  addFT('特性: ' + traitStr, p.x, p.y - 28, '#ffaa66');
+                }
+              }
             }
             break;
           case 'life':
