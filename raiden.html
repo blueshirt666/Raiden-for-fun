@@ -238,10 +238,19 @@ const BG_SKINS = [
   ['日落云海',5,'d','sunset'],
   ['远古遗迹',8,'d','ruins'],
   ['次元裂隙',12,'d','rift'],
-  // New anime-girl portrait background (warm street-light glow + bokeh)
-  ['夜行少女',15,'d','animePortrait'],
+  // 10 new lightning-themed maps (all subtle/translucent so gameplay reads clearly)
+  ['雷雨交加', 6,  'd', 'thunderstorm'],
+  ['雷电峰',   6,  'd', 'thunderpeak'],
+  ['霹雳云海', 6,  'd', 'thundercloud'],
+  ['闪电沙漠', 8,  'd', 'thunderdesert'],
+  ['雷暴洋面', 8,  'd', 'thunderocean'],
+  ['雷霆要塞', 10, 'd', 'thunderfortress'],
+  ['雷神归来', 10, 'd', 'thunderworld'],
+  ['雷罚之地', 12, 'd', 'thunderwrath'],
+  ['雷霆赛博', 12, 'd', 'thundercyber'],
+  ['雷神之眼', 15, 'd', 'thundereye'],
 ];
-const ANIME_BG_TYPES = ['animePortrait'];
+const ANIME_BG_TYPES = [];
 
 // ─── RUNES ───────────────────────────────────────────────────────────────────
 // Each rune: name, key, color, base proc rate, lv 10 max rate, diamond cost per lv up
@@ -272,7 +281,8 @@ function runeProb(key) {
   const C = save.console || defaultConsole();
   const mul = (typeof C.runeProcMul === 'number') ? C.runeProcMul : 1;
   const each = (C.runeProcEach && typeof C.runeProcEach[key] === 'number') ? C.runeProcEach[key] : 1;
-  return Math.min(1, base * mul * each);
+  // Global -50% rune proc rate (per spec).
+  return Math.min(1, base * mul * each * 0.5);
 }
 function isRuneEquipped(key) {
   return save.equippedRunes && save.equippedRunes.indexOf(key) >= 0;
@@ -343,7 +353,7 @@ function defaultConsole() {
     bhMaxCount: 3,          // hard cap on simultaneous holes
     bhSpawnIntervalMul: 1.0, // ×spawn interval (>1 slower)
     // Map-missile (ICBM) tuning
-    missileWarnSec: 3.0,    // warning red-line duration (seconds @ 1×)
+    missileWarnSec: 2.0,    // warning red-line duration (seconds @ 1×)
     missileFireSec: 0.47,   // beam sweep duration (seconds)
     missileMaxAxis: 5,      // max same-axis warnings (cap)
     missileSpawnIntervalMul: 1.0, // ×spawn interval
@@ -408,6 +418,7 @@ function loadSave() {
       if (typeof d.bgmVol === 'number') save.bgmVol = clamp(d.bgmVol, 0, 1);
       if (typeof d.sfxVol === 'number') save.sfxVol = clamp(d.sfxVol, 0, 1);
       if (d.endlessState && typeof d.endlessState === 'object') save.endlessState = d.endlessState;
+      if (d.bossModeState && typeof d.bossModeState === 'object') save.bossModeState = d.bossModeState;
       if (Array.isArray(d.endlessLeaderboard)) save.endlessLeaderboard = d.endlessLeaderboard.slice(0,10);
       if (d.console && typeof d.console === 'object') {
         const def = defaultConsole();
@@ -1203,6 +1214,12 @@ let blackHoles = [];       // {x, y, life, maxLife, r, spinT}
 let lastBlackHoleSpawn = 0;
 let neutronStars = [];     // {x, y, life, maxLife, spinT}
 let lastNeutronSpawn = 0;
+let whiteHoles = [];       // teleport portals — endless 25+
+let lastWhiteHoleSpawn = 0;
+let meteorShowers = [];    // active meteor barrage state — endless 50+
+let lastMeteorSpawn = 0;
+let lightningStrikes = [];  // {x, y, warnT, fireT} — endless 30+
+let lastLightningSpawn = 0;
 let enemies = [];
 let pickups = [];
 let explosions = [];
@@ -1429,17 +1446,17 @@ function maxBlackHolesNow() {
 }
 function trySpawnBlackHole() {
   if (blackHoles.length >= maxBlackHolesNow()) return;
-  // Holes can spawn anywhere on screen — including very edges and bottom HUD.
   const margin = 30;
   for (let attempt = 0; attempt < 14; attempt++) {
     const x = rnd(margin, W - margin), y = rnd(margin, H - 60);
     const p = players[0];
     if (p && Math.hypot(p.x - x, p.y - y) < 110) continue;
-    // Don't spawn on top of the boss body
     if (boss && boss.alive && Math.hypot(boss.x - x, boss.y - y) < 90) continue;
     if (boss2 && boss2.alive && Math.hypot(boss2.x - x, boss2.y - y) < 90) continue;
     const tooClose = blackHoles.some(h => Math.hypot(h.x - x, h.y - y) < 160);
     if (tooClose) continue;
+    // 2s spawn-in: spawnGrow goes 0→1, hole is invulnerable + non-pulling until full
+    var spawnGrow = 0;
     // HP = 0.4× current-level boss baseline (was 0.5×, reduced 20% per spec)
     const C = save.console || defaultConsole();
     const hp = currentBossBaselineHp() * 0.4 * (C.bhHpMul || 1);
@@ -1449,8 +1466,9 @@ function trySpawnBlackHole() {
       hp, maxHp: hp,
       r: BH_CORE_RADIUS,
       spinT: 0,
+      spawnT: 120,                 // 2s spawn-in: invulnerable + no pull while >0
     });
-    addFT('黑洞已生成', x, y - 36, '#cc88ff');
+    addFT('⚠ 黑洞生成中', x, y - 36, '#cc88ff');
     return;
   }
 }
@@ -1468,7 +1486,8 @@ function updateBlackHoles() {
   }
   for (const h of blackHoles) {
     h.spinT++;
-    // Drift slowly, occasionally nudging direction
+    // 2s spawn-in: counts down before the hole becomes interactive
+    if (h.spawnT > 0) { h.spawnT--; continue; }
     if (h.spinT % 90 === 0) { h.vx = rnd(-0.3, 0.3); h.vy = rnd(-0.2, 0.3); }
     h.x += h.vx; h.y += h.vy;
     // Stay on-screen by gentle reflection — allow edges
@@ -1582,6 +1601,11 @@ function updateBlackHoles() {
 function drawBlackHoles() {
   for (const h of blackHoles) {
     cx.save();
+    // 2s spawn-in: scale 0..1 over spawnT countdown
+    const grow = h.spawnT > 0 ? clamp(1 - h.spawnT / 120, 0.05, 1) : 1;
+    cx.translate(h.x, h.y);
+    cx.scale(grow, grow);
+    cx.translate(-h.x, -h.y);
     // Outer event-horizon swirl (rings)
     const t = h.spinT * 0.06;
     for (let i = 0; i < 4; i++) {
@@ -1622,6 +1646,331 @@ function drawBlackHoles() {
     cx.arc(h.x, h.y, h.r + 4, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * lifeT);
     cx.stroke();
     cx.restore();
+  }
+}
+
+// ─── WHITE HOLE (白洞) ─────────────────────────────────────────────────────
+// Endless lv 25+: portal that drifts on screen, displays a target level number,
+// and teleports the player to that level when sucked in.
+const WH_PULL_RADIUS = 175;       // 1.5× BH (170) — slightly larger gravity
+const WH_CORE_RADIUS = 26;
+function shouldEnableWhiteHoles() {
+  return endlessMode && level >= 25;
+}
+function maxWhiteHolesNow() {
+  if (level >= 60) return 2;
+  return 1;
+}
+function trySpawnWhiteHole() {
+  if (whiteHoles.length >= maxWhiteHolesNow()) return;
+  const margin = 30;
+  for (let attempt = 0; attempt < 14; attempt++) {
+    const x = rnd(margin, W - margin), y = rnd(margin, H - 60);
+    const p = players[0];
+    if (p && Math.hypot(p.x - x, p.y - y) < 110) continue;
+    if (boss && boss.alive && Math.hypot(boss.x - x, boss.y - y) < 90) continue;
+    if (boss2 && boss2.alive && Math.hypot(boss2.x - x, boss2.y - y) < 90) continue;
+    const tooClose = whiteHoles.some(h => Math.hypot(h.x - x, h.y - y) < 200)
+                  || blackHoles.some(h => Math.hypot(h.x - x, h.y - y) < 160);
+    if (tooClose) continue;
+    const baseHp = currentBossBaselineHp() * 0.4 * 1.5;   // 1.5× BH HP
+    const targetLv = clamp(50 + Math.floor(Math.random() * 151), 50, 200);
+    whiteHoles.push({
+      x, y,
+      vx: rnd(-0.25, 0.25), vy: rnd(-0.15, 0.25),
+      hp: baseHp, maxHp: baseHp,
+      r: WH_CORE_RADIUS,
+      spinT: 0,
+      spawnT: 120,                 // 2s spawn-in
+      targetLv,
+    });
+    addFT('⚠ 白洞生成中 → Lv ' + targetLv, x, y - 36, '#ffeebb');
+    return;
+  }
+}
+function updateWhiteHoles() {
+  if (!shouldEnableWhiteHoles() || screen !== 'game') return;
+  const interval = Math.max(540, 1200 - (level - 25) * 14);
+  if (frame - lastWhiteHoleSpawn > interval) {
+    lastWhiteHoleSpawn = frame;
+    trySpawnWhiteHole();
+  }
+  for (const h of whiteHoles) {
+    h.spinT++;
+    if (h.spawnT > 0) { h.spawnT--; continue; }
+    if (h.spinT % 90 === 0) { h.vx = rnd(-0.3, 0.3); h.vy = rnd(-0.2, 0.3); }
+    h.x += h.vx; h.y += h.vy;
+    if (h.x < 20)         { h.x = 20;         h.vx = Math.abs(h.vx); }
+    if (h.x > W - 20)     { h.x = W - 20;     h.vx = -Math.abs(h.vx); }
+    if (h.y < 20)         { h.y = 20;         h.vy = Math.abs(h.vy); }
+    if (h.y > H - 40)     { h.y = H - 40;     h.vy = -Math.abs(h.vy); }
+    // 1.5× BH gravity well
+    for (const p of players) {
+      if (p.dead) continue;
+      const dx = h.x - p.x, dy = h.y - p.y;
+      const d = Math.hypot(dx, dy);
+      if (d < WH_PULL_RADIUS && d > 0.1) {
+        const k = (1 - d / WH_PULL_RADIUS);
+        const pullStrength = Math.pow(k, 1.6) * 1.4;
+        p.x += (dx / d) * pullStrength;
+        p.y += (dy / d) * pullStrength;
+        p._bhDamp = Math.min(p._bhDamp || 1, clamp(1 - k * 0.75, 0.25, 1));
+        // Player reaches the singular core → teleport to targetLv
+        if (d < h.r + 4) {
+          addFT('⌛ 穿越 → Lv ' + h.targetLv, p.x, p.y - 20, '#ffeebb');
+          level = h.targetLv;
+          waveTimer = 0; killCount = 0;
+          // Refresh diff baseline; bgm + screen unaffected
+          h._dead = true;
+          // brief invuln so player isn't instantly hit on arrival
+          p.invTimer = 90;
+          break;
+        }
+      }
+    }
+    // Bullets are absorbed similarly to black holes
+    for (const b of bullets) {
+      if (!b.alive) continue;
+      const dx = h.x - b.x, dy = h.y - b.y;
+      const d = Math.hypot(dx, dy);
+      if (d < WH_PULL_RADIUS) {
+        const k = (1 - d / WH_PULL_RADIUS) * 0.95;
+        b.vx += (dx / (d || 1)) * k;
+        b.vy += (dy / (d || 1)) * k;
+      }
+      if (d < h.r + 6) { h.hp -= b.dmg || 1; b.alive = false; }
+    }
+    if (h.hp <= 0) { h._dead = true; spawnExplosion(h.x, h.y, 'huge'); triggerShake(8, 12); }
+  }
+  whiteHoles = whiteHoles.filter(h => !h._dead);
+}
+function drawWhiteHoles() {
+  for (const h of whiteHoles) {
+    cx.save();
+    const grow = h.spawnT > 0 ? clamp(1 - h.spawnT / 120, 0.05, 1) : 1;
+    cx.translate(h.x, h.y); cx.scale(grow, grow); cx.translate(-h.x, -h.y);
+    const t = h.spinT * 0.06;
+    // Outer rays (golden)
+    for (let i = 0; i < 4; i++) {
+      const rg = i * 8 + 26 + Math.sin(t + i) * 4;
+      cx.strokeStyle = `rgba(255,220,120,${0.55 - i * 0.1})`;
+      cx.lineWidth = 1.4;
+      cx.beginPath(); cx.arc(h.x, h.y, rg, 0, Math.PI * 2); cx.stroke();
+    }
+    // Bright disk (opposite of black hole — emits light)
+    const grd = cx.createRadialGradient(h.x, h.y, 4, h.x, h.y, WH_PULL_RADIUS);
+    grd.addColorStop(0, '#ffffff');
+    grd.addColorStop(0.18, 'rgba(255,235,180,0.85)');
+    grd.addColorStop(0.45, 'rgba(255,200,120,0.30)');
+    grd.addColorStop(1, 'rgba(255,180,80,0)');
+    cx.fillStyle = grd;
+    cx.beginPath(); cx.arc(h.x, h.y, WH_PULL_RADIUS, 0, Math.PI * 2); cx.fill();
+    // Inner core (white-hot)
+    const coreG = cx.createRadialGradient(h.x, h.y, 0, h.x, h.y, h.r);
+    coreG.addColorStop(0, '#ffffff'); coreG.addColorStop(0.6, '#ffe088'); coreG.addColorStop(1, '#cc8822');
+    cx.fillStyle = coreG;
+    cx.beginPath(); cx.arc(h.x, h.y, h.r, 0, Math.PI * 2); cx.fill();
+    // Spinning radiance lines outward
+    for (let i = 0; i < 8; i++) {
+      const a = t + i * (Math.PI / 4);
+      const r1 = h.r + 4, r2 = h.r + 26;
+      cx.strokeStyle = `rgba(255,220,140,${0.5 + 0.4 * Math.sin(t * 2 + i)})`;
+      cx.lineWidth = 1.4;
+      cx.beginPath();
+      cx.moveTo(h.x + Math.cos(a) * r1, h.y + Math.sin(a) * r1);
+      cx.lineTo(h.x + Math.cos(a + 0.4) * r2, h.y + Math.sin(a + 0.4) * r2);
+      cx.stroke();
+    }
+    // Target level number
+    if (h.spawnT <= 0) {
+      cx.fillStyle = '#ffffff';
+      cx.font = "bold 13px 'Courier New', monospace";
+      cx.textAlign = 'center';
+      cx.fillText('Lv ' + h.targetLv, h.x, h.y - h.r - 8);
+      cx.textAlign = 'left';
+    }
+    cx.restore();
+  }
+}
+
+// ─── METEOR SHOWER (流星雨) ─────────────────────────────────────────────────
+// Endless lv 50+: 16 meteors streak diagonally upper-left → lower-right.
+function shouldEnableMeteorShower() {
+  return endlessMode && level >= 50;
+}
+function tryStartMeteorShower() {
+  if (meteorShowers.length >= 1) return;
+  meteorShowers.push({
+    spawnIdx: 0, total: 16, lastSpawn: 0,
+  });
+  addFT('☄ 流星雨!', W/2, 80, '#ffaa44');
+}
+function updateMeteorShowers() {
+  if (!shouldEnableMeteorShower() || screen !== 'game') return;
+  const interval = Math.max(900, 2200 - (level - 50) * 16);
+  if (frame - lastMeteorSpawn > interval) {
+    lastMeteorSpawn = frame;
+    tryStartMeteorShower();
+  }
+  for (const sh of meteorShowers) {
+    sh.lastSpawn++;
+    if (sh.spawnIdx < sh.total && sh.lastSpawn > 8 + rndInt(0, 5)) {
+      sh.lastSpawn = 0;
+      // Each meteor enters off the upper-left corner with diagonal velocity.
+      const offset = sh.spawnIdx * 24 + rnd(-12, 12);
+      enemyBullets.push({
+        x: -20 + offset, y: -30 + offset * 0.6,
+        px: 0, py: 0,
+        vx: 5.5, vy: 4.8,
+        alive: true,
+        color: '#ffaa44',
+        meteor: true, meteorTrail: [],
+        // Damaging both player and enemies
+        w: 14, h: 14, fast: true,
+      });
+      sh.spawnIdx++;
+    }
+    if (sh.spawnIdx >= sh.total) sh._done = true;
+  }
+  meteorShowers = meteorShowers.filter(s => !s._done);
+  // Meteors clear enemies + bullets in their path
+  for (const m of enemyBullets) {
+    if (!m.alive || !m.meteor) continue;
+    // Trail history for visual streak
+    if (!m.meteorTrail) m.meteorTrail = [];
+    m.meteorTrail.push({x: m.x, y: m.y});
+    if (m.meteorTrail.length > 8) m.meteorTrail.shift();
+    // Hit player
+    for (const p of players) {
+      if (p.dead || p.invTimer > 0 || invincible) continue;
+      const dx = p.x - m.x, dy = (p.y - 12) - m.y;
+      if (dx*dx + dy*dy < 18*18) hitPlayer(p);
+    }
+    // Vaporize enemies in radius
+    for (const e of enemies) {
+      if (!e.alive) continue;
+      const dx = e.x - m.x, dy = e.y - m.y;
+      if (dx*dx + dy*dy < 22*22) { e.hp = 0; killEnemy(e); }
+    }
+    // Clear player bullets in path
+    for (const pb of bullets) {
+      if (!pb.alive) continue;
+      const dx = pb.x - m.x, dy = pb.y - m.y;
+      if (dx*dx + dy*dy < 18*18) pb.alive = false;
+    }
+  }
+}
+function drawMeteorShowerTrails() {
+  // Iterates enemyBullets — meteor entries get a glowing diagonal trail.
+  for (const m of enemyBullets) {
+    if (!m.alive || !m.meteor) continue;
+    if (m.meteorTrail) {
+      for (let i = 0; i < m.meteorTrail.length; i++) {
+        const t = i / m.meteorTrail.length;
+        cx.fillStyle = `rgba(255,${160 + (i * 8 | 0)},80,${t * 0.6})`;
+        const p = m.meteorTrail[i];
+        cx.beginPath(); cx.arc(p.x, p.y, 5 + i * 0.6, 0, Math.PI * 2); cx.fill();
+      }
+    }
+    // Bright head with rocky shading
+    const hg = cx.createRadialGradient(m.x, m.y, 1, m.x, m.y, 12);
+    hg.addColorStop(0, '#ffffff');
+    hg.addColorStop(0.4, '#ffaa44');
+    hg.addColorStop(1, 'rgba(160,40,0,0)');
+    cx.fillStyle = hg;
+    cx.beginPath(); cx.arc(m.x, m.y, 12, 0, Math.PI * 2); cx.fill();
+    cx.fillStyle = '#aa3300';
+    cx.beginPath();
+    cx.arc(m.x - 1.5, m.y - 1.5, 4.5, 0, Math.PI * 2); cx.fill();
+    // Tiny crater pixels for "rocky" look
+    cx.fillStyle = '#221008';
+    cx.fillRect(m.x - 2, m.y - 1, 1, 1);
+    cx.fillRect(m.x + 1, m.y, 1, 1);
+  }
+}
+
+// ─── LIGHTNING JUDGMENT (雷罚) ─────────────────────────────────────────────
+// Endless lv 30+: locks the player's CURRENT position with a 2s warning circle,
+// then drops a thunder bolt that damages anything still inside.
+function shouldEnableLightning() {
+  return endlessMode && level >= 30;
+}
+function tryStartLightning() {
+  if (lightningStrikes.length >= 3) return;
+  const tgt = players.find(p => !p.dead);
+  if (!tgt) return;
+  lightningStrikes.push({
+    x: tgt.x, y: tgt.y - 12,
+    warnT: 120,                      // 2s warning (per spec)
+    fireT: 0,
+  });
+}
+function updateLightningStrikes() {
+  if (!shouldEnableLightning() || screen !== 'game') return;
+  const interval = Math.max(360, 900 - (level - 30) * 8);
+  if (frame - lastLightningSpawn > interval) {
+    lastLightningSpawn = frame;
+    tryStartLightning();
+  }
+  for (const s of lightningStrikes) {
+    if (s.warnT > 0) { s.warnT--; if (s.warnT === 0) s.fireT = 12; continue; }
+    if (s.fireT > 0) {
+      s.fireT--;
+      if (s.fireT === 11) {
+        // Damage tick on flash
+        const r = 38;
+        for (const p of players) {
+          if (p.dead || p.invTimer > 0 || invincible) continue;
+          const dx = p.x - s.x, dy = (p.y - 12) - s.y;
+          if (dx*dx + dy*dy < r*r) hitPlayer(p);
+        }
+        // Wipe enemies in zone
+        for (const e of enemies) {
+          if (!e.alive) continue;
+          const dx = e.x - s.x, dy = e.y - s.y;
+          if (dx*dx + dy*dy < r*r) { e.hp = 0; killEnemy(e); }
+        }
+        triggerShake(8, 10);
+      }
+      if (s.fireT === 0) s._done = true;
+    }
+  }
+  lightningStrikes = lightningStrikes.filter(s => !s._done);
+}
+function drawLightningStrikes() {
+  for (const s of lightningStrikes) {
+    if (s.warnT > 0) {
+      const flash = (Math.sin(s.warnT * 0.4) + 1) * 0.5;
+      cx.strokeStyle = `rgba(255,255,80,${0.5 + flash * 0.45})`;
+      cx.lineWidth = 2.2;
+      cx.beginPath(); cx.arc(s.x, s.y, 38, 0, Math.PI * 2); cx.stroke();
+      cx.setLineDash([6, 6]);
+      cx.strokeStyle = `rgba(255,200,80,${0.35 + flash * 0.4})`;
+      cx.beginPath(); cx.arc(s.x, s.y, 26, 0, Math.PI * 2); cx.stroke();
+      cx.setLineDash([]);
+      const sec = Math.ceil(s.warnT / 60);
+      cx.fillStyle = '#ffff66';
+      cx.font = "bold 14px 'Courier New', monospace";
+      cx.textAlign = 'center';
+      cx.fillText('⚡ ' + sec + 's', s.x, s.y - 44);
+      cx.textAlign = 'left';
+    } else if (s.fireT > 0) {
+      // Big jagged bolt from sky to point
+      const a = s.fireT / 12;
+      cx.strokeStyle = `rgba(255,255,180,${0.4 + a * 0.6})`;
+      cx.lineWidth = 4;
+      cx.beginPath();
+      cx.moveTo(s.x + (Math.random()-0.5)*8, 0);
+      let yy = 0;
+      while (yy < s.y) {
+        yy += 18;
+        cx.lineTo(s.x + (Math.random()-0.5)*16, yy);
+      }
+      cx.stroke();
+      // Burst at impact
+      cx.fillStyle = `rgba(255,255,220,${a * 0.7})`;
+      cx.beginPath(); cx.arc(s.x, s.y, 38, 0, Math.PI * 2); cx.fill();
+    }
   }
 }
 
@@ -2826,8 +3175,17 @@ function getBGColors(type) {
     animeDusk:    {sky:'#3a1228',terrain:'#5a2244',atmos:'#aa4466'},
     animeRainbow: {sky:'#0a0218',terrain:'#220a3a',atmos:'#aa44ff'},
     animeGoddess: {sky:'#181028',terrain:'#3a2050',atmos:'#ffcc88'},
-    // 夜行少女 — warm street-light night with red/orange bokeh
-    animePortrait:{sky:'#1a0a14',terrain:'#3a1828',atmos:'#cc5544'},
+    // 10 lightning-themed atmospheres
+    thunderstorm:    {sky:'#0a0d20', terrain:'#1a2240', atmos:'#88aaff'},
+    thunderpeak:     {sky:'#0a0814', terrain:'#1a1830', atmos:'#aaccff'},
+    thundercloud:    {sky:'#08081a', terrain:'#181830', atmos:'#aaaaff'},
+    thunderdesert:   {sky:'#1a1408', terrain:'#3a2810', atmos:'#ffcc66'},
+    thunderocean:    {sky:'#000820', terrain:'#0a1a40', atmos:'#88ccff'},
+    thunderfortress: {sky:'#0a0810', terrain:'#181820', atmos:'#88ccff'},
+    thunderworld:    {sky:'#1a1028', terrain:'#2a1838', atmos:'#aa88ff'},
+    thunderwrath:    {sky:'#0a0814', terrain:'#1a0a18', atmos:'#ff44aa'},
+    thundercyber:    {sky:'#000814', terrain:'#0a182a', atmos:'#00ccff'},
+    thundereye:      {sky:'#1a0a20', terrain:'#2a1838', atmos:'#ffff88'},
   };
   return m[type] || m.space;
 }
@@ -3243,6 +3601,68 @@ function drawBackground() {
     for (let i=0;i<3;i++) {
       const ry=(frame*0.4+i*233)%(H+100)-50;
       cx.beginPath(); cx.moveTo(rndInt(0,100),ry|0); cx.lineTo(rndInt(300,480),(ry+20)|0); cx.stroke();
+    }
+  }
+  // ─── Thunder-themed maps: shared light/bolt/rain layer ─────────────────
+  if (bgType && bgType.indexOf('thunder') === 0) {
+    const cfg = {
+      thunderstorm:    { rainDrops: 70, boltRate: 35, boltCol: 'rgba(180,210,255,0.85)', flashCol: 'rgba(160,200,255,0.10)' },
+      thunderpeak:     { rainDrops: 0,  boltRate: 60, boltCol: 'rgba(200,220,255,0.85)', flashCol: 'rgba(180,200,255,0.06)' },
+      thundercloud:    { rainDrops: 0,  boltRate: 50, boltCol: 'rgba(220,220,255,0.80)', flashCol: 'rgba(180,180,255,0.10)' },
+      thunderdesert:   { rainDrops: 0,  boltRate: 90, boltCol: 'rgba(255,220,140,0.85)', flashCol: 'rgba(255,200,120,0.06)' },
+      thunderocean:    { rainDrops: 50, boltRate: 50, boltCol: 'rgba(140,220,255,0.85)', flashCol: 'rgba(140,200,255,0.10)' },
+      thunderfortress: { rainDrops: 0,  boltRate: 70, boltCol: 'rgba(180,220,255,0.85)', flashCol: 'rgba(150,180,220,0.06)' },
+      thunderworld:    { rainDrops: 0,  boltRate: 45, boltCol: 'rgba(200,180,255,0.85)', flashCol: 'rgba(180,160,255,0.06)' },
+      thunderwrath:    { rainDrops: 30, boltRate: 28, boltCol: 'rgba(255,160,220,0.90)', flashCol: 'rgba(255,140,200,0.10)' },
+      thundercyber:    { rainDrops: 20, boltRate: 40, boltCol: 'rgba(80,220,255,0.90)',  flashCol: 'rgba(80,200,255,0.08)'  },
+      thundereye:      { rainDrops: 0,  boltRate: 30, boltCol: 'rgba(255,255,180,0.92)', flashCol: 'rgba(255,255,160,0.10)' },
+    }[bgType] || {rainDrops:0, boltRate:50, boltCol:'rgba(200,220,255,0.85)', flashCol:'rgba(180,200,255,0.08)'};
+    // Periodic flash overlay
+    const flashKey = (frame * 17) % 1000;
+    if (flashKey < 6) {
+      cx.fillStyle = cfg.flashCol;
+      cx.fillRect(0, 0, W, H);
+    }
+    // Bolts (random branching) — generated on a slow schedule
+    if (!window._thunderBolts) window._thunderBolts = [];
+    if (frame % cfg.boltRate === 0) {
+      const start = { x: rnd(20, W - 20), y: rnd(0, 80) };
+      const end =   { x: rnd(20, W - 20), y: rnd(120, H - 60) };
+      const points = [start];
+      let cx0 = start.x, cy0 = start.y;
+      while (cy0 < end.y - 14) {
+        cy0 += rnd(10, 22);
+        cx0 += rnd(-18, 18);
+        points.push({ x: cx0, y: cy0 });
+      }
+      points.push(end);
+      window._thunderBolts.push({ points, life: 14, maxLife: 14, col: cfg.boltCol });
+    }
+    for (const bolt of window._thunderBolts) {
+      const a = bolt.life / bolt.maxLife;
+      cx.strokeStyle = bolt.col.replace(/,0\.\d+\)/, ',' + a.toFixed(2) + ')');
+      cx.lineWidth = 2;
+      cx.beginPath();
+      for (let i = 0; i < bolt.points.length; i++) {
+        const p = bolt.points[i];
+        if (i === 0) cx.moveTo(p.x, p.y); else cx.lineTo(p.x, p.y);
+      }
+      cx.stroke();
+      bolt.life--;
+    }
+    window._thunderBolts = window._thunderBolts.filter(b => b.life > 0);
+    // Rain
+    if (cfg.rainDrops > 0) {
+      cx.strokeStyle = 'rgba(170,200,255,0.30)';
+      cx.lineWidth = 1;
+      cx.beginPath();
+      for (let i = 0; i < cfg.rainDrops; i++) {
+        const rx = (i * 41 + frame * 6) % W;
+        const ry = (i * 67 + frame * 12) % H;
+        cx.moveTo(rx, ry);
+        cx.lineTo(rx - 2, ry + 8);
+      }
+      cx.stroke();
     }
   }
 
@@ -5988,11 +6408,39 @@ function startBossMode() {
   bossMode = true; endlessMode = false; twoPlayer = false;
   players=[]; wingmen=[]; bullets=[]; enemyBullets=[]; enemies=[]; pickups=[]; explosions=[]; floatingTexts=[];
   screenMissiles=[]; lastMissileSpawn=0; blackHoles=[]; neutronStars=[]; lastNeutronSpawn=0;
+  whiteHoles=[]; lastWhiteHoleSpawn=0; meteorShowers=[]; lastMeteorSpawn=0; lightningStrikes=[]; lastLightningSpawn=0;
   score=0; level=1; waveTimer=0; killCount=0; bossActive=false; boss=null; boss2=null; bombFlash=0;
   sessionCoins=0; sessionDiamonds=0; finalScore=0; frame=0;
   bossModeCycle = 0;
   save.bossTiers = {};
   players.push(createPlayer(1, save.selP1));
+  // Restore boss-mode snapshot if present (similar to endless resume)
+  if (save.bossModeState) {
+    const s = save.bossModeState;
+    level = s.level || 1;
+    bossModeCycle = s.bossModeCycle || 0;
+    score = s.score || 0;
+    sessionCoins = s.sessionCoins || 0;
+    sessionDiamonds = s.sessionDiamonds || 0;
+    save.bossTiers = s.bossTiers || {};
+    const p = players[0];
+    if (s.p) {
+      p.x = s.p.x; p.y = s.p.y;
+      p.lives = s.p.lives || 3;
+      p.bombs = s.p.bombs || 3;
+      p.weaponLevel = s.p.weaponLevel || 1;
+      p.shieldFrames = s.p.shieldFrames || 0;
+      p.invTimer = 90;
+    }
+    if (Array.isArray(s.wingmen)) {
+      for (const w of s.wingmen) {
+        spawnWingman(p, w.wType);
+        const last = wingmen[wingmen.length-1];
+        if (last) last.level = w.level || 1;
+      }
+    }
+    addFT('继续 BOSS 模式 · 第 ' + level + ' 战', W/2, H/2-40, '#ffff44');
+  }
   if (save.bgRandom) {
     const ownedBgs = BG_SKINS.map((_, i) => save.bgs && save.bgs[i] ? i : -1).filter(x => x >= 0);
     if (ownedBgs.length) save.selBG = ownedBgs[Math.floor(Math.random() * ownedBgs.length)];
@@ -6000,7 +6448,9 @@ function startBossMode() {
   initBGStars(BG_SKINS[save.selBG][3]);
   screen = 'game';
   if (bgmEnabled) startBGM();
-  addFT('BOSS 模式 · 第 1 / 13 战', W/2, H/2 - 30, '#ff66aa');
+  if (!save.bossModeState) {
+    addFT('BOSS 模式 · 第 1 / 13 战', W/2, H/2 - 30, '#ff66aa');
+  }
 }
 
 function updateBoss() {
@@ -7752,6 +8202,8 @@ function checkGameOver() {
     setTimeout(()=>{
       finalScore=score;
       stopBGM();
+      // Death wipes the boss-mode snapshot (no resume after final death)
+      if (bossMode) clearBossModeSnapshot();
       deathTimer = 600;       // 10 seconds
       screen='death';
     },1000);
@@ -7837,6 +8289,8 @@ const BOSS_MODE_MAX_STAGE = 100;
 function advanceBossModeLevel() {
   level++; waveTimer = 0; bossActive = false;
   boss2 = null;
+  // Auto-save progress on every level advance (mid-run resume)
+  saveBossModeSnapshot();
   if (level > 13) {
     // Cycle complete — bump stage, but cap at 100 阶段 total.
     if (bossModeCycle + 1 >= BOSS_MODE_MAX_STAGE) {
@@ -8225,12 +8679,6 @@ function drawHUD() {
     } else {
       cx.fillText(WEAPON_NAMES[p.weapon]+' Lv'+p.weaponLevel, px, yb+25);
     }
-    // Shield seconds (only when active) — draws above weapon line
-    if ((p.shieldFrames || 0) > 0) {
-      cx.fillStyle = '#00ffcc';
-      cx.font = "bold 10px 'Courier New', monospace";
-      cx.fillText('🛡 ' + Math.ceil(p.shieldFrames/60) + 's', px, yb - 4);
-    }
     // Wingman slots (up to 2): name + Lv per slot, color-coded
     const myWing=wingmen.filter(w=>w.owner===p&&w.alive);
     cx.font="9px 'Courier New', monospace";
@@ -8245,12 +8693,19 @@ function drawHUD() {
         cx.fillText('僚机'+(i+1)+' —', px, ly);
       }
     }
-    // Equipped runes — 2 lines under the wingman block (player 1 only)
+    // Shield seconds — placed BELOW the wingman list (right-side status column)
+    if ((p.shieldFrames || 0) > 0) {
+      cx.fillStyle = '#00ffcc';
+      cx.font = "bold 11px 'Courier New', monospace";
+      cx.fillText('🛡 ' + Math.ceil(p.shieldFrames/60) + 's', px, yb + 38 + 2*11 + 2);
+    }
+    // Equipped runes — 2 lines under the wingman + shield block (player 1 only)
     if (p.pNum === 1) {
       const eq = save.equippedRunes || [];
       cx.font="9px 'Courier New', monospace";
+      const runeBaseY = yb + 78;       // pushed down to make room for shield row
       for (let i = 0; i < 2; i++) {
-        const ly = yb + 62 + i * 11;
+        const ly = runeBaseY + i * 11;
         const key = eq[i];
         const def = key ? RUNE_DEFS.find(r => r.key === key) : null;
         if (def) {
@@ -8656,19 +9111,36 @@ function drawTitle() {
     if (btn.act === 'solo' && topKey) {
       drawMedalIcon(btn.x + btn.w - 22, btn.y + btn.h - 18, true, topKey);
     }
-    // Trash glyph inside 无尽 tab corner
+    // Trash + 继续 subtext for endless / boss-mode resume
+    const isBossModeTab = (btn.act === 'bossMode');
     if (isEndless && save.endlessState) {
       cx.fillStyle = '#ff6666';
-      cx.font = "bold 18px sans-serif";
-      cx.textBaseline = 'middle';
+      cx.font = "bold 18px sans-serif"; cx.textBaseline = 'middle';
       cx.fillText('🗑', btn.x + btn.w - 22, btn.y + btn.h - 18);
       cx.textBaseline = 'alphabetic';
-    }
-    // Endless level subtext (Lv N)
-    if (isEndless && save.endlessState) {
       cx.fillStyle = '#ffcc44';
       cx.font = "10px 'Courier New', monospace";
       cx.fillText('继续 Lv ' + save.endlessState.level, btn.x + btn.w/2, btn.y + 18);
+    }
+    if (isBossModeTab && save.bossModeState) {
+      cx.fillStyle = '#ff6666';
+      cx.font = "bold 18px sans-serif"; cx.textBaseline = 'middle';
+      cx.fillText('🗑', btn.x + btn.w - 22, btn.y + btn.h - 18);
+      cx.textBaseline = 'alphabetic';
+      cx.fillStyle = '#ffcc44';
+      cx.font = "10px 'Courier New', monospace";
+      cx.fillText('继续 第' + save.bossModeState.level + '战', btn.x + btn.w/2, btn.y + 18);
+    }
+    // Stage tier latest cleared subtext on solo tab
+    if (btn.act === 'solo' && save.stageProgress) {
+      cx.fillStyle = '#88ff88';
+      cx.font = "10px 'Courier New', monospace";
+      const sp = save.stageProgress;
+      let t = '休闲';
+      let s = sp.novice || 0;
+      if ((sp.hell|0) > 0)         { t = '地狱'; s = sp.hell; }
+      else if ((sp.veteran|0) > 0) { t = '老手'; s = sp.veteran; }
+      cx.fillText('最近: ' + t + ' Lv' + s, btn.x + btn.w/2, btn.y + 18);
     }
   }
   cx.textAlign = 'left';
@@ -8701,16 +9173,20 @@ function drawTitle() {
 }
 
 function clickTitle(mx,my) {
-  // Trash icon (inside the bottom-right corner of 无尽模式 tab box)
-  if (save.endlessState) {
-    const eb = titleBtns[1]; // endless tab
-    const tx = eb.x + eb.w - 22, ty = eb.y + eb.h - 18;
+  // Trash icons for endless / boss-mode resume snapshots
+  const trashCheck = (btn, clearFn) => {
+    const tx = btn.x + btn.w - 22, ty = btn.y + btn.h - 18;
     const dx = mx - tx, dy = my - ty;
-    if (dx*dx + dy*dy < 18*18) {
-      clearEndlessSnapshot();
-      SFX.buyFail();
-      return;
-    }
+    if (dx*dx + dy*dy < 18*18) { clearFn(); SFX.buyFail(); return true; }
+    return false;
+  };
+  if (save.endlessState) {
+    const eb = titleBtns[1];
+    if (trashCheck(eb, clearEndlessSnapshot)) return;
+  }
+  if (save.bossModeState) {
+    const bb = titleBtns[2];
+    if (trashCheck(bb, clearBossModeSnapshot)) return;
   }
   // Quick equip strip (4 cards: Map / Trail / Rune-A / Rune-B)
   const ey = TITLE_EQUIP.y, eh = TITLE_EQUIP.h, ew = TITLE_EQUIP.cardW;
@@ -10236,14 +10712,17 @@ function clickPause(mx,my) {
       else if (btn.act==='console') { showConsolePanel(true); pauseConsoleReturn = true; screen='console'; }
       else if (btn.act==='restart') {
         if (endlessMode) clearEndlessSnapshot();
-        startGame(twoPlayer, endlessMode, endlessMode?1:level);
+        if (bossMode) clearBossModeSnapshot();
+        if (bossMode) startBossMode();
+        else startGame(twoPlayer, endlessMode, endlessMode?1:level);
       }
       else if (btn.act==='home') {
-        // Endless: keep snapshot for resume + record this run on the leaderboard
+        // Endless / boss: keep snapshot for resume
         if (endlessMode) {
           saveEndlessSnapshot();
           submitEndlessScore(score, level, 'pause-home');
         }
+        if (bossMode) saveBossModeSnapshot();
         save.coins += sessionCoins; save.diamonds += sessionDiamonds;
         sessionCoins = 0; sessionDiamonds = 0;
         writeSave(); stopBGM(); screen='title';
@@ -10563,6 +11042,25 @@ function clearEndlessSnapshot() {
   save.endlessState = null;
   writeSave();
 }
+function snapshotBossMode() {
+  const p = players[0]; if (!p) return null;
+  return {
+    level, bossModeCycle, score, sessionCoins, sessionDiamonds,
+    bossTiers: save.bossTiers ? Object.assign({}, save.bossTiers) : {},
+    p: {x:p.x, y:p.y, lives:p.lives, bombs:p.bombs, weaponLevel:p.weaponLevel, skinIdx:p.skinIdx,
+        shieldFrames:p.shieldFrames||0},
+    wingmen: wingmen.filter(w=>w.alive).map(w=>({wType:w.wType, level:w.level||1})),
+  };
+}
+function saveBossModeSnapshot() {
+  if (!bossMode) return;
+  save.bossModeState = snapshotBossMode();
+  writeSave();
+}
+function clearBossModeSnapshot() {
+  save.bossModeState = null;
+  writeSave();
+}
 
 // ─── GAME INIT ───────────────────────────────────────────────────────────────
 function startGame(_unused, endless, startLv) {
@@ -10570,6 +11068,7 @@ function startGame(_unused, endless, startLv) {
   bossMode=false; bossModeCycle=0; boss2=null; bossActive=false;
   players=[]; wingmen=[]; bullets=[]; enemyBullets=[]; enemies=[]; pickups=[]; explosions=[]; floatingTexts=[];
   screenMissiles=[]; lastMissileSpawn=0; blackHoles=[]; neutronStars=[]; lastNeutronSpawn=0;
+  whiteHoles=[]; lastWhiteHoleSpawn=0; meteorShowers=[]; lastMeteorSpawn=0; lightningStrikes=[]; lastLightningSpawn=0;
   score=0; level=Math.max(1,(startLv|0)||1); waveTimer=0; killCount=0; bossActive=false; boss=null; bombFlash=0;
   sessionCoins=0; sessionDiamonds=0; finalScore=0; frame=0;
   // Boss tiers reset every fresh run so encounters scale with the boss-appearance count
@@ -11106,6 +11605,9 @@ function update() {
   }
   updateScreenMissiles();
   updateBlackHoles();
+  updateWhiteHoles();
+  updateMeteorShowers();
+  updateLightningStrikes();
   updateNeutronStars();
   updatePickups();
   collectPickups();
@@ -11154,6 +11656,9 @@ function drawGameField() {
   for(const p of players) drawPlayer(p);
   drawScreenMissiles();
   drawBlackHoles();
+  drawWhiteHoles();
+  drawLightningStrikes();
+  drawMeteorShowerTrails();
   drawNeutronStars();
   // Enemy bullets render LAST among gameplay layers so they always sit on top
   // and are never visually covered by enemies, the player, or pickups.
