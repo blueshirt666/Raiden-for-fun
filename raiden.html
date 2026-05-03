@@ -3990,24 +3990,32 @@ function updatePlayer(p, keys) {
 function mkB(x,y,vx,vy,color,w,h,owner,dmg) {
   const C = save.console || defaultConsole();
   const isPlayer = !!owner && (owner.pNum !== undefined);
-  // Per-weapon damage override
   const wIdx = isPlayer ? (owner.weapon || 0) : -1;
   const eachWpn = (isPlayer && C.weaponDmgEach && typeof C.weaponDmgEach[wIdx] === 'number') ? C.weaponDmgEach[wIdx] : 1;
-  // Boss debuff: 金牛·陶罗斯 → player bullet damage ×0.75
   const _dbfDmg = (isPlayer && hasBossDebuff('dmgDown')) ? 0.75 : 1;
   let finalDmg = (dmg || 10) * (isPlayer ? C.weaponDmgMul : 1) * eachWpn * _dbfDmg;
   let crit = false;
-  // Crit rune: roll at bullet creation, doubles damage (×critDmgMul), gold tint
   if (isPlayer && isRuneEquipped('crit') && Math.random() < runeProb('crit')) {
     crit = true;
     finalDmg *= 2 * (C.critDmgMul || 1);
   }
   const sm = isPlayer ? C.bulletSpeedMul : 1;
+  // Per-plane bullet color override — each of the 37 plane skins shoots in
+  // its own signature hue while still using the underlying weapon mechanics.
+  let finalColor = color;
+  if (isPlayer && !crit) {
+    const skin = PLANE_SKINS[owner.skinIdx];
+    const tint = (skin && skin[4] && skin[4][1]) ? skin[4][1] : color;
+    // Light, mid, dark variants of the input color blend with the plane's accent.
+    finalColor = tint;
+  }
   return {x, y, px:x|0, py:y|0,
           vx: vx*sm, vy: vy*sm,
-          color: crit ? '#ffcc44' : color,
+          color: crit ? '#ffcc44' : finalColor,
           w: crit ? w + 1 : w, h: crit ? h + 1 : h,
-          owner, dmg: finalDmg, alive:true, crit};
+          owner, dmg: finalDmg, alive:true, crit,
+          // Tag bullet with plane index so drawBullets can render unique shapes
+          skinIdx: isPlayer ? owner.skinIdx : -1};
 }
 
 // Apply rune procs at the moment a player bullet hits an enemy.
@@ -4483,9 +4491,29 @@ function drawBullets() {
       cx.fillStyle=b.color+'aa'; cx.beginPath(); cx.arc(b.px,b.py,4,0,Math.PI*2); cx.fill();
       continue;
     }
-    // Normal bullets with glow
+    // Normal bullets with glow + per-skin shape variant
     cx.fillStyle=b.color+'44'; cx.fillRect((b.px-b.w)|0,(b.py-b.h)|0,b.w*2,b.h*2);
-    cx.fillStyle=b.color; cx.fillRect((b.px-b.w/2)|0,(b.py-b.h/2)|0,b.w,b.h);
+    const shape = (b.skinIdx >= 0) ? (b.skinIdx % 4) : 0;
+    if (shape === 1) {
+      // Round bullet (e.g. 凤凰 / 樱花)
+      cx.fillStyle=b.color;
+      cx.beginPath(); cx.arc(b.px, b.py, Math.max(b.w, b.h)/2, 0, Math.PI*2); cx.fill();
+    } else if (shape === 2) {
+      // Diamond bullet (e.g. 龙 / 麒麟)
+      cx.save();
+      cx.translate(b.px, b.py); cx.rotate(Math.PI/4);
+      cx.fillStyle=b.color;
+      cx.fillRect(-b.w/2, -b.h/2, b.w, b.h);
+      cx.restore();
+    } else if (shape === 3) {
+      // Sub-bullet pair (twin streaks) — for 子母弹 feel (white tiger etc.)
+      cx.fillStyle=b.color;
+      cx.fillRect((b.px-b.w/2-1)|0,(b.py-b.h/2)|0, Math.max(1, b.w/2|0), b.h);
+      cx.fillRect((b.px+1)|0,(b.py-b.h/2)|0, Math.max(1, b.w/2|0), b.h);
+    } else {
+      cx.fillStyle=b.color;
+      cx.fillRect((b.px-b.w/2)|0,(b.py-b.h/2)|0,b.w,b.h);
+    }
   }
 }
 
@@ -7046,10 +7074,13 @@ function updatePickups() {
 const WINGMAN_NAMES = [
   '激光僚机','导弹僚机','散弹僚机','轰炸僚机','等离子僚机',
   '闪电僚机','冰晶僚机','火焰僚机','双管僚机','轨道僚机',
+  // 5 new wingmen
+  '回旋僚机','毒液僚机','电磁僚机','圣光僚机','虚空僚机',
 ];
 const WINGMAN_COLORS = [
   '#00ffff','#ffcc00','#ff8800','#ff4488','#aa44ff',
   '#88ffff','#aaeeff','#ff5522','#dddddd','#ffdd44',
+  '#00ff88','#88ff44','#ffff44','#ffeecc','#aa00ff',
 ];
 
 function drawPickupIcon(pk) {
@@ -7343,7 +7374,7 @@ function updateWingmen() {
     w.x+=(tx-w.x)*0.12; w.y+=(ty-w.y)*0.12;
     w.fireTimer++;
     const lv = w.level||1;
-    const rates=[20,35,11,50,28, 14,22,18,16,24];
+    const rates=[20,35,11,50,28, 14,22,18,16,24, 26,18,15,55,32];
     const fireRate = Math.max(4, rates[w.wType] - (lv-1)*3);
     if(w.fireTimer>=fireRate) {
       w.fireTimer=0;
@@ -7430,6 +7461,51 @@ function fireWingmanBullet(w) {
         const b = mkB(x+off, y, off*0.05, -9, '#ffdd44', 4, 8, w.owner, Math.round(18*dmgMul));
         b.homing = true; b.homingStr = 0.06 + lv*0.01;
         bullets.push(b);
+      }
+      break;
+    }
+    case 10: { // 回旋 — boomerang style returning shots
+      for (let i = -1; i <= 1; i++) {
+        const b = mkB(x + i*6, y, i*1.6, -8, '#00ff88', 4, 7, w.owner, Math.round(16*dmgMul));
+        b.boomerang = true; b.bTimer = 0;
+        bullets.push(b);
+      }
+      break;
+    }
+    case 11: { // 毒液 — green plague rounds with extended hitbox
+      const num = 2 + Math.ceil(lv/2);
+      for (let i = 0; i < num; i++) {
+        const off = (i - (num-1)/2) * 7;
+        const b = mkB(x+off, y, off*0.10, -9.5, '#88ff44', 5+lv*0.5, 9, w.owner, Math.round(15*dmgMul));
+        b.wave = true; b.wPhase = 0; b.wAmp = 1.6; b.baseX = b.x;
+        bullets.push(b);
+      }
+      break;
+    }
+    case 12: { // 电磁 — wide horizontal lightning chain
+      for (let i = -2; i <= 2; i++) {
+        const b = mkB(x + i*8, y, i*0.4, -10, '#ffff44', 3, 9, w.owner, Math.round(13*dmgMul));
+        b.lightning = true;
+        bullets.push(b);
+      }
+      break;
+    }
+    case 13: { // 圣光 — single huge holy bolt with massive damage
+      const b = mkB(x, y - 6, 0, -12, '#ffeecc', 8 + lv, 14, w.owner, Math.round(45*dmgMul));
+      b.homing = true; b.homingStr = 0.04 + lv*0.008;
+      bullets.push(b);
+      // Side sparkles
+      bullets.push(mkB(x - 10, y, -0.6, -10, '#ffffff', 3, 6, w.owner, Math.round(8*dmgMul)));
+      bullets.push(mkB(x + 10, y,  0.6, -10, '#ffffff', 3, 6, w.owner, Math.round(8*dmgMul)));
+      break;
+    }
+    case 14: { // 虚空 — purple void crystals (slow, big, piercing)
+      const b = mkB(x, y, 0, -7, '#aa00ff', 6 + lv*0.6, 10, w.owner, Math.round(30*dmgMul));
+      b.crystal = true; b.slowF = 0.97;
+      bullets.push(b);
+      if (lv >= 3) {
+        bullets.push(mkB(x - 6, y + 4, -0.6, -6, '#cc44ff', 5, 8, w.owner, Math.round(20*dmgMul)));
+        bullets.push(mkB(x + 6, y + 4,  0.6, -6, '#cc44ff', 5, 8, w.owner, Math.round(20*dmgMul)));
       }
       break;
     }
@@ -8214,6 +8290,8 @@ const GAME_BUILD_DATE = '2026-04-29';
 function titleEquipCardX(i){ return TITLE_EQUIP_X + i*(TITLE_EQUIP.cardW + TITLE_EQUIP.gap); }
 // Shop / Codex / Settings now use DOM side-bar buttons (#btn-shop / #btn-codex / #btn-pause).
 let showcaseIdx = 0;
+let titleFocus = 0;          // selected mode tab on title (arrow-key nav)
+let tierFocus = 0;           // selected tier on tierSelect
 
 // Realistic medal disc with red ribbon + engraved tier letter
 function drawMedalIcon(x, y, earned, key) {
@@ -8528,9 +8606,17 @@ function drawTitle() {
   if (medals.hell) topKey = 'hell';
   else if (medals.veteran) topKey = 'veteran';
   else if (medals.novice) topKey = 'novice';
-  for (const btn of titleBtns) {
+  for (let _bi = 0; _bi < titleBtns.length; _bi++) {
+    const btn = titleBtns[_bi];
     const isEndless = btn.act === 'endless';
     const isActive = isEndless && !!save.endlessState;
+    const isFocused = (titleFocus === _bi);
+    if (isFocused) {
+      // Focus glow ring around the button
+      cx.strokeStyle = '#ffff44';
+      cx.lineWidth = 3;
+      cx.strokeRect(btn.x - 3, btn.y - 3, btn.w + 6, btn.h + 6);
+    }
     // Brushed-metal panel: dark base + diagonal hairline + bevel edges
     const tg = cx.createLinearGradient(btn.x, btn.y, btn.x, btn.y + btn.h);
     tg.addColorStop(0, isActive ? '#163a4d' : '#1a2c3a');
@@ -10672,6 +10758,26 @@ document.addEventListener('keydown',e=>{
     } else if (screen==='console') {
       showConsolePanel(false);
       screen='titleSettings';
+    }
+  }
+  // ─── Menu keyboard navigation ─────────────────────────────────────────
+  // Arrow keys move focus, Space/Enter confirm. Game-screen arrow keys still
+  // move the player as before; menus only intercept while their screen is up.
+  if (screen === 'title') {
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      titleFocus = clamp((titleFocus || 0) + (e.key === 'ArrowRight' ? 1 : -1), 0, titleBtns.length - 1);
+    } else if (e.key === ' ' || e.key === 'Enter' || e.key === 'Spacebar') {
+      const btn = titleBtns[titleFocus || 0];
+      if (btn.act === 'solo') screen = 'tierSelect';
+      else if (btn.act === 'endless') startGame(false, true);
+      else if (btn.act === 'bossMode') startBossMode();
+    }
+  } else if (screen === 'tierSelect') {
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      tierFocus = clamp((tierFocus || 0) + (e.key === 'ArrowDown' ? 1 : -1), 0, 2);
+    } else if (e.key === ' ' || e.key === 'Enter' || e.key === 'Spacebar') {
+      const ti = TIER_INFO[tierFocus || 0];
+      if (ti && ti.unlock()) { save.tier = ti.key; writeSave(); screen = 'stageSelect'; }
     }
   }
   if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','z','Z','x','X',' ','Spacebar'].includes(e.key)) e.preventDefault();
