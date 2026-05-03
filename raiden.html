@@ -6922,6 +6922,42 @@ function bossLogic(b) {
       }
       break;
     }
+    // ─── 14-23: 变异行星 boss — robotic arms fire homing missiles ───────
+    case 13: case 14: case 15: case 16: case 17:
+    case 18: case 19: case 20: case 21: case 22: {
+      b.x += b.vx*0.6; if(b.x<70||b.x>W-70) b.vx*=-1;
+      // Tracking missile salvo every 90 frames (faster in rage)
+      const fireGap = phase >= 2 ? 60 : phase >= 1 ? 80 : 100;
+      if (mt % ((fireGap * fireMul) | 0) === 0) {
+        const t = players.find(p => !p.dead);
+        if (t) {
+          for (const dir of [-1, 1]) {
+            const sx = b.x + dir * 38, sy = b.y + 14;
+            const dx = t.x - sx, dy = t.y - sy;
+            const d = Math.hypot(dx, dy) || 1;
+            const sp = 1.4;
+            const m = mkEBSpecial(sx, sy, dx/d * sp, dy/d * sp, b.color, 4, 'homer');
+            m.homing = true;
+            m.homingStr = 0.06;
+            m.maxSpeed = 2.6;
+            m.w = 6; m.h = 8;
+            enemyBullets.push(m);
+          }
+        }
+      }
+      // Periodic equator wave — wide ring of slow bullets
+      if (phase >= 1 && mt % 120 === 0) {
+        for (let k = 0; k < 12; k++) {
+          const ag = (k / 12) * Math.PI * 2 + mt * 0.02;
+          enemyBullets.push({
+            x: b.x, y: b.y, px:0, py:0,
+            vx: Math.cos(ag) * 2.0, vy: Math.sin(ag) * 2.0,
+            alive: true, color: b.acc,
+          });
+        }
+      }
+      break;
+    }
     case 11: { // 双鱼·Pisces — 阴阳追击 + 双向螺旋
       b.x += b.vx*0.5; if(b.x<70||b.x>W-70) b.vx*=-1;
       // Twin fish bullets that curve outward
@@ -7490,6 +7526,77 @@ function drawBossShape(b) {
       // Connecting binding line
       cx.strokeStyle=b.acc; cx.lineWidth=1.5;
       cx.beginPath(); cx.arc(0,0,30,0,Math.PI*2); cx.stroke();
+      break;
+    }
+    // ─── 14-23: 变异行星 boss — mechanical-modified planet aesthetic ──────
+    case 13: case 14: case 15: case 16: case 17:
+    case 18: case 19: case 20: case 21: case 22: {
+      // Outer atmosphere halo
+      const haloG = cx.createRadialGradient(0,0,18,0,0,80);
+      haloG.addColorStop(0, b.color+'aa'); haloG.addColorStop(1, b.color+'00');
+      cx.fillStyle = haloG;
+      cx.beginPath(); cx.arc(0,0,80,0,Math.PI*2); cx.fill();
+      // Planet body
+      const pg = cx.createRadialGradient(-12, -14, 4, 0, 0, 44);
+      pg.addColorStop(0, b.acc);
+      pg.addColorStop(0.55, b.color);
+      pg.addColorStop(1, '#0a0a14');
+      cx.fillStyle = pg;
+      cx.beginPath(); cx.arc(0, 0, 42, 0, Math.PI*2); cx.fill();
+      // Mechanical equator band — armored ring
+      cx.save();
+      cx.beginPath(); cx.arc(0,0,42,0,Math.PI*2); cx.clip();
+      cx.fillStyle = '#444';
+      cx.fillRect(-44, -7, 88, 14);
+      cx.strokeStyle = b.acc; cx.lineWidth = 1;
+      for (let s = -5; s <= 5; s++) {
+        cx.beginPath(); cx.moveTo(s*8, -7); cx.lineTo(s*8, 7); cx.stroke();
+      }
+      // Surface mottling per biome (col-tinted spots)
+      cx.globalAlpha = 0.45;
+      cx.fillStyle = shadeHex(b.color, -25);
+      for (let m = 0; m < 8; m++) {
+        const a = m * 0.9 + (b.moveTimer * 0.005);
+        cx.beginPath();
+        cx.arc(Math.cos(a) * 22, Math.sin(a) * 22 - 4,
+               5 + (m * 3) % 5, 0, Math.PI*2);
+        cx.fill();
+      }
+      cx.globalAlpha = 1;
+      cx.restore();
+      // Two robotic arms with end-mounted launchers
+      const armSwing = Math.sin(b.moveTimer * 0.04) * 10;
+      for (const dir of [-1, 1]) {
+        cx.save();
+        cx.translate(dir * 38, 12 + armSwing * dir);
+        cx.fillStyle = '#3a3a4a';
+        cx.fillRect(-22, -5, 22, 10);
+        cx.fillStyle = b.acc;
+        cx.fillRect(-3, -3, 3, 6);
+        // End launcher (cannon barrel)
+        cx.fillStyle = '#1a1a1a';
+        cx.fillRect(-2, -2, 14, 4);
+        // Targeting bead
+        cx.fillStyle = '#ff4444';
+        cx.beginPath();
+        cx.arc(12, 0, 1.6, 0, Math.PI*2); cx.fill();
+        cx.restore();
+      }
+      // Single eye/sensor on top
+      cx.fillStyle = b.acc;
+      cx.beginPath(); cx.arc(0, -28, 5, 0, Math.PI*2); cx.fill();
+      cx.fillStyle = '#000';
+      cx.beginPath(); cx.arc(0, -28, 2.5, 0, Math.PI*2); cx.fill();
+      cx.fillStyle = '#ffffff';
+      cx.beginPath(); cx.arc(-1, -29, 0.8, 0, Math.PI*2); cx.fill();
+      // Spinning ring (mechanical)
+      cx.strokeStyle = b.acc;
+      cx.lineWidth = 1.5;
+      cx.save();
+      cx.rotate(b.moveTimer * 0.03);
+      cx.beginPath();
+      cx.ellipse(0, 0, 56, 14, 0, 0, Math.PI*2); cx.stroke();
+      cx.restore();
       break;
     }
   }
@@ -9472,15 +9579,26 @@ const CODEX_BOSS_DESC = [
   '水瓶倾倒水流弹 + 周期落雨',
   '双鱼阴阳旋转 + 双向追击',
   '克隆战机: 镜像玩家飞机+90% 当前武器/僚机, 狂怒释放炸弹环',
+  // 14-23 变异行星 boss
+  '变异水星·烬: 冰冻子弹(命中冻结 1.5s) + 灰金属机壳',
+  '变异金星·焰: 熔岩地脉(空中持续掉落岩浆弹) + 红橙日冕',
+  '变异地球·寂: 重力倍增(玩家移速 ×0.7) + 蓝绿大陆',
+  '变异火星·赤: 锈蚀机体(玩家攻速 ×1.25 间隔) + 暗红斑驳',
+  '变异木星·涡: 风暴乱流(玩家随机晃动) + 棕橙气带',
+  '变异土星·环: 轨道环禁(每 4s 周身收缩弹环) + 双层光环',
+  '变异天王·寒: 极寒霜冻(周期短暂冻结玩家) + 浅蓝寒晶',
+  '变异海王·潮: 潮汐推力(持续上推玩家) + 深蓝压顶',
+  '变异冥王·渊: 血量渗漏(周期降级武器) + 紫黑环爆',
+  '变异虚空·噬: 虚空吞噬(屏幕中心吸力) + 黑紫消解',
 ];
 
+// pickup type key matches the in-game pickup.type for icon rendering parity
 const CODEX_PICKUPS = [
-  ['🔫 武器', '#ff8800', '替换为新型武器, 等级保留'],
-  ['★ 星星',  '#ffff00', '武器 +1 级 (Lv5 后再吃 → LV MAX 5s/次)'],
-  ['❤ 生命', '#ff4444', '+1 命'],
-  ['💥 核弹', '#aaaaff', '+1 核弹库存 (空格触发)'],
-  ['🛡 护盾', '#00ffcc', '获得 3 次抗弹护盾'],
-  ['僚机',    '#00ffcc', '召唤指定颜色僚机, 同色再吃可升级 (Lv max 5)'],
+  { type:'star',    name:'星星',     col:'#ffff00', desc:'武器 +1 级 (Lv5 后再吃 → LV MAX 5s/次)' },
+  { type:'life',    name:'生命',     col:'#ff4444', desc:'+1 命 (上限 3)' },
+  { type:'bomb',    name:'核弹',     col:'#aaaaff', desc:'+1 核弹库存 (空格触发, 上限 3)' },
+  { type:'shield',  name:'护盾',     col:'#00ffcc', desc:'+3 秒无敌, 可叠加秒数' },
+  { type:'wingman', name:'僚机',     col:'#00ffcc', desc:'召唤随机僚机, 同型再吃升级 (Lv max 5)' },
 ];
 
 function drawCodex() {
@@ -9725,6 +9843,11 @@ function drawCodexWingmen(startY) {
     '橘红火焰三连, Lv4+追加中央火炮',
     '银白双管平行弹, Lv3+中弹, Lv5+外侧副弹',
     '金色追踪弹, 自带追踪能力',
+    '回旋三连, 子弹返航式弧线轨迹',
+    '绿色波浪扩散, 弹幕带毒液视觉, 击中持续掉血',
+    '5 路宽幅闪电, 横向覆盖范围大',
+    '单发巨型 Holy Bolt + 双侧 spark, 高伤+追踪',
+    '紫色减速水晶巨弹, Lv3+附带双侧副弹',
   ];
   for (let i=0;i<WINGMAN_NAMES.length;i++) {
     const ry = startY + i*rowH + 6;
@@ -9917,29 +10040,29 @@ function drawCodexPickups(startY) {
   const rowH = 60;
   cx.textAlign='left';
   for (let i=0;i<CODEX_PICKUPS.length;i++) {
-    const [n, col, desc] = CODEX_PICKUPS[i];
+    const it = CODEX_PICKUPS[i];
     const ry = startY + i*rowH + 6;
     cx.fillStyle = 'rgba(20,40,60,0.45)';
     cx.fillRect(16, ry, W-32, rowH-8);
-    cx.fillStyle = col;
+    cx.fillStyle = it.col;
     cx.fillRect(16, ry, 4, rowH-8);
-    // Thumbnail with glowing disc
     cx.fillStyle = '#04101a';
     cx.fillRect(26, ry+4, 44, rowH-16);
-    cx.strokeStyle = col+'88'; cx.lineWidth=0.6;
+    cx.strokeStyle = it.col+'88'; cx.lineWidth=0.6;
     cx.strokeRect(26.5, ry+4.5, 43, rowH-17);
+    // Render the SAME icon used in-game by routing through drawPickupIcon
+    // with a stub pickup object positioned at the thumbnail center.
     const tx = 48, ty = ry + (rowH-8)/2;
-    const pg = cx.createRadialGradient(tx, ty, 1, tx, ty, 12);
-    pg.addColorStop(0, '#ffffff'); pg.addColorStop(0.5, col); pg.addColorStop(1, col+'00');
-    cx.fillStyle = pg;
-    cx.beginPath(); cx.arc(tx, ty, 12, 0, Math.PI*2); cx.fill();
-    // Text shifted right
-    cx.fillStyle = col;
+    const stub = { type: it.type, value: it.type === 'wingman' ? 0 : 1,
+                   px: tx, py: ty, x: tx, y: ty, bob: 0 };
+    drawPickupIcon(stub);
+    // Name + description
+    cx.fillStyle = it.col;
     cx.font="bold 13px 'Courier New', monospace";
-    cx.fillText(n, 80, ry+24);
+    cx.fillText(it.name, 80, ry+24);
     cx.fillStyle = '#cccccc';
     cx.font="10px 'Courier New', monospace";
-    cx.fillText(desc, 80, ry+44);
+    cx.fillText(it.desc, 80, ry+44);
   }
   return CODEX_PICKUPS.length * rowH + 20;
 }
@@ -10127,12 +10250,16 @@ function drawShopPlanes() {
     // Owned mark or price
     if(owned){
       cx.fillStyle='#00ff88';cx.font="10px 'Courier New'";
-      cx.fillText(isP1?'[ 出战 ]':'✓',(bx+cw/2)|0,(by+90)|0);
+      cx.fillText(isP1?'[ 出战 ]':'✓',(bx+cw/2)|0,(by+88)|0);
     } else {
       cx.fillStyle=skin[2]==='d'?'#44aaff':'#ffcc00';cx.font="10px 'Courier New'";
-      cx.fillText((skin[2]==='d'?'💎':'🪙')+skin[1],(bx+cw/2)|0,(by+90)|0);
+      cx.fillText((skin[2]==='d'?'💎':'🪙')+skin[1],(bx+cw/2)|0,(by+88)|0);
     }
-    if(isHL){cx.fillStyle='#88ccff';cx.font="9px 'Courier New'";cx.fillText('▶选中◀',(bx+cw/2)|0,(by+102)|0);}
+    // Bound weapon name (always visible — buy or owned)
+    const wIdx = planeWeaponIdx(i);
+    cx.fillStyle = '#88ccee';
+    cx.font="bold 8px 'Courier New', monospace";
+    cx.fillText('🔫 ' + WEAPON_NAMES[wIdx], (bx+cw/2)|0, (by+100)|0);
     cx.textAlign='left';
   }
   cx.restore();
@@ -10480,14 +10607,22 @@ function clickShop(mx,my) {
 function equipSelected() {
   if(shopTab===0&&shopSelectedPlane>=0&&save.planes[shopSelectedPlane]){
     save.selP1=shopSelectedPlane;
-    // Sync title showcase to the equipped plane so both views show the same plane
     const owned = ownedPlaneIndices();
     const idx = owned.indexOf(shopSelectedPlane);
     if (idx >= 0) showcaseIdx = idx;
+    // Live-apply: when entered shop from in-game, swap the active plane's skin
+    // and re-bind its weapon so the new equipment takes effect immediately.
+    if (_shopReturnTo === 'game' && players[0]) {
+      players[0].skinIdx = shopSelectedPlane;
+      players[0].weapon = planeWeaponIdx(shopSelectedPlane);
+    }
     writeSave(); SFX.buySuccess();
   }
   if(shopTab===1&&shopSelectedBG>=0&&save.bgs[shopSelectedBG]){
-    save.selBG=shopSelectedBG; writeSave(); SFX.buySuccess();
+    save.selBG=shopSelectedBG;
+    // Refresh the in-game background star/terrain layer if shop opened mid-run
+    if (_shopReturnTo === 'game') initBGStars(BG_SKINS[save.selBG][3]);
+    writeSave(); SFX.buySuccess();
   }
 }
 
