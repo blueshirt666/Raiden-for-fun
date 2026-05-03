@@ -5396,8 +5396,17 @@ function updateEnemy(e) {
       // Spiked diamond hull with glowing core; flashes red while fuse counts down.
       const fusing = e.fuse > 0;
       const flash = fusing ? (Math.sin(e._pulse || 0) * 0.5 + 0.5) : 0;
-      // Outer warning ring while fusing
+      // Dashed AOE preview ring (70px blast radius) — matches neutron-star style
       if (fusing) {
+        cx.save();
+        cx.setLineDash([6, 4]);
+        cx.lineDashOffset = -e.moveTimer * 0.5;
+        cx.strokeStyle = `rgba(255,80,40,${0.65 + flash * 0.3})`;
+        cx.lineWidth = 1.6;
+        cx.beginPath(); cx.arc(0, 0, 70, 0, Math.PI*2); cx.stroke();
+        cx.setLineDash([]);
+        cx.restore();
+        // Inner pulsing rings
         cx.strokeStyle = `rgba(255,80,40,${0.5 + flash * 0.5})`;
         cx.lineWidth = 2;
         cx.beginPath(); cx.arc(0, 0, 18 + flash * 14, 0, Math.PI*2); cx.stroke();
@@ -9096,11 +9105,20 @@ function drawHUD() {
         cx.fillText('僚机'+(i+1)+' —', px, ly);
       }
     }
-    // Shield seconds — placed BELOW the wingman list (right-side status column)
-    if ((p.shieldFrames || 0) > 0) {
-      cx.fillStyle = '#00ffcc';
+    // Shield seconds — always-visible slot below the wingman list (right column)
+    {
+      const sf = p.shieldFrames || 0;
+      const sy = yb + 38 + 2*11 + 2;
       cx.font = "bold 11px 'Courier New', monospace";
-      cx.fillText('🛡 ' + Math.ceil(p.shieldFrames/60) + 's', px, yb + 38 + 2*11 + 2);
+      if (sf > 0) {
+        // Active — bright cyan + pulse outline so the buff is unmistakable
+        const a = 0.55 + Math.sin(frame * 0.18) * 0.45;
+        cx.fillStyle = `rgba(0,255,${(180 + 60*a)|0},1)`;
+        cx.fillText('🛡 ' + Math.ceil(sf/60) + 's', px, sy);
+      } else {
+        cx.fillStyle = '#334455';
+        cx.fillText('🛡 —', px, sy);
+      }
     }
     // Equipped runes — 2 lines under the wingman + shield block (player 1 only)
     if (p.pNum === 1) {
