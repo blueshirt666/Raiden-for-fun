@@ -7652,6 +7652,8 @@ function drawBossShape(b) {
     // ─── 14-23: 变异行星 boss — mechanical-modified planet aesthetic ──────
     case 13: case 14: case 15: case 16: case 17:
     case 18: case 19: case 20: case 21: case 22: {
+      // Biome-specific surface features by boss type (variant planet 0..9)
+      const planetIdx = b.bossType - 13;
       // Outer atmosphere halo
       const haloG = cx.createRadialGradient(0,0,18,0,0,80);
       haloG.addColorStop(0, b.color+'aa'); haloG.addColorStop(1, b.color+'00');
@@ -7664,6 +7666,178 @@ function drawBossShape(b) {
       pg.addColorStop(1, '#0a0a14');
       cx.fillStyle = pg;
       cx.beginPath(); cx.arc(0, 0, 42, 0, Math.PI*2); cx.fill();
+      // ─── Per-biome surface details ──────────────────────────────────
+      cx.save();
+      cx.beginPath(); cx.arc(0,0,42,0,Math.PI*2); cx.clip();
+      const _h = (n) => ((n * 9301 + 49297) % 233280) / 233280;
+      switch (planetIdx) {
+        case 0: { // 水星·烬 — heavy cratering + ice cracks
+          cx.globalAlpha = 0.55;
+          cx.fillStyle = '#1a1a1a';
+          for (let i = 0; i < 9; i++) {
+            const a = _h(i*7) * Math.PI*2, r = _h(i*13) * 32;
+            const cR = 2 + _h(i*19) * 4;
+            cx.beginPath(); cx.arc(Math.cos(a)*r, Math.sin(a)*r, cR, 0, Math.PI*2); cx.fill();
+            cx.strokeStyle = '#aabbcc'; cx.lineWidth = 0.6;
+            cx.beginPath(); cx.arc(Math.cos(a)*r - 1, Math.sin(a)*r - 1, cR*0.9, Math.PI*0.85, Math.PI*1.85); cx.stroke();
+          }
+          // Ice cracks
+          cx.strokeStyle = '#88ccee'; cx.lineWidth = 0.8;
+          for (let i = 0; i < 4; i++) {
+            cx.beginPath();
+            const sx = -30 + i*15, sy = -30 + i*5;
+            cx.moveTo(sx, sy); cx.lineTo(sx + 12, sy + 18); cx.lineTo(sx - 5, sy + 32);
+            cx.stroke();
+          }
+          break;
+        }
+        case 1: { // 金牛·焰 → 金星·焰 — lava swirls + flame eruptions
+          cx.globalAlpha = 0.6;
+          cx.fillStyle = '#cc4400';
+          for (let i = 0; i < 5; i++) {
+            const a = i * 1.3 + b.moveTimer * 0.01;
+            cx.beginPath();
+            cx.ellipse(Math.cos(a) * 18, Math.sin(a) * 18, 12, 5, a, 0, Math.PI*2);
+            cx.fill();
+          }
+          // Flame plumes
+          cx.fillStyle = '#ffaa44';
+          for (let i = 0; i < 3; i++) {
+            const ag = (b.moveTimer*0.02 + i*2) % (Math.PI*2);
+            const ex = Math.cos(ag)*30, ey = Math.sin(ag)*30;
+            cx.beginPath();
+            cx.moveTo(ex, ey); cx.lineTo(ex + Math.cos(ag)*10, ey + Math.sin(ag)*10);
+            cx.lineTo(ex + Math.cos(ag+0.3)*6, ey + Math.sin(ag+0.3)*6);
+            cx.closePath(); cx.fill();
+          }
+          break;
+        }
+        case 2: { // 地球·寂 — green continents + blue oceans + clouds
+          cx.globalAlpha = 0.6;
+          cx.fillStyle = '#2266aa';
+          cx.beginPath(); cx.arc(0,0,38,0,Math.PI*2); cx.fill();
+          cx.fillStyle = '#3b8855';
+          for (let k = 0; k < 4; k++) {
+            const ang = k * 1.5 + b.moveTimer*0.005;
+            cx.beginPath();
+            for (let n = 0; n < 12; n++) {
+              const a = (n/12)*Math.PI*2;
+              const r = 10 + _h(k*30+n) * 10;
+              const px = Math.cos(ang)*15 + Math.cos(a)*r;
+              const py = Math.sin(ang)*15 + Math.sin(a)*r*0.6;
+              if (n===0) cx.moveTo(px, py); else cx.lineTo(px, py);
+            }
+            cx.closePath(); cx.fill();
+          }
+          // Cloud bands
+          cx.globalAlpha = 0.3;
+          cx.fillStyle = '#ffffff';
+          for (let i = -1; i <= 1; i++) {
+            cx.fillRect(-40, i*20 - 1, 80, 2);
+          }
+          break;
+        }
+        case 3: { // 火星·赤 — rust plates + canyons
+          cx.globalAlpha = 0.55;
+          cx.fillStyle = '#5a1a08';
+          for (let i = 0; i < 5; i++) {
+            const a = i * 1.2;
+            cx.beginPath();
+            cx.ellipse(Math.cos(a)*14, Math.sin(a)*14, 10, 6, a*0.5, 0, Math.PI*2);
+            cx.fill();
+          }
+          cx.strokeStyle = '#3a0a04'; cx.lineWidth = 1;
+          for (let i = 0; i < 3; i++) {
+            cx.beginPath();
+            cx.moveTo(-30 + i*20, -20); cx.lineTo(-22 + i*20, 10);
+            cx.lineTo(-30 + i*20, 25); cx.stroke();
+          }
+          break;
+        }
+        case 4: { // 木星·涡 — banded clouds + Great Red Spot
+          cx.globalAlpha = 0.55;
+          for (let bi = -3; bi <= 3; bi++) {
+            cx.fillStyle = (bi & 1) ? shadeHex(b.color, 30) : shadeHex(b.color, -30);
+            const yy = bi * 11;
+            cx.fillRect(-42, yy - 4, 84, 8);
+          }
+          // Great Red Spot
+          cx.globalAlpha = 0.7;
+          cx.fillStyle = '#aa3322';
+          cx.beginPath();
+          cx.ellipse(-8, 12, 10, 6, -0.2, 0, Math.PI*2);
+          cx.fill();
+          cx.fillStyle = '#dd5533';
+          cx.beginPath(); cx.ellipse(-8, 12, 5, 3, -0.2, 0, Math.PI*2); cx.fill();
+          break;
+        }
+        case 5: { // 土星·环 — emphasised ring (already drawn outside, here add cloud bands)
+          cx.globalAlpha = 0.5;
+          for (let bi = -2; bi <= 2; bi++) {
+            cx.fillStyle = (bi & 1) ? shadeHex(b.color, 22) : shadeHex(b.color, -22);
+            const yy = bi * 14;
+            cx.fillRect(-42, yy - 5, 84, 9);
+          }
+          break;
+        }
+        case 6: { // 天王·寒 — ice crystals + sideways tilt
+          cx.globalAlpha = 0.55;
+          cx.fillStyle = '#88ccee';
+          for (let i = 0; i < 7; i++) {
+            const ag = i * 0.9 + b.moveTimer*0.005;
+            const ex = Math.cos(ag)*18, ey = Math.sin(ag)*18;
+            cx.beginPath();
+            cx.moveTo(ex, ey-4); cx.lineTo(ex-4, ey); cx.lineTo(ex, ey+4); cx.lineTo(ex+4, ey);
+            cx.closePath(); cx.fill();
+          }
+          break;
+        }
+        case 7: { // 海王·潮 — deep ocean waves
+          cx.globalAlpha = 0.5;
+          cx.fillStyle = '#1a4488';
+          cx.fillRect(-42, -42, 84, 84);
+          cx.strokeStyle = '#88ccff'; cx.lineWidth = 1;
+          for (let bi = -2; bi <= 2; bi++) {
+            const yy = bi * 12 + Math.sin(b.moveTimer*0.04 + bi)*2;
+            cx.beginPath();
+            for (let xx = -42; xx <= 42; xx += 8) {
+              const wy = yy + Math.sin((xx+b.moveTimer*0.5)*0.1)*2.5;
+              if (xx === -42) cx.moveTo(xx, wy); else cx.lineTo(xx, wy);
+            }
+            cx.stroke();
+          }
+          break;
+        }
+        case 8: { // 冥王·渊 — dark cracks + glowing core
+          cx.globalAlpha = 0.5;
+          cx.strokeStyle = '#ff2244'; cx.lineWidth = 1.4;
+          for (let i = 0; i < 5; i++) {
+            const ag = i * 1.25 + b.moveTimer * 0.005;
+            cx.beginPath();
+            cx.moveTo(0, 0);
+            cx.lineTo(Math.cos(ag)*36, Math.sin(ag)*36);
+            cx.stroke();
+          }
+          cx.globalAlpha = 0.7;
+          const cgGlow = cx.createRadialGradient(0,0,1,0,0,12);
+          cgGlow.addColorStop(0,'#ff4488'); cgGlow.addColorStop(1,'#220011');
+          cx.fillStyle = cgGlow;
+          cx.beginPath(); cx.arc(0,0,12,0,Math.PI*2); cx.fill();
+          break;
+        }
+        case 9: { // 虚空·噬 — pulsing black hole core
+          cx.globalAlpha = 0.7;
+          cx.fillStyle = '#000';
+          cx.beginPath(); cx.arc(0,0,18 + Math.sin(b.moveTimer*0.08)*2, 0, Math.PI*2); cx.fill();
+          cx.strokeStyle = '#aa00ff'; cx.lineWidth = 1.4;
+          for (let r = 22; r <= 38; r += 6) {
+            cx.beginPath(); cx.arc(0,0,r,0,Math.PI*2); cx.stroke();
+          }
+          break;
+        }
+      }
+      cx.globalAlpha = 1;
+      cx.restore();
       // Mechanical equator band — armored ring
       cx.save();
       cx.beginPath(); cx.arc(0,0,42,0,Math.PI*2); cx.clip();
@@ -7673,35 +7847,63 @@ function drawBossShape(b) {
       for (let s = -5; s <= 5; s++) {
         cx.beginPath(); cx.moveTo(s*8, -7); cx.lineTo(s*8, 7); cx.stroke();
       }
-      // Surface mottling per biome (col-tinted spots)
-      cx.globalAlpha = 0.45;
-      cx.fillStyle = shadeHex(b.color, -25);
-      for (let m = 0; m < 8; m++) {
-        const a = m * 0.9 + (b.moveTimer * 0.005);
-        cx.beginPath();
-        cx.arc(Math.cos(a) * 22, Math.sin(a) * 22 - 4,
-               5 + (m * 3) % 5, 0, Math.PI*2);
-        cx.fill();
-      }
-      cx.globalAlpha = 1;
       cx.restore();
-      // Two robotic arms with end-mounted launchers
+      // ─── Two robotic arms with end-mounted launchers ────────────────
+      // Arms now reach out toward the player so the threat is readable.
+      const tgt = players.find(pp => !pp.dead);
       const armSwing = Math.sin(b.moveTimer * 0.04) * 10;
       for (const dir of [-1, 1]) {
         cx.save();
+        // Aim arm angle toward player if visible
+        let armAng = 0;
+        if (tgt) {
+          const dx0 = tgt.x - (b.x + dir*38), dy0 = tgt.y - (b.y + 12);
+          armAng = Math.atan2(dy0, dx0);
+          // Constrain a bit so arms still look mounted on the equator
+          armAng = clamp(armAng, dir > 0 ? -0.5 : Math.PI - 0.5, dir > 0 ? 1.2 : Math.PI + 1.2);
+        }
         cx.translate(dir * 38, 12 + armSwing * dir);
-        cx.fillStyle = '#3a3a4a';
-        cx.fillRect(-22, -5, 22, 10);
+        cx.rotate(armAng);
+        // Arm shoulder (chunky cylinder) + 3 segmented sections
+        cx.fillStyle = '#2a2a3a';
+        cx.fillRect(0, -6, 28, 12);
+        cx.strokeStyle = '#666'; cx.lineWidth = 0.7;
+        cx.strokeRect(0.5, -5.5, 27, 11);
+        // Hydraulic pistons
+        cx.fillStyle = '#888';
+        cx.fillRect(4, -5, 18, 2);
+        cx.fillRect(4, 3, 18, 2);
+        // Segment joints
         cx.fillStyle = b.acc;
-        cx.fillRect(-3, -3, 3, 6);
-        // End launcher (cannon barrel)
+        cx.beginPath(); cx.arc(10, 0, 3, 0, Math.PI*2); cx.fill();
+        cx.beginPath(); cx.arc(20, 0, 3, 0, Math.PI*2); cx.fill();
+        // End launcher (cannon barrel + mount)
         cx.fillStyle = '#1a1a1a';
-        cx.fillRect(-2, -2, 14, 4);
-        // Targeting bead
-        cx.fillStyle = '#ff4444';
-        cx.beginPath();
-        cx.arc(12, 0, 1.6, 0, Math.PI*2); cx.fill();
+        cx.fillRect(28, -3, 14, 6);
+        cx.fillStyle = '#444';
+        cx.fillRect(40, -4, 4, 8);
+        // Pulsing red targeting bead at the tip
+        const beadPulse = 0.5 + Math.sin(b.moveTimer * 0.2) * 0.5;
+        cx.fillStyle = `rgba(255,40,40,${0.55 + beadPulse * 0.45})`;
+        cx.beginPath(); cx.arc(44, 0, 2.4, 0, Math.PI*2); cx.fill();
         cx.restore();
+        // Targeting laser line from the bead to the player (in cooldown)
+        if (tgt) {
+          const beadX = b.x + dir*38 + Math.cos(armAng) * 44;
+          const beadY = b.y + 12 + armSwing * dir + Math.sin(armAng) * 44;
+          cx.save();
+          cx.globalAlpha = 0.12 + Math.sin(b.moveTimer * 0.3) * 0.1;
+          cx.strokeStyle = '#ff3344';
+          cx.setLineDash([4, 4]);
+          cx.lineDashOffset = -b.moveTimer * 0.6;
+          cx.lineWidth = 1;
+          cx.beginPath();
+          cx.moveTo(beadX - b.x, beadY - b.y);
+          cx.lineTo(tgt.x - b.x, tgt.y - b.y);
+          cx.stroke();
+          cx.setLineDash([]);
+          cx.restore();
+        }
       }
       // Single eye/sensor on top
       cx.fillStyle = b.acc;
@@ -7710,13 +7912,18 @@ function drawBossShape(b) {
       cx.beginPath(); cx.arc(0, -28, 2.5, 0, Math.PI*2); cx.fill();
       cx.fillStyle = '#ffffff';
       cx.beginPath(); cx.arc(-1, -29, 0.8, 0, Math.PI*2); cx.fill();
-      // Spinning ring (mechanical)
+      // Spinning ring (mechanical) — wider for 土星
       cx.strokeStyle = b.acc;
-      cx.lineWidth = 1.5;
+      cx.lineWidth = planetIdx === 5 ? 3 : 1.5;
       cx.save();
       cx.rotate(b.moveTimer * 0.03);
       cx.beginPath();
-      cx.ellipse(0, 0, 56, 14, 0, 0, Math.PI*2); cx.stroke();
+      cx.ellipse(0, 0, planetIdx === 5 ? 64 : 56, planetIdx === 5 ? 18 : 14, 0, 0, Math.PI*2); cx.stroke();
+      // 土星 second outer ring
+      if (planetIdx === 5) {
+        cx.lineWidth = 1;
+        cx.beginPath(); cx.ellipse(0, 0, 72, 22, 0, 0, Math.PI*2); cx.stroke();
+      }
       cx.restore();
       break;
     }
