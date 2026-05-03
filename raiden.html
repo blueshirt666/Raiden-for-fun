@@ -263,7 +263,7 @@ const RUNE_DEFS = [
 ];
 function runeProb(key) {
   // Boss debuff: 处女·维戈 → all rune procs disabled while alive
-  if (activeBossDebuff() === 'noRunes') return 0;
+  if (hasBossDebuff('noRunes')) return 0;
   const lv = (save.runes && save.runes[key]) || 0;
   if (lv <= 0) return 0;
   const def = RUNE_DEFS.find(r => r.key === key);
@@ -1429,12 +1429,16 @@ function maxBlackHolesNow() {
 }
 function trySpawnBlackHole() {
   if (blackHoles.length >= maxBlackHolesNow()) return;
-  const margin = 70;
-  for (let attempt = 0; attempt < 12; attempt++) {
-    const x = rnd(margin, W - margin), y = rnd(margin, H - 220);
+  // Holes can spawn anywhere on screen — including very edges and bottom HUD.
+  const margin = 30;
+  for (let attempt = 0; attempt < 14; attempt++) {
+    const x = rnd(margin, W - margin), y = rnd(margin, H - 60);
     const p = players[0];
-    if (p && Math.hypot(p.x - x, p.y - y) < 140) continue;
-    const tooClose = blackHoles.some(h => Math.hypot(h.x - x, h.y - y) < 180);
+    if (p && Math.hypot(p.x - x, p.y - y) < 110) continue;
+    // Don't spawn on top of the boss body
+    if (boss && boss.alive && Math.hypot(boss.x - x, boss.y - y) < 90) continue;
+    if (boss2 && boss2.alive && Math.hypot(boss2.x - x, boss2.y - y) < 90) continue;
+    const tooClose = blackHoles.some(h => Math.hypot(h.x - x, h.y - y) < 160);
     if (tooClose) continue;
     // HP = 0.4× current-level boss baseline (was 0.5×, reduced 20% per spec)
     const C = save.console || defaultConsole();
@@ -1467,11 +1471,24 @@ function updateBlackHoles() {
     // Drift slowly, occasionally nudging direction
     if (h.spinT % 90 === 0) { h.vx = rnd(-0.3, 0.3); h.vy = rnd(-0.2, 0.3); }
     h.x += h.vx; h.y += h.vy;
-    // Stay on-screen by gentle reflection
-    if (h.x < 50)         { h.x = 50;         h.vx = Math.abs(h.vx); }
-    if (h.x > W - 50)     { h.x = W - 50;     h.vx = -Math.abs(h.vx); }
-    if (h.y < 50)         { h.y = 50;         h.vy = Math.abs(h.vy); }
-    if (h.y > H - 220)    { h.y = H - 220;    h.vy = -Math.abs(h.vy); }
+    // Stay on-screen by gentle reflection — allow edges
+    if (h.x < 20)         { h.x = 20;         h.vx = Math.abs(h.vx); }
+    if (h.x > W - 20)     { h.x = W - 20;     h.vx = -Math.abs(h.vx); }
+    if (h.y < 20)         { h.y = 20;         h.vy = Math.abs(h.vy); }
+    if (h.y > H - 40)     { h.y = H - 40;     h.vy = -Math.abs(h.vy); }
+    // Push hole away from boss body so it doesn't sit on top of the boss
+    const pushAwayFromBoss = (b) => {
+      if (!b || !b.alive) return;
+      const dx = h.x - b.x, dy = h.y - b.y;
+      const d = Math.hypot(dx, dy);
+      if (d < 90 && d > 0.1) {
+        const k = (90 - d) * 0.04;   // smooth nudge per frame
+        h.x += (dx / d) * k;
+        h.y += (dy / d) * k;
+      }
+    };
+    pushAwayFromBoss(boss);
+    pushAwayFromBoss(boss2);
     // Player: pulled in but takes NO damage. The pull adds extra inertial drag
     // (visible slow-down) while keeping the player's own speed > pull strength
     // so they can always escape with sustained input.
@@ -1744,6 +1761,7 @@ let level = 1;
 let waveTimer = 0;
 let killCount = 0;
 let bossActive = false;
+let _drawingBoss2 = false;
 let boss = null;
 let bombFlash = 0;
 let shakeT = 0, shakeM = 0;
@@ -3886,7 +3904,8 @@ function updatePlayer(p, keys) {
   }
   if (p.invTimer>0) p.invTimer--;
   if (p.shootTimer>0) p.shootTimer--;
-  if (p.shield>0) p.shield--;
+  if (p.shieldFrames > 0) { p.shieldFrames--; p.shield = p.shieldFrames; }
+  else if (p.shield > 0) p.shield--;
   // Lv MAX countdown — when it ends, weapon falls back to Lv5 (still maxed level)
   if (p.weaponMax > 0) {
     p.weaponMax--;
@@ -3914,12 +3933,26 @@ function updatePlayer(p, keys) {
   const sY = (typeof save.moveSensY === 'number') ? save.moveSensY : 1;
   // Black hole gravity-well — closer to a hole's core = slower input response.
   const bhDamp = (typeof p._bhDamp === 'number') ? p._bhDamp : 1;
-  // Per-boss debuffs that affect movement
-  const dbf = activeBossDebuff();
+  // Per-boss debuffs that affect movement (dual boss = both stack)
   let speedMul = 1;
   let invertX = 1;
-  if (dbf === 'speedSlow') speedMul = 0.6;
-  if (dbf === 'invertX')   invertX = -1;
+  if (hasBossDebuff('speedSlow')) speedMul = 0.6;
+  if (hasBossDebuff('invertX'))   invertX = -1;
+  // Mutant boss debuffs that influence movement
+  if (hasBossDebuff('gravity'))   speedMul *= 0.7;        // 重力倍增 — 移动迟滞
+  if (hasBossDebuff('cyclone'))   {                        // 风暴乱流 — 随机晃动
+    p.x += Math.sin(frame * 0.15 + p.y * 0.05) * 0.7;
+  }
+  if (hasBossDebuff('tidePush')) {                         // 潮汐推力 — 持续向上推
+    p.y -= 0.4;
+  }
+  if (hasBossDebuff('voidPull') && players[0]) {           // 虚空吞噬 — 屏幕中心吸力
+    const dx = (W/2) - p.x, dy = (H/2 + 80) - p.y;
+    const d = Math.hypot(dx, dy);
+    if (d > 0.5) { p.x += (dx/d) * 0.4; p.y += (dy/d) * 0.4; }
+  }
+  // 冰冻子弹 (iceBullet) — handled in hitPlayer (sets p._frozen frames)
+  if (p._frozen > 0) { p._frozen--; speedMul *= 0.15; }
   p.x += dx*p.speed*sX*bhDamp*speedMul*invertX;
   p.y += dy*p.speed*sY*bhDamp*speedMul;
   p._bhDamp = 1;  // reset for next frame
@@ -3961,7 +3994,7 @@ function mkB(x,y,vx,vy,color,w,h,owner,dmg) {
   const wIdx = isPlayer ? (owner.weapon || 0) : -1;
   const eachWpn = (isPlayer && C.weaponDmgEach && typeof C.weaponDmgEach[wIdx] === 'number') ? C.weaponDmgEach[wIdx] : 1;
   // Boss debuff: 金牛·陶罗斯 → player bullet damage ×0.75
-  const _dbfDmg = (isPlayer && activeBossDebuff() === 'dmgDown') ? 0.75 : 1;
+  const _dbfDmg = (isPlayer && hasBossDebuff('dmgDown')) ? 0.75 : 1;
   let finalDmg = (dmg || 10) * (isPlayer ? C.weaponDmgMul : 1) * eachWpn * _dbfDmg;
   let crit = false;
   // Crit rune: roll at bullet creation, doubles damage (×critDmgMul), gold tint
@@ -4207,7 +4240,7 @@ function fireBullet(p) {
   // Per-weapon fire-rate override (×interval; <1 = faster)
   const eachWpnFire = (C.weaponFireEach && typeof C.weaponFireEach[p.weapon] === 'number') ? C.weaponFireEach[p.weapon] : 1;
   // Boss debuff: 狮子·利奥 → fire rate −33% (interval ×1.5)
-  const _dbfFire = activeBossDebuff() === 'fireSlow' ? 1.5 : 1;
+  const _dbfFire = (hasBossDebuff('fireSlow') ? 1.5 : 1) * (hasBossDebuff('rustHull') ? 1.25 : 1);
   p.shootTimer=Math.max(1, Math.round((delays[p.weapon]-(wl-1)*1) * C.fireRateMul * eachWpnFire * _dbfFire));
 
   // ─ LV MAX 超级形态 (5s) ─
@@ -4404,7 +4437,7 @@ function updateEnemyBullets() {
       continue;
     }
     // Aim debuff (射手·萨吉塔): subtle homing on every non-cancelable bullet.
-    if (!b.cancelable && activeBossDebuff() === 'aim') _aimEnemyBullet(b);
+    if (!b.cancelable && hasBossDebuff('aim')) _aimEnemyBullet(b);
     // 'fast' bullets (e.g. sniper rounds) skip the global slowdown so they
     // read as truly high-velocity projectiles.
     const sm = b.fast ? 1 : ENEMY_BULLET_SPD_GLOBAL;
@@ -4512,7 +4545,7 @@ function doBomb(p) {
     killEnemy(e);
   }
   // Boss debuff: 双鱼·皮西斯 → bomb damage halved
-  const _dbfBomb = activeBossDebuff() === 'noBomb' ? 0.5 : 1;
+  const _dbfBomb = hasBossDebuff('noBomb') ? 0.5 : 1;
   // Boss takes ~3% of MAX hp (greatly reduced — bombs no longer one-shot bosses)
   if(boss&&boss.alive){
     const dmg = Math.ceil(boss.maxHp * 0.03 * _dbfBomb);
@@ -5779,6 +5812,18 @@ const BOSS_DEFS = [
   {name:'双鱼·皮西斯',  color:'#ff66aa', acc:'#aaffff', hp:3500, debuff:'noBomb',     debuffName:'核弹弱化'},
   // 13: clone boss — full mirror of player's plane at 90% strength
   {name:'克隆战机·镜',  color:'#ff66aa', acc:'#ffaaff', hp:3300, clone:true, debuff:'mirror', debuffName:'镜像之力'},
+  // 14-23: 变异行星 series — 10 unique mutant planets, each with a distinct
+  // freshly-coined debuff (no overlap with the zodiac set).
+  {name:'变异水星·烬',color:'#cc7733', acc:'#ffaa44', hp:3700, debuff:'iceBullet',  debuffName:'冰冻子弹', mutant:true},
+  {name:'变异金星·焰',color:'#ffaa55', acc:'#ffeeaa', hp:3900, debuff:'lavaField',  debuffName:'熔岩地脉', mutant:true},
+  {name:'变异地球·寂',color:'#3388aa', acc:'#aaeecc', hp:4100, debuff:'gravity',    debuffName:'重力倍增', mutant:true},
+  {name:'变异火星·赤',color:'#aa3322', acc:'#ff8855', hp:4300, debuff:'rustHull',   debuffName:'锈蚀机体', mutant:true},
+  {name:'变异木星·涡',color:'#bb8855', acc:'#ffcc88', hp:4500, debuff:'cyclone',    debuffName:'风暴乱流', mutant:true},
+  {name:'变异土星·环',color:'#aa8866', acc:'#ffeebb', hp:4700, debuff:'ringPrison', debuffName:'轨道环禁', mutant:true},
+  {name:'变异天王·寒',color:'#88ccff', acc:'#ddeeff', hp:4900, debuff:'frostbite',  debuffName:'极寒霜冻', mutant:true},
+  {name:'变异海王·潮',color:'#3366cc', acc:'#88ccff', hp:5100, debuff:'tidePush',   debuffName:'潮汐推力', mutant:true},
+  {name:'变异冥王·渊',color:'#552288', acc:'#aa66ff', hp:5300, debuff:'hpLeak',     debuffName:'血量渗漏', mutant:true},
+  {name:'变异虚空·噬',color:'#000033', acc:'#aa44aa', hp:5800, debuff:'voidPull',   debuffName:'虚空吞噬', mutant:true},
 ];
 
 // Endless 难度上限 (hell plateau) — 到此分以上难度不再升, 但内容随机化
@@ -5896,10 +5941,20 @@ function spawnSecondBoss() {
 // Helper: returns active boss debuff key (from primary first, otherwise boss2).
 // Used by player movement / fire-rate / rune logic.
 function activeBossDebuff() {
+  // Backward-compat single-debuff shortcut (uses primary if alive).
   if (boss && boss.alive && boss.debuff) return boss.debuff;
   if (boss2 && boss2.alive && boss2.debuff) return boss2.debuff;
   return null;
 }
+// Returns the set of all currently active boss debuffs (primary + secondary)
+// so dual-boss fights stack BOTH debuffs.
+function activeBossDebuffs() {
+  const out = new Set();
+  if (boss && boss.alive && boss.debuff) out.add(boss.debuff);
+  if (boss2 && boss2.alive && boss2.debuff) out.add(boss2.debuff);
+  return out;
+}
+function hasBossDebuff(key) { return activeBossDebuffs().has(key); }
 
 function startBossMode() {
   bossMode = true; endlessMode = false; twoPlayer = false;
@@ -6015,7 +6070,6 @@ function updateBoss() {
   if (boss.debuff === 'venom' && (boss.moveTimer % 90 === 0)) {
     for (const p of players) {
       if (p.dead || p.invTimer > 0 || invincible) continue;
-      // Tiny tick: degrade weapon level instead of full life hit, every 1.5s
       if (p.weaponLevel > 1 && Math.random() < 0.35) {
         p.weaponLevel--;
         addFT('☠ 中毒 · 武器降级', p.x, p.y - 20, '#88ff44');
@@ -6024,6 +6078,56 @@ function updateBoss() {
       }
     }
   }
+  // Mutant boss ticks (only the primary triggers; secondary's same checks would double)
+  if (!boss._isSecondary) {
+    // 熔岩地脉 (lavaField) — periodic random lava drops fall from sky
+    if (hasBossDebuff('lavaField') && boss.moveTimer % 24 === 0) {
+      const lx = rnd(20, W - 20);
+      enemyBullets.push({
+        x: lx, y: -10, px: lx|0, py: -10,
+        vx: 0, vy: 3, alive: true, color: '#ff5522', fast: true, w: 6, h: 8
+      });
+    }
+    // 锈蚀机体 (rustHull) — every 2s, slow rate ×1.05 (compounds while alive)
+    if (hasBossDebuff('rustHull') && boss.moveTimer % 120 === 0) {
+      // Visual flash only; the actual fire-rate slow happens via shootTimer scaling at fireBullet
+      addFT('🦠 锈蚀', players[0]?players[0].x:W/2, (players[0]?players[0].y:H/2)-22, '#cc6622');
+    }
+    // 极寒霜冻 (frostbite) — slowly ticks frozen frames onto the player
+    if (hasBossDebuff('frostbite') && boss.moveTimer % 180 === 0) {
+      for (const p of players) {
+        if (p.dead) continue;
+        p._frozen = Math.max(p._frozen || 0, 30);
+        addFT('❄ 霜冻', p.x, p.y - 20, '#aaeeff');
+      }
+    }
+    // 血量渗漏 (hpLeak) — 2% chance per second to lose a weapon level
+    if (hasBossDebuff('hpLeak') && boss.moveTimer % 60 === 0 && Math.random() < 0.20) {
+      for (const p of players) {
+        if (p.dead) continue;
+        if (p.weaponLevel > 1) { p.weaponLevel--; addFT('💧 渗漏', p.x, p.y - 18, '#aa66ff'); }
+      }
+    }
+    // 轨道环禁 (ringPrison) — every 4s spawns a ring of slow bullets around the player
+    if (hasBossDebuff('ringPrison') && boss.moveTimer % 240 === 0) {
+      const tgt = players.find(p => !p.dead);
+      if (tgt) {
+        const cx0 = tgt.x, cy0 = tgt.y;
+        for (let k = 0; k < 12; k++) {
+          const a = (k/12) * Math.PI * 2;
+          enemyBullets.push({
+            x: cx0 + Math.cos(a) * 100, y: cy0 + Math.sin(a) * 100,
+            px: 0, py: 0,
+            vx: -Math.cos(a) * 0.6, vy: -Math.sin(a) * 0.6,
+            alive: true, color: '#ffeeaa'
+          });
+        }
+        addFT('🔗 环禁', tgt.x, tgt.y - 22, '#ffeeaa');
+      }
+    }
+  }
+  // 锈蚀机体 — apply +5% fire interval per stack while alive (no global stacking, just constant)
+  // (Implemented in fireBullet via hasBossDebuff('rustHull'))
   // Clamp
   boss.x=clamp(boss.x,60,W-60);
   boss.y=clamp(boss.y,40,H-100);
@@ -6531,12 +6635,29 @@ function drawBoss() {
     spawnExplosion(b.x + rnd(-40,40), b.y + rnd(-30,30), 'medium');
   }
 
+  // Skip the HP bar for the secondary boss — single combined bar is drawn
+  // by the primary call covering both bosses' total HP.
+  if (_drawingBoss2) return;
   // Boss HP bar — pushed below the score backdrop so name isn't covered
   const bpw=300, bpx=(W-bpw)/2, bpy=70;
-  const segs = b.barCount || 1;
-  const segHp = b.maxHp / segs;
-  const barsLeft = Math.max(1, Math.ceil(b.hp / segHp));
-  const fillRatio = clamp((b.hp - (barsLeft-1)*segHp) / segHp, 0, 1);
+  // Combined dual-boss math when boss2 is alive
+  const dual = (boss2 && boss2.alive);
+  let segs, segHp, barsLeft, fillRatio, bossNameLabel;
+  if (dual) {
+    segs = (b.barCount || 1) + (boss2.barCount || 1);
+    const totalMax = b.maxHp + boss2.maxHp;
+    const totalNow = b.hp + boss2.hp;
+    segHp = totalMax / segs;
+    barsLeft = Math.max(1, Math.ceil(totalNow / segHp));
+    fillRatio = clamp((totalNow - (barsLeft-1)*segHp) / segHp, 0, 1);
+    bossNameLabel = b.name + ' + ' + boss2.name;
+  } else {
+    segs = b.barCount || 1;
+    segHp = b.maxHp / segs;
+    barsLeft = Math.max(1, Math.ceil(b.hp / segHp));
+    fillRatio = clamp((b.hp - (barsLeft-1)*segHp) / segHp, 0, 1);
+    bossNameLabel = b.name;
+  }
   // Per-segment color palette (rich → faded as bars run out)
   const SEG_COLORS = ['#ff0033','#ff4400','#ff8800','#ffcc00','#ffff44','#aaff00','#00ff66','#00ffcc','#00ccff'];
   const curIdx = Math.max(0, barsLeft - 1);
@@ -6548,7 +6669,7 @@ function drawBoss() {
   cx.fillStyle='rgba(0,0,0,0.85)'; cx.fillRect(bpx-2,bpy-16,bpw+4,30);
   // Title row
   cx.fillStyle='#fff'; cx.font="bold 11px sans-serif"; cx.textAlign='center';
-  cx.fillText('★ '+b.name+' ★', (W/2)|0, bpy-3);
+  cx.fillText('★ '+bossNameLabel+' ★', (W/2)|0, bpy-3);
   // Drained portion shows the NEXT segment's color (instead of black)
   cx.fillStyle = nextColor;
   cx.fillRect(bpx|0, bpy|0, bpw, 10);
@@ -7114,13 +7235,18 @@ function collectPickups() {
             break;
           case 'shield':
             // Boss debuff: 巨蟹·坎瑟尔 → shield pickups do nothing while alive
-            if (activeBossDebuff() === 'noShield') {
+            if (hasBossDebuff('noShield')) {
               addFT('护盾失效', pk.x, pk.y, '#ff8888');
               SFX.buyFail();
               break;
             }
-            p.shield=420; p.shieldHits=3;
-            addFT('SHIELD x3',pk.x,pk.y,'#00ffcc'); SFX.pickupShield(); break;
+            // New shield model: each pickup grants 3 seconds of invincibility,
+            // stackable. Visual shield ring shows while active.
+            p.shieldFrames = (p.shieldFrames || 0) + 180;   // +3s @ 60fps
+            p.shield = p.shieldFrames;                       // legacy field used by draw
+            p.shieldHits = 0;                                // no hit-counter mode anymore
+            addFT('+3s 无敌', pk.x, pk.y, '#00ffcc');
+            SFX.pickupShield(); break;
           case 'wingman':
             spawnWingman(p, pk.value);
             addFT(WINGMAN_NAMES[pk.value],pk.x,pk.y,WINGMAN_COLORS[pk.value]); SFX.pickupWeapon(); break;
@@ -7222,7 +7348,7 @@ function updateWingmen() {
     if(w.fireTimer>=fireRate) {
       w.fireTimer=0;
       // Boss debuff: 摩羯·卡普 → wingmen silenced (don't fire) while alive.
-      if (activeBossDebuff() !== 'noWingmen') fireWingmanBullet(w);
+      if (!hasBossDebuff('noWingmen')) fireWingmanBullet(w);
     }
   }
   wingmen=wingmen.filter(w=>w.alive);
@@ -7509,6 +7635,14 @@ function checkCollisions() {
 
 function hitPlayer(p) {
   if(p.invTimer>0) return;
+  // Mutant boss 冰冻子弹: 30% chance to freeze player 1.5s instead of damage
+  if (hasBossDebuff('iceBullet') && Math.random() < 0.30) {
+    p._frozen = Math.max(p._frozen || 0, 90);
+    p.invTimer = 18;
+    addFT('❄ 冻结!', p.x, p.y - 14, '#88ccff');
+    SFX.hitPlayer();
+    return;
+  }
   // Dodge rune — full evasion roll happens BEFORE shields/lives consume.
   if (isRuneEquipped('dodge') && Math.random() < runeProb('dodge')) {
     p.invTimer = 14;
@@ -7516,10 +7650,9 @@ function hitPlayer(p) {
     SFX.hitPlayer();
     return;
   }
-  if(p.shield>0){
-    p.shieldHits=(p.shieldHits||1)-1;
-    if(p.shieldHits<=0){p.shield=0;p.shieldHits=0;}
-    else p.invTimer=20;
+  // Shield is now timed invincibility — any incoming hit is absorbed for free
+  // while shieldFrames > 0 (drained per frame in updatePlayer).
+  if((p.shieldFrames || 0) > 0){
     SFX.hitPlayer(); return;
   }
   SFX.hitPlayer(); p.lives--;
@@ -7609,8 +7742,9 @@ function killEnemy(e) {
   // Power-up drops (console-tunable multiplier)
   const dropMul = clamp(C.dropRateMul || 1, 0, 5);
   const dr = Math.random() / dropMul;
-  if(dr<0.10)       spawnPickup(e.x,e.y,'weapon',rndInt(0,9));
-  else if(dr<0.22)  spawnPickup(e.x,e.y,'star',1);
+  // Weapon-pickup removed: each plane has its own fixed weapon. Star drops
+  // bumped up to absorb the freed budget so power growth still feels good.
+  if(dr<0.22)       spawnPickup(e.x,e.y,'star',1);
   else if(dr<0.27)  spawnPickup(e.x,e.y,'life',1);
   else if(dr<0.32)  spawnPickup(e.x,e.y,'bomb',1);
   else if(dr<0.40)  spawnPickup(e.x,e.y,'wingman', rollWingmanType());
@@ -7944,7 +8078,7 @@ function updateWaves() {
 // ─── HUD ─────────────────────────────────────────────────────────────────────
 function drawHUD() {
   // Boss debuff: 水瓶·阿夸 — darkVision: vignette that narrows player vision.
-  if (activeBossDebuff() === 'darkVision' && players[0] && !players[0].dead) {
+  if (hasBossDebuff('darkVision') && players[0] && !players[0].dead) {
     const p = players[0];
     const vg = cx.createRadialGradient(p.x, p.y, 30, p.x, p.y, 240);
     vg.addColorStop(0, 'rgba(0,0,0,0)');
@@ -7953,15 +8087,18 @@ function drawHUD() {
     cx.fillStyle = vg;
     cx.fillRect(0, 0, W, H);
   }
-  // Active boss debuff label (under the LV header)
-  const dbf = activeBossDebuff();
-  const dbfBoss = (boss && boss.alive && boss.debuff) ? boss : ((boss2 && boss2.alive && boss2.debuff) ? boss2 : null);
-  if (dbf && dbfBoss && dbfBoss.debuffName) {
-    cx.textAlign = 'center';
-    cx.fillStyle = '#ff66ff';
-    cx.font = "bold 11px 'Courier New', monospace";
-    cx.fillText('⚠ ' + dbfBoss.debuffName + ' ⚠', W/2, 50);
-    cx.textAlign = 'left';
+  // Active boss debuff label(s) — dual boss shows both names side by side
+  {
+    const labels = [];
+    if (boss && boss.alive && boss.debuffName) labels.push(boss.debuffName);
+    if (boss2 && boss2.alive && boss2.debuffName) labels.push(boss2.debuffName);
+    if (labels.length) {
+      cx.textAlign = 'center';
+      cx.fillStyle = '#ff66ff';
+      cx.font = "bold 11px 'Courier New', monospace";
+      cx.fillText('⚠ ' + labels.join(' + ') + ' ⚠', W/2, 50);
+      cx.textAlign = 'left';
+    }
   }
   // Hidden-level entry banner — bold pink "隐藏关卡" overlay
   if (hiddenLevelBannerTime > 0) {
@@ -8011,6 +8148,12 @@ function drawHUD() {
       cx.fillText(WEAPON_NAMES[p.weapon]+' ★MAX '+sec+'s', px, yb+25);
     } else {
       cx.fillText(WEAPON_NAMES[p.weapon]+' Lv'+p.weaponLevel, px, yb+25);
+    }
+    // Shield seconds (only when active) — draws above weapon line
+    if ((p.shieldFrames || 0) > 0) {
+      cx.fillStyle = '#00ffcc';
+      cx.font = "bold 10px 'Courier New', monospace";
+      cx.fillText('🛡 ' + Math.ceil(p.shieldFrames/60) + 's', px, yb - 4);
     }
     // Wingman slots (up to 2): name + Lv per slot, color-coded
     const myWing=wingmen.filter(w=>w.owner===p&&w.alive);
@@ -8698,7 +8841,7 @@ function clickTitleSettings(mx, my) {
 
 // ─── CODEX (图鉴) ─────────────────────────────────────────────────────────────
 const CODEX_TABS = [
-  {id:'weapons', label:'武器'},
+  {id:'weapons', label:'战机'},
   {id:'enemies', label:'敌人'},
   {id:'bosses',  label:'Boss'},
   {id:'wingmen', label:'僚机'},
@@ -8875,36 +9018,48 @@ function drawWeaponThumb(weaponIdx, cxC, cyC, col) {
 }
 
 function drawCodexWeapons(startY) {
-  const rowH = 80;
+  // Renamed to 战机 — shows each plane skin + its bound weapon description.
+  const rowH = 76;
   cx.textAlign='left';
-  for (let i=0;i<CODEX_WEAPONS.length;i++) {
-    const [n, col, type, desc, max] = CODEX_WEAPONS[i];
-    const ry = startY + i*rowH + 6;
+  for (let i = 0; i < PLANE_SKINS.length; i++) {
+    const skin = PLANE_SKINS[i];
+    const wIdx = planeWeaponIdx(i);
+    const wDef = CODEX_WEAPONS[wIdx] || ['','#88ccee','','',''];
+    const wColor = wDef[1];
+    const ry = startY + i * rowH + 6;
     cx.fillStyle = 'rgba(20,40,60,0.45)';
     cx.fillRect(16, ry, W-32, rowH-8);
-    cx.fillStyle = col;
+    cx.fillStyle = wColor;
     cx.fillRect(16, ry, 4, rowH-8);
-    // Thumbnail panel
-    cx.fillStyle = '#04101a';
-    cx.fillRect(26, ry+4, 44, rowH-16);
-    cx.strokeStyle = col + '88'; cx.lineWidth = 0.6;
-    cx.strokeRect(26.5, ry+4.5, 43, rowH-17);
-    drawWeaponThumb(i, 48, ry + (rowH-8)/2, col);
-    cx.fillStyle = col;
-    cx.font="bold 14px 'Courier New', monospace";
+    // Plane thumbnail
+    cx.save();
+    cx.beginPath(); cx.rect(26, ry+4, 56, rowH-16); cx.clip();
+    drawVectorPlane(skin[3], skin[4], cx, 54, ry + (rowH-8)/2, 0.95, false, 0, 0, 0);
+    cx.restore();
+    cx.strokeStyle = skin[4][0] + '88'; cx.lineWidth = 0.6;
+    cx.strokeRect(26.5, ry+4.5, 55, rowH-17);
+    // Plane name
+    cx.fillStyle = skin[4][1];
+    cx.font="bold 13px 'Courier New', monospace";
     cx.textAlign='left';
-    cx.fillText(n, 80, ry+20);
-    cx.fillStyle = '#88ccee';
+    cx.fillText(skin[0], 92, ry+20);
+    // Price badge
+    cx.fillStyle = skin[2] === 'free' ? '#88ff88' : skin[2] === 'd' ? '#88ccff' : '#ffcc44';
     cx.font="10px 'Courier New', monospace";
-    cx.fillText(type, 160, ry+20);
+    const price = skin[2] === 'free' ? '默认' : (skin[2] === 'd' ? '💎' : '🪙') + skin[1];
+    cx.fillText(price, 92, ry+34);
+    // Bound weapon
+    cx.fillStyle = wColor;
+    cx.font="bold 11px 'Courier New', monospace";
+    cx.fillText('武器: ' + (wDef[0] || ''), 200, ry+20);
     cx.fillStyle = '#cccccc';
-    cx.font="11px 'Courier New', monospace";
-    cx.fillText(desc, 80, ry+40);
-    cx.fillStyle = '#ff66ff';
-    cx.font="bold 10px 'Courier New', monospace";
-    cx.fillText(max, 80, ry+58);
+    cx.font="10px 'Courier New', monospace";
+    cx.fillText((wDef[3] || '').slice(0, 32), 92, ry+50);
+    cx.fillStyle = '#ff88aa';
+    cx.font="9px 'Courier New', monospace";
+    cx.fillText('MAX: ' + (wDef[4] || '').slice(0, 32), 92, ry+64);
   }
-  return CODEX_WEAPONS.length * rowH + 20;
+  return PLANE_SKINS.length * rowH + 20;
 }
 
 // Mini enemy thumbnail (re-uses drawEnemy switch via a stub enemy object)
@@ -9228,7 +9383,13 @@ function drawCodexPickups(startY) {
 }
 
 function clickCodex(mx, my) {
-  if (mx>=20 && mx<=130 && my>=655 && my<=691) { screen='title'; return; }
+  if (mx>=20 && mx<=130 && my>=655 && my<=691) {
+    const back = (_codexReturnTo === 'game') ? 'game' : 'title';
+    _codexReturnTo = null;
+    screen = back;
+    if (back === 'game' && bgmEnabled) startBGM();
+    return;
+  }
   // Tabs
   const tabsY = 92, tabH = 28, gap = 4;
   const totalW = W - 40;
@@ -9689,7 +9850,14 @@ function drawShopBGs() {
 let shopLastClickT = 0;
 let shopLastClickKey = '';
 function clickShop(mx,my) {
-  if(mx>=20&&mx<=130&&my>=655&&my<=691){screen='title';shopSelectedPlane=-1;shopSelectedBG=-1;return;}
+  if(mx>=20&&mx<=130&&my>=655&&my<=691){
+    // If we entered shop from in-game, return to game; otherwise return to title.
+    const back = (_shopReturnTo === 'game') ? 'game' : 'title';
+    _shopReturnTo = null;
+    screen = back; shopSelectedPlane=-1; shopSelectedBG=-1;
+    if (back === 'game' && bgmEnabled) startBGM();
+    return;
+  }
   if(mx>=350&&mx<=460&&my>=655&&my<=691){equipSelected();return;}
   if(my>=68&&my<=102){
     if      (mx>=20  && mx<=126) { shopTab=0; shopSelectedPlane=-1; }
@@ -10772,13 +10940,17 @@ const shopSideBtn = document.getElementById('btn-shop');
 const codexSideBtn = document.getElementById('btn-codex');
 // Allow opening shop/codex from title, in-game, pause, and death screens.
 // In-game opening auto-pauses the BGM but keeps the run resumable via the pause button.
+let _shopReturnTo = null;     // 'title' | 'game' | null
+let _codexReturnTo = null;
 function openShopFromAnywhere() {
   if (screen === 'shop' || screen === 'codex' || screen === 'console') return;
+  _shopReturnTo = (screen === 'game' || screen === 'pause') ? 'game' : 'title';
   if (screen === 'game') stopBGM();
   screen = 'shop';
 }
 function openCodexFromAnywhere() {
   if (screen === 'shop' || screen === 'codex' || screen === 'console') return;
+  _codexReturnTo = (screen === 'game' || screen === 'pause') ? 'game' : 'title';
   if (screen === 'game') stopBGM();
   screen = 'codex';
 }
@@ -10864,7 +11036,9 @@ function drawGameField() {
   if (boss2 && boss2.alive) {
     const _orig = boss;
     boss = boss2;
+    _drawingBoss2 = true;
     drawBoss();
+    _drawingBoss2 = false;
     boss = _orig;
   }
   drawBullets();
