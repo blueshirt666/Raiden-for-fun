@@ -31,6 +31,10 @@ canvas { display:block; width:100%; height:100%; image-rendering:auto; }
   border-radius:4px; user-select:none; z-index:5;
 }
 #btn-speed:hover { background:#332200; border-color:#ffcc44; }
+/* Desktop side-bar default positions for the new shop / codex buttons.
+   Mobile media query below overrides these to put them on the top bar. */
+#btn-shop  { top:172px; }
+#btn-codex { top:226px; }
 #btn-infbomb {
   /* Sits below codex (top:226 + 44 + 8 gap = 280) so it appears as the 5th
      side-bar slot whenever invincible mode is on. */
@@ -106,8 +110,8 @@ canvas { display:block; width:100%; height:100%; image-rendering:auto; }
   <!-- BGM mute / track switch removed — use Pause menu instead -->
   <button id="btn-speed" title="切换倍速">1.0x</button>
   <button id="btn-infbomb" title="无限核弹">💥∞</button>
-  <button class="side-btn" id="btn-shop" style="top:172px;display:none;font-size:18px;" title="商城">🛒</button>
-  <button class="side-btn" id="btn-codex" style="top:226px;display:none;font-size:18px;" title="图鉴">📖</button>
+  <button class="side-btn" id="btn-shop" style="display:none;font-size:18px;" title="商城">🛒</button>
+  <button class="side-btn" id="btn-codex" style="display:none;font-size:18px;" title="图鉴">📖</button>
   <!-- Bomb hidden: 移动端双击屏幕触发，桌面端 X 键 -->
   <div id="console-panel">
     <h2>🛠 控制台</h2>
@@ -1220,6 +1224,8 @@ let meteorShowers = [];    // active meteor barrage state — endless 50+
 let lastMeteorSpawn = 0;
 let lightningStrikes = [];  // {x, y, warnT, fireT} — endless 30+
 let lastLightningSpawn = 0;
+let warpBannerTime = 0;     // frames remaining for "已穿越 LV X" banner
+let warpBannerLv = 0;
 let enemies = [];
 let pickups = [];
 let explosions = [];
@@ -1431,12 +1437,14 @@ function drawScreenMissiles() {
 const BH_PULL_RADIUS = 170;       // larger gravity well so the pull feels real
 const BH_CORE_RADIUS = 24;
 function shouldEnableBlackHoles() {
+  if (bossMode) return true;                 // Boss mode: black holes always enabled
   if (endlessMode) return level >= 20;       // Endless from lv 20
   return currentTier() === 'hell';           // Stage: master / 地狱 难度
 }
 function maxBlackHolesNow() {
   const C = save.console || defaultConsole();
   const cap = (typeof C.bhMaxCount === 'number') ? C.bhMaxCount : 3;
+  if (bossMode) return Math.min(2, cap);     // Boss mode: up to 2 holes
   if (endlessMode) {
     if (level >= 45) return Math.min(3, cap);
     if (level >= 30) return Math.min(2, cap);
@@ -1645,6 +1653,21 @@ function drawBlackHoles() {
     cx.beginPath();
     cx.arc(h.x, h.y, h.r + 4, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * lifeT);
     cx.stroke();
+    // Crisp HP bar above the black hole (matches white hole style)
+    if (h.spawnT <= 0) {
+      const barW = 56, barH = 5;
+      const bx0 = h.x - barW/2, by0 = h.y - h.r - 12;
+      cx.fillStyle = 'rgba(0,0,0,0.7)';
+      cx.fillRect(bx0 - 1, by0 - 1, barW + 2, barH + 2);
+      cx.fillStyle = '#1a0828';
+      cx.fillRect(bx0, by0, barW, barH);
+      const fillCol = lifeT > 0.5 ? '#cc88ff' : (lifeT > 0.2 ? '#ff66ff' : '#ff44aa');
+      cx.fillStyle = fillCol;
+      cx.fillRect(bx0, by0, barW * lifeT, barH);
+      cx.strokeStyle = '#ee88ff';
+      cx.lineWidth = 1;
+      cx.strokeRect(bx0 + 0.5, by0 + 0.5, barW - 1, barH - 1);
+    }
     cx.restore();
   }
 }
@@ -1673,7 +1696,7 @@ function trySpawnWhiteHole() {
     const tooClose = whiteHoles.some(h => Math.hypot(h.x - x, h.y - y) < 200)
                   || blackHoles.some(h => Math.hypot(h.x - x, h.y - y) < 160);
     if (tooClose) continue;
-    const baseHp = currentBossBaselineHp() * 0.4 * 1.5;   // 1.5× BH HP
+    const baseHp = currentBossBaselineHp() * 0.4;          // matches BH HP per spec
     const targetLv = clamp(50 + Math.floor(Math.random() * 151), 50, 200);
     whiteHoles.push({
       x, y,
@@ -1704,6 +1727,30 @@ function updateWhiteHoles() {
     if (h.x > W - 20)     { h.x = W - 20;     h.vx = -Math.abs(h.vx); }
     if (h.y < 20)         { h.y = 20;         h.vy = Math.abs(h.vy); }
     if (h.y > H - 40)     { h.y = H - 40;     h.vy = -Math.abs(h.vy); }
+    // ─── Black hole vs white hole — black hole devours white hole ───────
+    for (const bh of blackHoles) {
+      if (!bh || bh.spawnT > 0) continue;
+      const dx = bh.x - h.x, dy = bh.y - h.y;
+      if (Math.hypot(dx, dy) < (BH_CORE_RADIUS + WH_CORE_RADIUS + 4)) {
+        h._dead = true;
+        bh.hp = Math.min(bh.maxHp, bh.hp + h.maxHp);  // black hole absorbs white hole's mass
+        spawnExplosion(h.x, h.y, 'huge');
+        triggerShake(10, 16);
+        addFT('黑洞吞噬白洞', bh.x, bh.y - 30, '#cc88ff');
+        // Visual swirl
+        for (let k = 0; k < 18; k++) {
+          const ag = (k/18) * Math.PI * 2;
+          explosions.push({
+            x: h.x, y: h.y,
+            vx: Math.cos(ag) * 5, vy: Math.sin(ag) * 5,
+            life: 28, maxLife: 28, size: 4,
+            color: k%2 ? '#ffeebb' : '#cc88ff'
+          });
+        }
+        break;
+      }
+    }
+    if (h._dead) continue;
     // 1.5× BH gravity well
     for (const p of players) {
       if (p.dead) continue;
@@ -1717,13 +1764,26 @@ function updateWhiteHoles() {
         p._bhDamp = Math.min(p._bhDamp || 1, clamp(1 - k * 0.75, 0.25, 1));
         // Player reaches the singular core → teleport to targetLv
         if (d < h.r + 4) {
-          addFT('⌛ 穿越 → Lv ' + h.targetLv, p.x, p.y - 20, '#ffeebb');
+          // Full-screen wipe on warp: clear all enemies, enemy bullets,
+          // pickups, traps; keep player wingmen + buffs intact.
+          for (const e of enemies) {
+            if (e.alive) { spawnExplosion(e.x, e.y, 'medium'); e.alive = false; }
+          }
+          for (const eb of enemyBullets) eb.alive = false;
+          for (const m of screenMissiles) m._cleared = true;
+          screenMissiles = screenMissiles.filter(m => !m._cleared);
+          neutronStars.length = 0;
+          meteorShowers.length = 0;
+          lightningStrikes.length = 0;
+          // Black holes survive (they're black holes); other white holes too
+          warpBannerTime = 180;
+          warpBannerLv = h.targetLv;
           level = h.targetLv;
           waveTimer = 0; killCount = 0;
-          // Refresh diff baseline; bgm + screen unaffected
           h._dead = true;
-          // brief invuln so player isn't instantly hit on arrival
-          p.invTimer = 90;
+          p.invTimer = 120;       // 2s invuln so player isn't instantly hit on arrival
+          bombFlash = 18;
+          triggerShake(10, 18);
           break;
         }
       }
@@ -1781,13 +1841,30 @@ function drawWhiteHoles() {
       cx.lineTo(h.x + Math.cos(a + 0.4) * r2, h.y + Math.sin(a + 0.4) * r2);
       cx.stroke();
     }
-    // Target level number
+    // Target level number + clear HP bar
     if (h.spawnT <= 0) {
       cx.fillStyle = '#ffffff';
       cx.font = "bold 13px 'Courier New', monospace";
       cx.textAlign = 'center';
-      cx.fillText('Lv ' + h.targetLv, h.x, h.y - h.r - 8);
+      cx.fillText('Lv ' + h.targetLv, h.x, h.y - h.r - 18);
       cx.textAlign = 'left';
+      // ─── Crisp HP bar above the white hole ────────────────────────
+      const hpRatio = Math.max(0, h.hp / h.maxHp);
+      const barW = 56, barH = 5;
+      const bx0 = h.x - barW/2, by0 = h.y - h.r - 12;
+      // Bar background
+      cx.fillStyle = 'rgba(0,0,0,0.7)';
+      cx.fillRect(bx0 - 1, by0 - 1, barW + 2, barH + 2);
+      cx.fillStyle = '#1a1a1a';
+      cx.fillRect(bx0, by0, barW, barH);
+      // Bar fill — golden, with white tip when high
+      const fillCol = hpRatio > 0.5 ? '#ffd874' : (hpRatio > 0.2 ? '#ff8844' : '#ff4444');
+      cx.fillStyle = fillCol;
+      cx.fillRect(bx0, by0, barW * hpRatio, barH);
+      // Bar outline
+      cx.strokeStyle = '#ffeebb';
+      cx.lineWidth = 1;
+      cx.strokeRect(bx0 + 0.5, by0 + 0.5, barW - 1, barH - 1);
     }
     cx.restore();
   }
@@ -6301,9 +6378,12 @@ function spawnBoss() {
   // 难度封顶: 关卡分量取 min(level, ENDLESS_DIFF_CAP), 之后保持地狱难度
   const cappedLv = Math.min(level, ENDLESS_DIFF_CAP);
   const barCount = clamp(Math.round((1 + Math.floor((cappedLv-1)/2)) * (C.bossBarMul||1)), 1, 9);
-  if (!save.bossTiers) save.bossTiers = {};
-  const tier = (save.bossTiers[idx] || 0) + 1;
-  save.bossTiers[idx] = tier;
+  // Boss-mode and endless track tiers in separate maps so progress is independent.
+  if (!save.bossTiers)     save.bossTiers     = {};
+  if (!save.bossModeTiers) save.bossModeTiers = {};
+  const tierMap = bossMode ? save.bossModeTiers : save.bossTiers;
+  const tier = (tierMap[idx] || 0) + 1;
+  tierMap[idx] = tier;
   writeSave();
   const tierMul = Math.pow(1.10, tier - 1);
   const tierLabel = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十'][Math.min(tier-1, 9)] || (tier + '');
@@ -6352,9 +6432,11 @@ function spawnSecondBoss() {
   const def = BOSS_DEFS[idx];
   const cappedLv = Math.min(level, ENDLESS_DIFF_CAP);
   const barCount = clamp(Math.round((1 + Math.floor((cappedLv-1)/2)) * (C.bossBarMul||1)), 1, 9);
-  const tier = (save.bossTiers && save.bossTiers[idx] || 0) + 1;
-  if (!save.bossTiers) save.bossTiers = {};
-  save.bossTiers[idx] = tier;
+  if (!save.bossTiers)     save.bossTiers     = {};
+  if (!save.bossModeTiers) save.bossModeTiers = {};
+  const tierMap2 = bossMode ? save.bossModeTiers : save.bossTiers;
+  const tier = (tierMap2[idx] || 0) + 1;
+  tierMap2[idx] = tier;
   writeSave();
   const tierMul = Math.pow(1.10, tier - 1);
   const tierLabel = ['一','二','三','四','五','六','七','八','九','十'][Math.min(tier-1,9)] || (tier+'');
@@ -6413,7 +6495,8 @@ function startBossMode() {
   score=0; level=1; waveTimer=0; killCount=0; bossActive=false; boss=null; boss2=null; bombFlash=0;
   sessionCoins=0; sessionDiamonds=0; finalScore=0; frame=0;
   bossModeCycle = 0;
-  save.bossTiers = {};
+  // Boss-mode keeps its own tier counter; do NOT touch endless tiers (save.bossTiers)
+  save.bossModeTiers = {};
   players.push(createPlayer(1, save.selP1));
   // Restore boss-mode snapshot if present (similar to endless resume)
   if (save.bossModeState) {
@@ -6423,7 +6506,7 @@ function startBossMode() {
     score = s.score || 0;
     sessionCoins = s.sessionCoins || 0;
     sessionDiamonds = s.sessionDiamonds || 0;
-    save.bossTiers = s.bossTiers || {};
+    save.bossModeTiers = s.bossModeTiers || s.bossTiers || {};
     const p = players[0];
     if (s.p) {
       p.x = s.p.x; p.y = s.p.y;
@@ -8881,6 +8964,24 @@ function updateWaves() {
 
 // ─── HUD ─────────────────────────────────────────────────────────────────────
 function drawHUD() {
+  // Warp banner — "已穿越 LV X" big golden text after a white-hole travel
+  if (warpBannerTime > 0) {
+    const a = Math.min(1, warpBannerTime / 60);
+    cx.fillStyle = `rgba(255,200,120,${0.20 * a})`;
+    cx.fillRect(0, H/2 - 56, W, 112);
+    cx.strokeStyle = `rgba(255,220,140,${a})`;
+    cx.lineWidth = 2.5;
+    cx.strokeRect(8, H/2 - 56, W - 16, 112);
+    cx.textAlign = 'center';
+    cx.fillStyle = `rgba(255,255,200,${a})`;
+    cx.font = "bold 30px 'Courier New', monospace";
+    cx.fillText('已 穿 越', W/2, H/2 - 6);
+    cx.fillStyle = `rgba(255,235,140,${a})`;
+    cx.font = "bold 26px 'Courier New', monospace";
+    cx.fillText('LV 第 ' + warpBannerLv + ' 关', W/2, H/2 + 28);
+    cx.textAlign = 'left';
+    warpBannerTime--;
+  }
   // Boss debuff: 水瓶·阿夸 — darkVision: vignette that narrows player vision.
   if (hasBossDebuff('darkVision') && players[0] && !players[0].dead) {
     const p = players[0];
@@ -11352,7 +11453,8 @@ function snapshotBossMode() {
   const p = players[0]; if (!p) return null;
   return {
     level, bossModeCycle, score, sessionCoins, sessionDiamonds,
-    bossTiers: save.bossTiers ? Object.assign({}, save.bossTiers) : {},
+    // Persist boss-mode tier counter (independent from endless save.bossTiers)
+    bossModeTiers: save.bossModeTiers ? Object.assign({}, save.bossModeTiers) : {},
     p: {x:p.x, y:p.y, lives:p.lives, bombs:p.bombs, weaponLevel:p.weaponLevel, skinIdx:p.skinIdx,
         shieldFrames:p.shieldFrames||0},
     wingmen: wingmen.filter(w=>w.alive).map(w=>({wType:w.wType, level:w.level||1})),
@@ -11540,7 +11642,13 @@ document.addEventListener('keydown',e=>{
     else if (screen==='pause') { screen='game'; if(bgmEnabled) startBGM(); }
     document.getElementById('btn-pause').classList.toggle('active', screen==='pause');
   }
-  if(e.key==='g'||e.key==='G'){invincible=!invincible;document.getElementById('btn-invincible').classList.toggle('active',invincible);refreshInfBomb();if(invincible&&endlessMode)endlessInvincibleUsed=true;}
+  if(e.key==='g'||e.key==='G'){
+    invincible=!invincible;
+    document.getElementById('btn-invincible').classList.toggle('active',invincible);
+    refreshInfBomb();
+    if (invincible) applyInvincibleBuffs();
+    if(invincible&&endlessMode)endlessInvincibleUsed=true;
+  }
   if(e.key==='m'||e.key==='M') toggleBGM();
   if(e.key==='t'||e.key==='T'){bgmTrack=(bgmTrack+1)%BGM_TRACKS.length;stopBGM();if(bgmEnabled&&screen==='game')startBGM();}
   if((e.key==='Escape'||e.key==='Esc')){
@@ -11823,7 +11931,36 @@ document.getElementById('btn-pause').addEventListener('click',()=>{
   else if (screen==='pause') { screen='game'; if(bgmEnabled) startBGM(); }
   document.getElementById('btn-pause').classList.toggle('active', screen==='pause');
 });
-document.getElementById('btn-invincible').addEventListener('click',()=>{invincible=!invincible;document.getElementById('btn-invincible').classList.toggle('active',invincible);refreshInfBomb();if(invincible&&endlessMode)endlessInvincibleUsed=true;});
+// Helper: when invincibility turns ON, instantly grant MAX weapon + max wingmen
+function applyInvincibleBuffs() {
+  if (!invincible) return;
+  for (const p of players) {
+    if (!p) continue;
+    p.weaponLevel = 5;
+    // Sustain MAX state continuously while invincible (refresh per toggle)
+    const C = save.console || defaultConsole();
+    p.weaponMax = Math.round(60 * (C.starMaxDuration || 5) * 60); // very long duration
+    // Grant 2 max-level wingmen of complementary types if missing
+    const myWings = wingmen.filter(w => w.owner === p && w.alive);
+    if (myWings.length < 2) {
+      const types = [0, 1];   // 激光 + 导弹 fallback
+      for (const t of types.slice(0, 2 - myWings.length)) {
+        spawnWingman(p, t);
+        const last = wingmen[wingmen.length - 1];
+        if (last) last.level = 5;
+      }
+    }
+    // Max out existing wingmen too
+    for (const w of wingmen) if (w.owner === p) w.level = 5;
+  }
+}
+document.getElementById('btn-invincible').addEventListener('click',()=>{
+  invincible=!invincible;
+  document.getElementById('btn-invincible').classList.toggle('active',invincible);
+  refreshInfBomb();
+  if (invincible) applyInvincibleBuffs();
+  if(invincible&&endlessMode)endlessInvincibleUsed=true;
+});
 // Speed button. Internally 1x = half-step (game runs at 0.5 of old pace),
 // so labels match user expectation while overall feel is calmer.
 const SPEED_CYCLE = [0.5, 1, 2, 3, 10];    // 显示标签 (去掉 4x, 增加 0.5x + 10x)
@@ -12254,9 +12391,9 @@ document.getElementById('console-unlock-stage').addEventListener('click', ()=>{
   alert('关卡 + 奖牌已全部解锁.');
 });
 document.getElementById('console-endless-pick').addEventListener('click', ()=>{
-  const v = prompt('从无尽模式哪一关开始 (1-100)?', '1');
+  const v = prompt('从无尽模式哪一关开始 (1-1000)?', '1');
   if (!v) return;
-  const lv = clamp(parseInt(v, 10) || 1, 1, 100);
+  const lv = clamp(parseInt(v, 10) || 1, 1, 1000);
   showConsolePanel(false);
   pauseConsoleReturn = false;
   // Wipe any stale endless snapshot so the chosen level is the actual start.
