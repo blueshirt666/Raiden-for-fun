@@ -10474,9 +10474,9 @@ function drawCodexWeapons(startY) {
     cx.fillStyle = '#cccccc';
     cx.font="10px 'Courier New', monospace";
     cx.fillText((wDef[3] || '').slice(0, 32), 92, ry+50);
-    cx.fillStyle = '#ff88aa';
+    cx.fillStyle = '#ffaa66';
     cx.font="9px 'Courier New', monospace";
-    cx.fillText('MAX: ' + (wDef[4] || '').slice(0, 32), 92, ry+64);
+    cx.fillText('特性: ' + planeTraitDesc(i), 92, ry+62);
   }
   return PLANE_SKINS.length * rowH + 20;
 }
@@ -10554,16 +10554,20 @@ function drawCodexBosses(startY) {
     cx.scale(0.45, 0.45);
     drawBossShape({ bossType:i, color:def.color, acc:def.acc, moveTimer:frame, phase:0, extra:0, extra2:0, name:def.name });
     cx.restore();
-    // Text shifted right
+    // Text shifted right — variants 13+ are random-spawn bosses, label accordingly
     cx.fillStyle = def.color;
     cx.font="bold 13px 'Courier New', monospace";
-    cx.fillText('Lv'+(i+1)+'  '+def.name, 92, ry+20);
+    const lvLabel = i < 12 ? ('Lv'+(i+1)+'  ') : '★ ';
+    cx.fillText(lvLabel + def.name, 92, ry+20);
+    cx.fillStyle = '#ff66ff';
+    cx.font="10px 'Courier New', monospace";
+    cx.fillText('debuff: ' + (def.debuffName || '—'), 92, ry+34);
     cx.fillStyle = '#ffcc88';
     cx.font="10px 'Courier New', monospace";
-    cx.fillText('基础 HP '+def.hp+'   阶段: 100% / 70% / 40% 狂怒', 92, ry+38);
+    cx.fillText('基础 HP '+def.hp+'   3 阶段(100%/70%/40% 狂怒)', 92, ry+48);
     cx.fillStyle = '#cccccc';
-    cx.font="10px 'Courier New', monospace";
-    cx.fillText(CODEX_BOSS_DESC[i] || '', 92, ry+56);
+    cx.font="9px 'Courier New', monospace";
+    cx.fillText((CODEX_BOSS_DESC[i] || '').slice(0, 40), 92, ry+62);
   }
   return BOSS_DEFS.length * rowH + 20;
 }
