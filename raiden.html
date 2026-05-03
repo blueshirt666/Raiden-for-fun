@@ -10598,19 +10598,13 @@ function drawCodexWingmen(startY) {
     cx.fillRect(16, ry, W-32, rowH-8);
     cx.fillStyle = WINGMAN_COLORS[i];
     cx.fillRect(16, ry, 4, rowH-8);
-    // Wingman thumbnail (mini plane silhouette in color)
+    // Thumbnail panel
     cx.fillStyle = '#04101a';
     cx.fillRect(26, ry+4, 44, rowH-16);
     cx.strokeStyle = WINGMAN_COLORS[i]+'88'; cx.lineWidth=0.6;
     cx.strokeRect(26.5, ry+4.5, 43, rowH-17);
-    const tx = 48, ty = ry + (rowH-8)/2;
-    cx.fillStyle = WINGMAN_COLORS[i];
-    cx.beginPath();
-    cx.moveTo(tx, ty-7); cx.lineTo(tx-7, ty+5); cx.lineTo(tx+7, ty+5);
-    cx.closePath(); cx.fill();
-    cx.fillRect(tx-9, ty+1, 18, 2);
-    cx.fillStyle = '#88eeff';
-    cx.beginPath(); cx.arc(tx, ty-2, 1.5, 0, Math.PI*2); cx.fill();
+    // Render the actual wingman art (matches in-game per-type silhouette)
+    drawWingmanThumb(i, 48, ry + (rowH-8)/2);
     // Text shifted right
     cx.fillStyle = WINGMAN_COLORS[i];
     cx.font="bold 13px 'Courier New', monospace";
@@ -10620,9 +10614,124 @@ function drawCodexWingmen(startY) {
     cx.fillText('最大 Lv 5', 80, ry+36);
     cx.fillStyle = '#cccccc';
     cx.font="10px 'Courier New', monospace";
-    cx.fillText(descs[i] || '', 80, ry+52);
+    cx.fillText((descs[i] || '').slice(0, 36), 80, ry+52);
   }
   return WINGMAN_NAMES.length * rowH + 20;
+}
+
+// Mini wingman thumbnail — re-uses the in-game per-type silhouette so the
+// codex preview matches what the player actually sees in combat.
+function drawWingmanThumb(wType, cxC, cyC) {
+  const wc = WINGMAN_COLORS[wType] || '#88ccee';
+  const wcD = shadeHex(wc, -35);
+  const wcL = shadeHex(wc, 35);
+  cx.save();
+  cx.translate(cxC, cyC);
+  // Subtle halo
+  cx.strokeStyle = wc;
+  cx.lineWidth = 1;
+  cx.globalAlpha = 0.4;
+  cx.beginPath(); cx.ellipse(0, 0, 14, 14, 0, 0, Math.PI*2); cx.stroke();
+  cx.globalAlpha = 1;
+  // Wing layers
+  cx.fillStyle = wcD;
+  cx.beginPath(); cx.moveTo(-2,1); cx.lineTo(-15,7); cx.lineTo(-13,10); cx.lineTo(-3,4); cx.closePath(); cx.fill();
+  cx.beginPath(); cx.moveTo( 2,1); cx.lineTo( 15,7); cx.lineTo( 13,10); cx.lineTo( 3,4); cx.closePath(); cx.fill();
+  cx.fillStyle = wc;
+  cx.beginPath(); cx.moveTo(-2,1); cx.lineTo(-12,5); cx.lineTo(-11,7); cx.lineTo(-3,3); cx.closePath(); cx.fill();
+  cx.beginPath(); cx.moveTo( 2,1); cx.lineTo( 12,5); cx.lineTo( 11,7); cx.lineTo( 3,3); cx.closePath(); cx.fill();
+  cx.fillStyle = '#ff4444'; cx.fillRect(-15, 6, 1.6, 1.5);
+  cx.fillStyle = '#44ff44'; cx.fillRect( 13, 6, 1.6, 1.5);
+  // Body
+  const bg = cx.createLinearGradient(-4, -10, 4, 12);
+  bg.addColorStop(0, wcL); bg.addColorStop(0.5, wc); bg.addColorStop(1, wcD);
+  cx.fillStyle = bg;
+  cx.beginPath();
+  cx.moveTo(0,-10); cx.lineTo(-3,-5); cx.lineTo(-4,8); cx.lineTo(-1,11); cx.lineTo(1,11); cx.lineTo(4,8); cx.lineTo(3,-5); cx.closePath();
+  cx.fill();
+  cx.fillStyle = wcD;
+  cx.beginPath(); cx.moveTo(-1,4); cx.lineTo(-1,10); cx.lineTo(0,11); cx.lineTo(1,10); cx.lineTo(1,4); cx.closePath(); cx.fill();
+  cx.fillStyle = '#aaeeff';
+  cx.beginPath(); cx.ellipse(0, -2, 1.6, 3.2, 0, 0, Math.PI*2); cx.fill();
+  cx.fillStyle = '#1a1a1a';
+  cx.fillRect(-0.6, -8, 1.2, 4);
+  // Per-type unique silhouette overlay (mirrors drawWingmen logic)
+  cx.lineCap = 'round'; cx.lineJoin = 'round';
+  switch (wType) {
+    case 0: cx.fillStyle = wcL; cx.fillRect(-0.4, -14, 0.8, 6); break;
+    case 1: cx.fillStyle = '#aaaaaa';
+            cx.fillRect(-7, 4, 2.2, 4); cx.fillRect(4.8, 4, 2.2, 4);
+            cx.fillStyle = '#ff4422';
+            cx.fillRect(-6.5, 8, 1.2, 1.5); cx.fillRect(5.3, 8, 1.2, 1.5); break;
+    case 2: cx.fillStyle = '#1a1a1a';
+            for (let bi=-2; bi<=2; bi++) cx.fillRect(bi*1.4-0.5, -8, 0.8, 3); break;
+    case 3: cx.fillStyle = wcD;
+            cx.beginPath(); cx.arc(-4,6,2,0,Math.PI*2); cx.fill();
+            cx.beginPath(); cx.arc(4,6,2,0,Math.PI*2); cx.fill();
+            cx.fillStyle = '#ffaa44';
+            cx.beginPath(); cx.arc(-4,6,0.8,0,Math.PI*2); cx.fill();
+            cx.beginPath(); cx.arc(4,6,0.8,0,Math.PI*2); cx.fill(); break;
+    case 4: { const og = cx.createRadialGradient(0,-7,0.5,0,-7,4);
+              og.addColorStop(0,'#ffffff'); og.addColorStop(0.5,wc); og.addColorStop(1,wcD);
+              cx.fillStyle = og;
+              cx.beginPath(); cx.arc(0,-7,3.5,0,Math.PI*2); cx.fill(); } break;
+    case 5: cx.strokeStyle = '#ffff88'; cx.lineWidth = 1;
+            cx.beginPath();
+            cx.moveTo(-3,-6); cx.lineTo(-5,-12); cx.lineTo(-3,-10);
+            cx.moveTo(3,-6); cx.lineTo(5,-12); cx.lineTo(3,-10);
+            cx.stroke(); break;
+    case 6: cx.fillStyle = '#aaeeff';
+            cx.beginPath();
+            for (let k=0;k<6;k++){const a=-Math.PI/2+k*Math.PI/3;
+              const px = Math.cos(a)*3, py = -2 + Math.sin(a)*3;
+              if (k===0) cx.moveTo(px,py); else cx.lineTo(px,py);}
+            cx.closePath(); cx.fill();
+            cx.strokeStyle = '#ffffff'; cx.lineWidth = 0.6; cx.stroke(); break;
+    case 7: cx.fillStyle = '#ff5522';
+            cx.beginPath(); cx.moveTo(-2,-10); cx.lineTo(0,-16); cx.lineTo(2,-10); cx.closePath(); cx.fill();
+            cx.fillStyle = '#ffaa44';
+            cx.beginPath(); cx.moveTo(-1,-10); cx.lineTo(0,-14); cx.lineTo(1,-10); cx.closePath(); cx.fill(); break;
+    case 8: cx.fillStyle = '#1a1a1a';
+            cx.fillRect(-2.4,-9,1.4,5); cx.fillRect(1.0,-9,1.4,5); break;
+    case 9: cx.strokeStyle = wc; cx.lineWidth = 1;
+            cx.beginPath(); cx.ellipse(0,0,8,3,0,0,Math.PI*2); cx.stroke();
+            cx.fillStyle = wc;
+            cx.beginPath(); cx.arc(8,0,1.2,0,Math.PI*2); cx.fill();
+            cx.beginPath(); cx.arc(-8,0,1.2,0,Math.PI*2); cx.fill(); break;
+    case 10: cx.strokeStyle = wcL; cx.lineWidth = 2;
+             cx.beginPath();
+             cx.moveTo(-12,4); cx.quadraticCurveTo(-8,-4,-2,0);
+             cx.moveTo(12,4); cx.quadraticCurveTo(8,-4,2,0);
+             cx.stroke(); break;
+    case 11: cx.fillStyle = '#88ff44';
+             for (let bi=-2; bi<=2; bi++) {
+               cx.beginPath();
+               cx.moveTo(bi*2,-8); cx.lineTo(bi*2-0.8,-5); cx.lineTo(bi*2+0.8,-5);
+               cx.closePath(); cx.fill();
+             } break;
+    case 12: cx.strokeStyle = '#ffff44'; cx.lineWidth = 0.8;
+             for (const dir of [-1,1]) {
+               cx.beginPath();
+               cx.moveTo(dir*4,-4); cx.lineTo(dir*8,-10);
+               cx.moveTo(dir*4, 6); cx.lineTo(dir*8, 10);
+               cx.stroke();
+             }
+             cx.fillStyle = '#ffff66';
+             cx.beginPath(); cx.arc(0,0,1.4,0,Math.PI*2); cx.fill(); break;
+    case 13: cx.strokeStyle = '#ffeecc'; cx.lineWidth = 1;
+             cx.beginPath(); cx.ellipse(0,-10,5,1.6,0,0,Math.PI*2); cx.stroke();
+             cx.fillStyle = '#ffeecc';
+             cx.fillRect(-0.4,-3,0.8,6);
+             cx.fillRect(-2,0.5,4,0.8); break;
+    case 14: cx.fillStyle = '#22002a';
+             cx.beginPath();
+             cx.moveTo(0,-7); cx.lineTo(-3,-1); cx.lineTo(0,4); cx.lineTo(3,-1); cx.closePath();
+             cx.fill();
+             cx.strokeStyle = '#aa00ff'; cx.lineWidth = 0.6; cx.stroke();
+             cx.fillStyle = '#aa00ff';
+             cx.fillRect(-7,-4,1.2,1.2); cx.fillRect(6,-4,1.2,1.2); break;
+  }
+  cx.restore();
 }
 
 function drawCodexRunes(startY) {
