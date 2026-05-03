@@ -4608,10 +4608,11 @@ function fireBulletMax(p) {
       p.shootTimer = 5;
       break;
     }
-    case 5: { // 闪电链 MAX → 5 道粗闪电
+    case 5: { // 闪电链 MAX → 5 道粗闪电 + 命中后导电连锁
       for (let i=-2;i<=2;i++) {
         const b = mkB(x + i*12, y-10, i*0.18, -16, '#ffffff', 6, 18, p, 42);
         b.lightning = true;
+        b.chainElectric = true;     // on hit, arcs to up to 3 nearby enemies
         bullets.push(b);
       }
       p.shootTimer = 3;
@@ -8155,6 +8156,139 @@ function drawWingmen() {
     eg.addColorStop(1, wc + '00');
     cx.fillStyle = eg;
     cx.beginPath(); cx.arc(0, 12, 6, 0, Math.PI*2); cx.fill();
+    // ─── Per-type distinctive silhouette mark ──────────────────────────
+    // Each wingman gets a unique mechanical feature stacked atop the base body.
+    cx.lineCap = 'round'; cx.lineJoin = 'round';
+    switch (w.wType) {
+      case 0: { // 激光 — long forward beam-emitter spike + side rails
+        cx.fillStyle = wcL;
+        cx.fillRect(-0.4, -14, 0.8, 6);  // protruding nose
+        cx.fillStyle = '#ffffff';
+        cx.fillRect(-1.5, -10, 1, 1.4); cx.fillRect(0.5, -10, 1, 1.4);
+        break;
+      }
+      case 1: { // 导弹 — twin underside missile racks
+        cx.fillStyle = '#aaaaaa';
+        cx.fillRect(-7, 4, 2.2, 4);
+        cx.fillRect( 4.8, 4, 2.2, 4);
+        cx.fillStyle = '#ff4422';
+        cx.fillRect(-6.5, 8, 1.2, 1.5);
+        cx.fillRect( 5.3, 8, 1.2, 1.5);
+        break;
+      }
+      case 2: { // 散弹 — wide multi-barrel mouth at front
+        cx.fillStyle = '#1a1a1a';
+        for (let bi = -2; bi <= 2; bi++) {
+          cx.fillRect(bi*1.4 - 0.5, -8, 0.8, 3);
+        }
+        break;
+      }
+      case 3: { // 轰炸 — bulky belly pods (round)
+        cx.fillStyle = wcD;
+        cx.beginPath(); cx.arc(-4, 6, 2, 0, Math.PI*2); cx.fill();
+        cx.beginPath(); cx.arc( 4, 6, 2, 0, Math.PI*2); cx.fill();
+        cx.fillStyle = '#ffaa44';
+        cx.beginPath(); cx.arc(-4, 6, 0.8, 0, Math.PI*2); cx.fill();
+        cx.beginPath(); cx.arc( 4, 6, 0.8, 0, Math.PI*2); cx.fill();
+        break;
+      }
+      case 4: { // 等离子 — glowing orb at the nose
+        const og = cx.createRadialGradient(0, -7, 0.5, 0, -7, 4);
+        og.addColorStop(0, '#ffffff'); og.addColorStop(0.5, wc); og.addColorStop(1, wcD);
+        cx.fillStyle = og;
+        cx.beginPath(); cx.arc(0, -7, 3.5, 0, Math.PI*2); cx.fill();
+        break;
+      }
+      case 5: { // 闪电 — twin antenna spikes with electric crackle
+        cx.strokeStyle = '#ffff88'; cx.lineWidth = 1;
+        cx.beginPath();
+        cx.moveTo(-3, -6); cx.lineTo(-5, -12); cx.lineTo(-3, -10);
+        cx.moveTo( 3, -6); cx.lineTo( 5, -12); cx.lineTo( 3, -10);
+        cx.stroke();
+        break;
+      }
+      case 6: { // 冰晶 — hexagonal crystalline core on top
+        cx.fillStyle = '#aaeeff';
+        cx.beginPath();
+        for (let k = 0; k < 6; k++) {
+          const a = -Math.PI/2 + k * Math.PI/3;
+          const px = Math.cos(a) * 3, py = -2 + Math.sin(a) * 3;
+          if (k === 0) cx.moveTo(px, py); else cx.lineTo(px, py);
+        }
+        cx.closePath(); cx.fill();
+        cx.strokeStyle = '#ffffff'; cx.lineWidth = 0.6; cx.stroke();
+        break;
+      }
+      case 7: { // 火焰 — torch flame above the nose
+        cx.fillStyle = '#ff5522';
+        cx.beginPath(); cx.moveTo(-2, -10); cx.lineTo(0, -16); cx.lineTo(2, -10); cx.closePath(); cx.fill();
+        cx.fillStyle = '#ffaa44';
+        cx.beginPath(); cx.moveTo(-1, -10); cx.lineTo(0, -14); cx.lineTo(1, -10); cx.closePath(); cx.fill();
+        break;
+      }
+      case 8: { // 双管 — parallel twin barrels
+        cx.fillStyle = '#1a1a1a';
+        cx.fillRect(-2.4, -9, 1.4, 5);
+        cx.fillRect( 1.0, -9, 1.4, 5);
+        break;
+      }
+      case 9: { // 轨道 — ring antenna around hull
+        cx.strokeStyle = wc; cx.lineWidth = 1;
+        cx.beginPath(); cx.ellipse(0, 0, 8, 3, 0, 0, Math.PI*2); cx.stroke();
+        cx.fillStyle = wc;
+        cx.beginPath(); cx.arc(8, 0, 1.2, 0, Math.PI*2); cx.fill();
+        cx.beginPath(); cx.arc(-8, 0, 1.2, 0, Math.PI*2); cx.fill();
+        break;
+      }
+      case 10: { // 回旋 — sweeping boomerang-curve wings
+        cx.strokeStyle = wcL; cx.lineWidth = 2;
+        cx.beginPath();
+        cx.moveTo(-12, 4); cx.quadraticCurveTo(-8, -4, -2, 0);
+        cx.moveTo( 12, 4); cx.quadraticCurveTo( 8, -4,  2, 0);
+        cx.stroke();
+        break;
+      }
+      case 11: { // 毒液 — serrated fang teeth at front
+        cx.fillStyle = '#88ff44';
+        for (let bi = -2; bi <= 2; bi++) {
+          cx.beginPath();
+          cx.moveTo(bi*2, -8); cx.lineTo(bi*2 - 0.8, -5); cx.lineTo(bi*2 + 0.8, -5);
+          cx.closePath(); cx.fill();
+        }
+        break;
+      }
+      case 12: { // 电磁 — 4 antenna spikes with EM glow
+        cx.strokeStyle = '#ffff44'; cx.lineWidth = 0.8;
+        for (const dir of [-1, 1]) {
+          cx.beginPath();
+          cx.moveTo(dir * 4, -4); cx.lineTo(dir * 8, -10);
+          cx.moveTo(dir * 4,  6); cx.lineTo(dir * 8,  10);
+          cx.stroke();
+        }
+        cx.fillStyle = '#ffff66';
+        cx.beginPath(); cx.arc(0, 0, 1.4, 0, Math.PI*2); cx.fill();
+        break;
+      }
+      case 13: { // 圣光 — halo ring above + small cross on hull
+        cx.strokeStyle = '#ffeecc'; cx.lineWidth = 1;
+        cx.beginPath(); cx.ellipse(0, -10, 5, 1.6, 0, 0, Math.PI*2); cx.stroke();
+        cx.fillStyle = '#ffeecc';
+        cx.fillRect(-0.4, -3, 0.8, 6);
+        cx.fillRect(-2, 0.5, 4, 0.8);
+        break;
+      }
+      case 14: { // 虚空 — dark prism + 2 floating shards
+        cx.fillStyle = '#22002a';
+        cx.beginPath();
+        cx.moveTo(0, -7); cx.lineTo(-3, -1); cx.lineTo(0, 4); cx.lineTo(3, -1); cx.closePath();
+        cx.fill();
+        cx.strokeStyle = '#aa00ff'; cx.lineWidth = 0.6; cx.stroke();
+        cx.fillStyle = '#aa00ff';
+        cx.fillRect(-7, -4, 1.2, 1.2);
+        cx.fillRect( 6, -4, 1.2, 1.2);
+        break;
+      }
+    }
     cx.restore();
 
     // Level pips above (no banking)
@@ -8208,6 +8342,39 @@ function checkCollisions() {
         applyRuneOnHit(e, b);
         e.hp-=b.dmg; b.alive=false; SFX.hitEnemy();
         if(e.hp<=0) killEnemy(e);
+        // ─── Chain electric (lightning MAX) ─────────────────────────
+        if (b.chainElectric) {
+          const chainDmg = b.dmg * 0.6;
+          const used = new Set([e]);
+          let chainOrigin = e;
+          for (let chainStep = 0; chainStep < 3; chainStep++) {
+            // Find nearest non-used enemy within 80px
+            let best = null, bestD = 80*80;
+            for (const e2 of enemies) {
+              if (!e2.alive || used.has(e2)) continue;
+              const dx2 = e2.x - chainOrigin.x, dy2 = e2.y - chainOrigin.y;
+              const d2 = dx2*dx2 + dy2*dy2;
+              if (d2 < bestD) { bestD = d2; best = e2; }
+            }
+            if (!best) break;
+            // Visual arc particle trail
+            for (let s = 0; s < 6; s++) {
+              const tt = s / 6;
+              explosions.push({
+                x: chainOrigin.x + (best.x - chainOrigin.x) * tt + rnd(-3,3),
+                y: chainOrigin.y + (best.y - chainOrigin.y) * tt + rnd(-3,3),
+                vx: 0, vy: 0,
+                life: 12, maxLife: 12, size: 2, color: s%2 ? '#ffffaa' : '#88ccff'
+              });
+            }
+            best.hp -= chainDmg;
+            applyRuneOnHit(best, { ...b, dmg: chainDmg });
+            if (best.hp <= 0) killEnemy(best);
+            used.add(best);
+            chainOrigin = best;
+          }
+          addFT('⚡ 链电', e.x, e.y - 16, '#ffffaa');
+        }
         break;
       }
     }
@@ -11954,9 +12121,8 @@ function buildDynamicConsoleFields(kind) {
       rows.push({bucket:'enemySpdEach', key:k, name:labels[k]+' · 速度×',  min:0.1, max:5,  step:0.1});
     }
   } else if (kind === 'eachBoss') {
-    const names = ['白羊·阿瑞斯','金牛·陶罗斯','双子·杰米尼','巨蟹·坎瑟尔','狮子·利奥',
-                   '处女·维戈','天秤·利布拉','天蝎·斯科皮奥','射手·萨吉塔','摩羯·卡普',
-                   '水瓶·阿夸','双鱼·皮西斯','克隆战机·镜'];
+    // Names sourced from BOSS_DEFS so it stays in sync as bosses are added.
+    const names = BOSS_DEFS.map(b => b.name);
     for (let i = 0; i < names.length; i++) {
       rows.push({bucket:'bossHpEach',       key:i, name:names[i]+' · 血量×',  min:0.1, max:50, step:0.1});
       rows.push({bucket:'bossFireRateEach', key:i, name:names[i]+' · 攻速×',  min:0.1, max:10, step:0.1});
